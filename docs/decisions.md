@@ -12,3 +12,12 @@
 - **記憶與整理在 Claude Code 端做**：App 只負責產出匯出包，未來可能匯入 Claude Code 的記憶當會中脈絡。App 內的 `MemoryProposal`、`ContextImport` 審核流程取消。
 - **順序**：先在 Mac 驗證 Gemini Live 能否輸出靜默文字卡，同時實際試用 Kurn，再動 iPad。
 - **第一版範圍**：錄音、手寫紙面、建議卡、收尾，會後摘要沿用 Kurn。
+
+## 2026-11-27 第二輪
+
+- **本人標記納入第一版**：使用者可手動指出哪個講者標籤是自己；仍不辨識他人、不跨會議。
+- **匯出走系統分享**（例如 AirDrop），匯出包的檔案格式之後再定。
+- **Claude Code 記憶匯入仍在構想**，第一版不做。
+- **手寫只是筆記**，不送 AI。
+- **建議卡頻率**沿用 90 秒間隔、10 分鐘最多 3 張，可在設定調整。
+- **Gemini key 第一版由使用者貼入、存 Keychain**；OpenRouter 不支援 Live 的 WebSocket 串流，不採用。給家人用時再評估 Google 的 ephemeral token。
