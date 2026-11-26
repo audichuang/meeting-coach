@@ -1,0 +1,13 @@
+## audi/local-preparation
+ M Kurn/Application/TranscriptionCoordinator+CrossMeetingSpeakerMatch.swift
+ M Kurn/Application/TranscriptionCoordinator+Speakers.swift
+ M Kurn/Application/TranscriptionCoordinator.swift
+ M Kurn/Models/Speaker.swift
+ M KurnTests/CrossMeetingSpeakerMatchTests.swift
+ M KurnTests/ModelTests.swift
+ M KurnTests/SpeakerSyncTests.swift
+?? KurnTests/DefaultSpeakerPrivacyTests.swift
+?? Packages/KurnCore/Sources/KurnCore/SpeakerPrivacyPolicy.swift
+?? Packages/KurnCore/Sources/KurnCore/SuggestionEvents.swift
+?? Packages/KurnCore/Tests/KurnCoreTests/SpeakerPrivacyPolicyTests.swift
+?? Packages/KurnCore/Tests/KurnCoreTests/SuggestionEventsTests.swift

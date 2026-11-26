@@ -1,0 +1,4 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -resolvePackageDependencies -verbose -project Kurn.xcodeproj -scheme Kurn -clonedSourcePackagesDirPath /Users/audichuang/Project/meeting-assistant-preparation/SourcePackages
+
+Resolve Package Graph

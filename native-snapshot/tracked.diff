@@ -1,0 +1,537 @@
+diff --git a/Kurn/Application/TranscriptionCoordinator+CrossMeetingSpeakerMatch.swift b/Kurn/Application/TranscriptionCoordinator+CrossMeetingSpeakerMatch.swift
+index 3a0e03d..5e6032d 100644
+--- a/Kurn/Application/TranscriptionCoordinator+CrossMeetingSpeakerMatch.swift
++++ b/Kurn/Application/TranscriptionCoordinator+CrossMeetingSpeakerMatch.swift
+@@ -13,6 +13,7 @@
+ //
+ 
+ import Foundation
++import KurnCore
+ import SwiftData
+ 
+ extension TranscriptionCoordinator {
+@@ -39,6 +40,7 @@ extension TranscriptionCoordinator {
+     /// offering "this might be Speaker 3 from another meeting" would suggest
+     /// a label, not an identity.
+     func crossMeetingSpeakerCandidates(excluding meeting: Meeting) -> [(value: Speaker, voiceprint: [Float])] {
++        guard SpeakerPrivacyPolicy.allowsAutomaticIdentityMatching else { return [] }
+         let allSpeakers = (try? modelContext.fetch(FetchDescriptor<Speaker>())) ?? []
+         return allSpeakers.compactMap { candidate -> (value: Speaker, voiceprint: [Float])? in
+             guard !candidate.name.isEmpty,
+@@ -56,7 +58,8 @@ extension TranscriptionCoordinator {
+         voiceprint: [Float]?,
+         among candidates: [(value: Speaker, voiceprint: [Float])]
+     ) {
+-        guard let voiceprint,
++        guard SpeakerPrivacyPolicy.allowsAutomaticIdentityMatching,
++              let voiceprint,
+               let matched = SpeakerIdentityMatcher.closestMatch(to: voiceprint, among: candidates) else { return }
+         pendingCrossMeetingMatches.append(
+             CrossMeetingSpeakerMatch(
+@@ -70,6 +73,10 @@ extension TranscriptionCoordinator {
+     /// Confirms a suggested cross-meeting identity: the only place
+     /// `pendingCrossMeetingMatches` ever causes a `.name` to be set.
+     func applyCrossMeetingMatch(_ match: CrossMeetingSpeakerMatch) {
++        guard SpeakerPrivacyPolicy.allowsAutomaticIdentityMatching else {
++            pendingCrossMeetingMatches.removeAll { $0.id == match.id }
++            return
++        }
+         match.newSpeaker.name = match.matchedSpeaker.name
+         persist()
+         pendingCrossMeetingMatches.removeAll { $0.id == match.id }
+diff --git a/Kurn/Application/TranscriptionCoordinator+Speakers.swift b/Kurn/Application/TranscriptionCoordinator+Speakers.swift
+index 1a30738..0c5e1ee 100644
+--- a/Kurn/Application/TranscriptionCoordinator+Speakers.swift
++++ b/Kurn/Application/TranscriptionCoordinator+Speakers.swift
+@@ -15,6 +15,10 @@ import SwiftUI // for Color.speakerHex palette helper
+ 
+ extension TranscriptionCoordinator {
+ 
++    /// Privacy mode: preserve anonymous segmentation and do not use stored
++    /// voiceprints or a named row to automatically identify a speaker. The
++    /// historical reconciliation description below explains the upstream code;
++    /// identity-matching inputs are deliberately empty until consent exists.
+     /// Reconcile the meeting's `Speaker` rows with the labels present across all
+     /// its recordings' current transcripts, keeping each row attached to the
+     /// person it belongs to rather than to the label it happened to have.
+@@ -98,7 +102,7 @@ extension TranscriptionCoordinator {
+             for segment in segments where !recordingLabels.contains(segment.speakerLabel) {
+                 recordingLabels.append(segment.speakerLabel)
+             }
+-            let recordingVoiceprints = recording.speakerVoiceprints
++            let recordingVoiceprints: [String: [Float]] = [:]
+ 
+             // Which row is which person, by voice — over *every* row with a
+             // voiceprint, placed or not. A row an earlier recording in this
+@@ -154,7 +158,8 @@ extension TranscriptionCoordinator {
+             // claimed just because the diarizer handed out the same number
+             // again.
+             for row in rows where !isPlaced(row.speaker) {
+-                guard recordingLabels.contains(row.original),
++                guard row.speaker.name.isEmpty,
++                      recordingLabels.contains(row.original),
+                       !consumed.contains(row.original),
+                       !claimedLabels.contains(row.original) else { continue }
+                 place(row.speaker, rawLabel: row.original, canonical: row.original, voiceprints: recordingVoiceprints)
+diff --git a/Kurn/Application/TranscriptionCoordinator.swift b/Kurn/Application/TranscriptionCoordinator.swift
+index a517870..56822f3 100644
+--- a/Kurn/Application/TranscriptionCoordinator.swift
++++ b/Kurn/Application/TranscriptionCoordinator.swift
+@@ -600,10 +600,9 @@ final class TranscriptionCoordinator {
+         // Clear the AI title so re-transcription regenerates it from the new transcript.
+         recording.meeting?.aiTitle = nil
+ 
+-        // Persisted on the recording (not just handed to syncSpeakers) so this
+-        // run's voiceprints are still available the next time any *other*
+-        // recording in the meeting is (re-)synced — see `Recording.speakerVoiceprints`.
+-        recording.speakerVoiceprints = output.speakerVoiceprints
++        // Do not persist biometric voiceprints before a consent flow exists.
++        // This clears this recording's previous vectors on retranscription.
++        recording.speakerVoiceprints = SpeakerPrivacyPolicy.voiceprintsForStorage(output.speakerVoiceprints)
+         syncSpeakers(for: recording.meeting)
+         persist()
+     }
+diff --git a/Kurn/Models/Speaker.swift b/Kurn/Models/Speaker.swift
+index d92ca0f..6886349 100644
+--- a/Kurn/Models/Speaker.swift
++++ b/Kurn/Models/Speaker.swift
+@@ -55,8 +55,8 @@ final class Speaker {
+         return vector.isEmpty ? nil : vector
+     }
+ 
+-    /// Falls back to the auto label when the user hasn't named the speaker.
++    /// Only the anonymous label is displayed until manual consent is designed.
+     var displayName: String {
+-        name.isEmpty ? label : name
++        label
+     }
+ }
+diff --git a/KurnTests/CrossMeetingSpeakerMatchTests.swift b/KurnTests/CrossMeetingSpeakerMatchTests.swift
+index abbdece..446c542 100644
+--- a/KurnTests/CrossMeetingSpeakerMatchTests.swift
++++ b/KurnTests/CrossMeetingSpeakerMatchTests.swift
+@@ -1,17 +1,3 @@
+-//
+-//  CrossMeetingSpeakerMatchTests.swift
+-//  KurnTests
+-//
+-//  D6: a voiceprint match found in a *different* meeting must be offered, not
+-//  silently applied — a misidentified voice would otherwise attach the wrong
+-//  name to the wrong person with no error anywhere.
+-//
+-//  Runs against a real in-memory `ModelContainer`, like `SpeakerSyncTests`,
+-//  because what's under test is `syncSpeakers`'s SwiftData-facing behavior
+-//  (which rows exist, whether a name gets set) rather than the pure matching
+-//  arithmetic — that's covered separately in `SpeakerIdentityTests`.
+-//
+-
+ import Foundation
+ import KurnCore
+ import SwiftData
+@@ -20,174 +6,32 @@ import Testing
+ 
+ @MainActor
+ struct CrossMeetingSpeakerMatchTests {
+-
+-    // MARK: - Fixtures
+-
+-    private static func unitVector(axis: Int, noise: Float = 0, dimension: Int = 8) -> [Float] {
+-        var vector = [Float](repeating: 0, count: dimension)
+-        vector[axis % dimension] = 1
+-        vector[(axis + 1) % dimension] = noise
+-        let norm = vector.reduce(Float(0)) { $0 + $1 * $1 }.squareRoot()
+-        return norm > 0 ? vector.map { $0 / norm } : vector
+-    }
+-
+-    private struct Fixture {
+-        var context: ModelContext
+-        var viewModel: TranscriptionCoordinator
+-        var meetingA: Meeting
+-        var recordingA: Recording
+-        var meetingB: Meeting
+-        var recordingB: Recording
+-    }
+-
+-    private static func make() -> Fixture {
+-        let container = TestModelContainer.make()
+-        let context = ModelContext(container)
+-
+-        let meetingA = Meeting(title: "Weekly Sync")
+-        context.insert(meetingA)
+-        let recordingA = Recording(meeting: meetingA, fileName: "a.m4a", duration: 60)
+-        context.insert(recordingA)
+-
+-        let meetingB = Meeting(title: "Planning")
+-        context.insert(meetingB)
+-        let recordingB = Recording(meeting: meetingB, fileName: "b.m4a", duration: 60)
+-        context.insert(recordingB)
+-
+-        return Fixture(
+-            context: context,
+-            viewModel: TranscriptionCoordinator(modelContext: context),
+-            meetingA: meetingA,
+-            recordingA: recordingA,
+-            meetingB: meetingB,
+-            recordingB: recordingB
+-        )
+-    }
+-
+-    private static func setTranscript(_ labels: [String], on fixture: Fixture, recording: Recording) {
+-        if let existing = recording.transcript {
+-            recording.transcript = nil
+-            fixture.context.delete(existing)
+-        }
+-        let segments = labels.enumerated().map { index, label in
+-            TranscriptSegment(
+-                speakerLabel: label,
+-                startTime: TimeInterval(index * 10),
+-                endTime: TimeInterval(index * 10 + 10),
+-                text: "linha \(index)",
+-                confidence: nil
+-            )
+-        }
+-        let transcript = Transcript(recording: recording, segments: segments, language: "en")
+-        fixture.context.insert(transcript)
+-    }
+-
+-    /// Meeting A gets one named, voiceprinted speaker — the only kind of row
+-    /// D6 should ever offer as a cross-meeting candidate.
+-    private static func seedNamedSpeaker(
+-        _ name: String,
+-        voiceprint: [Float],
+-        in fixture: Fixture,
+-        recording: Recording,
+-        meeting: Meeting
+-    ) throws {
+-        setTranscript(["Speaker 1"], on: fixture, recording: recording)
+-        recording.speakerVoiceprints = ["Speaker 1": voiceprint]
+-        fixture.viewModel.syncSpeakers(for: meeting)
+-        try fixture.context.save()
+-        let row = try #require(meeting.speakers.first)
+-        row.name = name
+-        try fixture.context.save()
+-    }
+-
+-    // MARK: - Tests
+-
+-    @Test func aNamedSpeakerInAnotherMeetingIsOfferedNotApplied() throws {
+-        let fixture = Self.make()
+-        let ana = Self.unitVector(axis: 0)
+-        try Self.seedNamedSpeaker("Ana", voiceprint: ana, in: fixture, recording: fixture.recordingA, meeting: fixture.meetingA)
+-
+-        // A brand-new speaker in a different meeting, same voice.
+-        Self.setTranscript(["Speaker 1"], on: fixture, recording: fixture.recordingB)
+-        fixture.recordingB.speakerVoiceprints = ["Speaker 1": Self.unitVector(axis: 0, noise: 0.05)]
+-        fixture.viewModel.syncSpeakers(for: fixture.meetingB)
+-        try fixture.context.save()
+-
+-        let match = try #require(fixture.viewModel.pendingCrossMeetingMatches.first)
+-        #expect(match.matchedSpeaker.name == "Ana")
+-        #expect(match.matchedMeetingTitle == "Weekly Sync")
+-        // Never applied silently: the new row is still unnamed.
+-        #expect(match.newSpeaker.name.isEmpty)
+-        #expect(fixture.meetingB.speakers.allSatisfy { $0.name.isEmpty })
+-    }
+-
+-    @Test func applyingTheMatchSetsTheNameAndClearsTheQueue() throws {
+-        let fixture = Self.make()
+-        let ana = Self.unitVector(axis: 0)
+-        try Self.seedNamedSpeaker("Ana", voiceprint: ana, in: fixture, recording: fixture.recordingA, meeting: fixture.meetingA)
+-
+-        Self.setTranscript(["Speaker 1"], on: fixture, recording: fixture.recordingB)
+-        fixture.recordingB.speakerVoiceprints = ["Speaker 1": Self.unitVector(axis: 0, noise: 0.05)]
+-        fixture.viewModel.syncSpeakers(for: fixture.meetingB)
+-        try fixture.context.save()
+-
+-        let match = try #require(fixture.viewModel.pendingCrossMeetingMatches.first)
+-        fixture.viewModel.applyCrossMeetingMatch(match)
+-
+-        #expect(fixture.viewModel.pendingCrossMeetingMatches.isEmpty)
+-        let newRow = try #require(fixture.meetingB.speakers.first)
+-        #expect(newRow.name == "Ana")
+-    }
+-
+-    @Test func dismissingTheMatchLeavesTheNewSpeakerUnnamed() throws {
+-        let fixture = Self.make()
+-        let ana = Self.unitVector(axis: 0)
+-        try Self.seedNamedSpeaker("Ana", voiceprint: ana, in: fixture, recording: fixture.recordingA, meeting: fixture.meetingA)
+-
+-        Self.setTranscript(["Speaker 1"], on: fixture, recording: fixture.recordingB)
+-        fixture.recordingB.speakerVoiceprints = ["Speaker 1": Self.unitVector(axis: 0, noise: 0.05)]
+-        fixture.viewModel.syncSpeakers(for: fixture.meetingB)
+-        try fixture.context.save()
+-
+-        let match = try #require(fixture.viewModel.pendingCrossMeetingMatches.first)
+-        fixture.viewModel.dismissCrossMeetingMatch(match)
+-
+-        #expect(fixture.viewModel.pendingCrossMeetingMatches.isEmpty)
+-        let newRow = try #require(fixture.meetingB.speakers.first)
+-        #expect(newRow.name.isEmpty)
+-    }
+-
+-    @Test func aVoiceWithNoCloseMatchProducesNoSuggestion() throws {
+-        let fixture = Self.make()
+-        let ana = Self.unitVector(axis: 0)
+-        try Self.seedNamedSpeaker("Ana", voiceprint: ana, in: fixture, recording: fixture.recordingA, meeting: fixture.meetingA)
+-
+-        // A different voice entirely.
+-        Self.setTranscript(["Speaker 1"], on: fixture, recording: fixture.recordingB)
+-        fixture.recordingB.speakerVoiceprints = ["Speaker 1": Self.unitVector(axis: 4)]
+-        fixture.viewModel.syncSpeakers(for: fixture.meetingB)
+-        try fixture.context.save()
+-
+-        #expect(fixture.viewModel.pendingCrossMeetingMatches.isEmpty)
+-    }
+-
+-    /// Only a row the user has named is a usable candidate — offering "this
+-    /// might be Speaker 3 from another meeting" would suggest a label, not an
+-    /// identity, which is exactly the thing this whole feature exists to stop
+-    /// doing.
+-    @Test func anUnnamedSpeakerElsewhereIsNeverOfferedAsAMatch() throws {
+-        let fixture = Self.make()
+-        Self.setTranscript(["Speaker 1"], on: fixture, recording: fixture.recordingA)
+-        fixture.recordingA.speakerVoiceprints = ["Speaker 1": Self.unitVector(axis: 0)]
+-        fixture.viewModel.syncSpeakers(for: fixture.meetingA)
+-        try fixture.context.save()
+-        #expect(fixture.meetingA.speakers.first?.name.isEmpty == true)
+-
+-        Self.setTranscript(["Speaker 1"], on: fixture, recording: fixture.recordingB)
+-        fixture.recordingB.speakerVoiceprints = ["Speaker 1": Self.unitVector(axis: 0, noise: 0.05)]
+-        fixture.viewModel.syncSpeakers(for: fixture.meetingB)
+-        try fixture.context.save()
+-
+-        #expect(fixture.viewModel.pendingCrossMeetingMatches.isEmpty)
++    @Test func namedSyntheticSpeakerIsNotACandidate() throws {
++        let context = ModelContext(TestModelContainer.make())
++        let previous = Meeting(title: "Synthetic previous")
++        let current = Meeting(title: "Synthetic current")
++        context.insert(previous); context.insert(current)
++        let old = Speaker(meeting: previous, label: "Speaker 1", name: "Synthetic", color: "#FFFFFF", voiceprintData: VectorData.encode([1, 0]))
++        context.insert(old); try context.save()
++        let coordinator = TranscriptionCoordinator(modelContext: context)
++        #expect(coordinator.crossMeetingSpeakerCandidates(excluding: current).isEmpty)
++    }
++    @Test func directStageDoesNotOfferIdentity() {
++        let context = ModelContext(TestModelContainer.make())
++        let coordinator = TranscriptionCoordinator(modelContext: context)
++        let old = Speaker(label: "Speaker 1", name: "Synthetic", color: "#FFFFFF")
++        let new = Speaker(label: "Speaker 1", color: "#FFFFFF")
++        coordinator.stageCrossMeetingMatchIfPossible(for: new, voiceprint: [1, 0], among: [(value: old, voiceprint: [1, 0])])
++        #expect(coordinator.pendingCrossMeetingMatches.isEmpty)
++        #expect(new.name.isEmpty)
++    }
++    @Test func staleMatchCannotApplyIdentity() {
++        let context = ModelContext(TestModelContainer.make())
++        let coordinator = TranscriptionCoordinator(modelContext: context)
++        let old = Speaker(label: "Speaker 1", name: "Synthetic", color: "#FFFFFF")
++        let new = Speaker(label: "Speaker 1", color: "#FFFFFF")
++        let match = TranscriptionCoordinator.CrossMeetingSpeakerMatch(newSpeaker: new, matchedSpeaker: old, matchedMeetingTitle: "Synthetic")
++        coordinator.applyCrossMeetingMatch(match)
++        #expect(new.name.isEmpty)
+     }
+ }
+diff --git a/KurnTests/ModelTests.swift b/KurnTests/ModelTests.swift
+index fb70be8..6848206 100644
+--- a/KurnTests/ModelTests.swift
++++ b/KurnTests/ModelTests.swift
+@@ -310,12 +310,12 @@ struct ModelTests {
+ 
+     // MARK: - Speaker
+ 
+-    @Test func displayNameFallsBackToLabelWhenNameIsEmpty() {
++    @Test func displayNameRemainsAnonymousEvenWhenLegacyNameExists() {
+         let speaker = Speaker(label: "Speaker 1", color: "#FFFFFF")
+         #expect(speaker.displayName == "Speaker 1")
+ 
+         speaker.name = "Carlos"
+-        #expect(speaker.displayName == "Carlos")
++        #expect(speaker.displayName == "Speaker 1")
+     }
+ 
+     // MARK: - Summary
+diff --git a/KurnTests/SpeakerSyncTests.swift b/KurnTests/SpeakerSyncTests.swift
+index 26abe53..317879a 100644
+--- a/KurnTests/SpeakerSyncTests.swift
++++ b/KurnTests/SpeakerSyncTests.swift
+@@ -63,12 +63,8 @@ struct SpeakerSyncTests {
+     /// not apply them to `meeting.speakers` until the context is saved, which is
+     /// what `saveTranscript` does around it in production.
+     ///
+-    /// `voiceprints` are stored on `fixture.recording` — the single-recording
+-    /// path every existing test here exercises — since `syncSpeakers` now
+-    /// reads each recording's own persisted `speakerVoiceprints` instead of
+-    /// taking them as a parameter. The cross-recording tests below set
+-    /// `speakerVoiceprints` directly on whichever recording they mean instead
+-    /// of going through this helper.
++    /// Synthetic preexisting vectors model a legacy store; privacy mode must
++    /// not read them for identity matching or copy them onto speaker rows.
+     private static func sync(
+         _ fixture: Fixture,
+         voiceprints: [String: [Float]] = [:]
+@@ -99,33 +95,18 @@ struct SpeakerSyncTests {
+ 
+     // MARK: - Tests
+ 
+-    /// The regression this whole change exists for: the diarizer renumbers, and
+-    /// the name has to follow the voice rather than the number.
+-    @Test func aRenamedSpeakerFollowsItsVoiceAcrossRenumbering() throws {
+-        let fixture = Self.make()
+-        let ana = Self.unitVector(axis: 0)
+-        let bruno = Self.unitVector(axis: 4)
+-
+-        Self.setTranscript(["Speaker 1", "Speaker 2"], on: fixture)
+-        try Self.sync(fixture, voiceprints: ["Speaker 1": ana, "Speaker 2": bruno])
+-        let anaRow = try #require(fixture.meeting.speakers.first { $0.label == "Speaker 1" })
+-        anaRow.name = "Ana"
+-        let anaID = anaRow.id
+-
+-        // Re-transcribe: the same two voices come back with the labels swapped.
+-        Self.setTranscript(["Speaker 1", "Speaker 2"], on: fixture)
+-        try Self.sync(fixture, voiceprints: [
+-            "Speaker 1": Self.unitVector(axis: 4, noise: 0.05),
+-            "Speaker 2": Self.unitVector(axis: 0, noise: 0.05)
+-        ])
+-
+-        let named = fixture.meeting.speakers.filter { !$0.name.isEmpty }
+-        #expect(named.count == 1)
+-        #expect(named.first?.name == "Ana")
+-        #expect(named.first?.id == anaID)
+-        // Ana is now Speaker 2 — the label moved with her, and did not take
+-        // someone else's name with it.
+-        #expect(named.first?.label == "Speaker 2")
++    /// A named legacy row is kept but never reidentified by synthetic voice.
++    @Test func aNamedRowIsNotAutomaticallyAssignedToRenumberedVoice() throws {
++        let f = Self.make()
++        Self.setTranscript(["Speaker 1", "Speaker 2"], on: f)
++        try Self.sync(f, voiceprints: ["Speaker 1": Self.unitVector(axis: 0), "Speaker 2": Self.unitVector(axis: 4)])
++        let named = try #require(f.meeting.speakers.first { $0.label == "Speaker 1" })
++        named.name = "Synthetic Name"
++        Self.setTranscript(["Speaker 1", "Speaker 2"], on: f)
++        try Self.sync(f, voiceprints: ["Speaker 1": Self.unitVector(axis: 4), "Speaker 2": Self.unitVector(axis: 0)])
++        #expect(f.meeting.speakers.contains { $0.id == named.id && $0.name == "Synthetic Name" })
++        #expect(named.displayName == named.label)
++        #expect(f.meeting.speakers.filter { $0.name.isEmpty }.allSatisfy { $0.voiceprint == nil })
+     }
+ 
+     /// The original data loss: a rename, then a run that finds fewer speakers.
+@@ -178,17 +159,12 @@ struct SpeakerSyncTests {
+         #expect(fixture.meeting.speakers.contains { $0.label == "Speaker 2" && $0.name.isEmpty })
+     }
+ 
+-    @Test func voiceprintsArePersistedAndRefreshed() throws {
+-        let fixture = Self.make()
+-        Self.setTranscript(["Speaker 1"], on: fixture)
+-        try Self.sync(fixture, voiceprints: ["Speaker 1": Self.unitVector(axis: 0)])
+-        let row = try #require(fixture.meeting.speakers.first)
+-        #expect(row.voiceprint != nil)
+-
+-        let refreshed = Self.unitVector(axis: 0, noise: 0.2)
+-        try Self.sync(fixture, voiceprints: ["Speaker 1": refreshed])
+-        let stored = try #require(row.voiceprint)
+-        #expect(zip(stored, refreshed).allSatisfy { abs($0 - $1) < 1e-6 })
++    @Test func syntheticVoiceprintsAreNotWrittenToSpeakerRows() throws {
++        let f = Self.make()
++        Self.setTranscript(["Speaker 1"], on: f)
++        try Self.sync(f, voiceprints: ["Speaker 1": Self.unitVector(axis: 0)])
++        #expect(f.meeting.speakers.count == 1)
++        #expect(f.meeting.speakers.allSatisfy { $0.voiceprintData == nil })
+     }
+ 
+     /// The heuristic engine reports no embeddings at all, and that path must
+@@ -204,74 +180,29 @@ struct SpeakerSyncTests {
+ 
+     // MARK: - Cross-recording reconciliation (D1)
+ 
+-    /// The defect this change exists to fix: two recordings in one meeting,
+-    /// each independently numbered by its own diarizer run, must not have
+-    /// their same-numbered-but-different speakers merged into one row just
+-    /// because the label strings match.
+-    @Test func twoDifferentVoicesLabeledTheSameAcrossRecordingsStayDistinct() throws {
+-        let fixture = Self.make()
+-        let ana = Self.unitVector(axis: 0)
+-        let carlos = Self.unitVector(axis: 4)
+-
+-        Self.setTranscript(["Speaker 1"], on: fixture)
+-        fixture.recording.speakerVoiceprints = ["Speaker 1": ana]
+-        fixture.viewModel.syncSpeakers(for: fixture.meeting)
+-        try fixture.context.save()
+-
+-        let anaRow = try #require(fixture.meeting.speakers.first { $0.label == "Speaker 1" })
+-        anaRow.name = "Ana"
+-        let anaID = anaRow.id
+-
+-        // A second recording's own diarization run independently calls its
+-        // only speaker "Speaker 1" too — but it's a different voice entirely.
+-        Self.setTranscript(["Speaker 1"], on: fixture, recording: fixture.recordingB)
+-        fixture.recordingB.speakerVoiceprints = ["Speaker 1": carlos]
+-        fixture.viewModel.syncSpeakers(for: fixture.meeting)
+-        try fixture.context.save()
+-
+-        #expect(fixture.meeting.speakers.count == 2)
+-        let named = fixture.meeting.speakers.filter { !$0.name.isEmpty }
+-        #expect(named.count == 1)
+-        #expect(named.first?.name == "Ana")
+-        #expect(named.first?.id == anaID)
+-        // Carlos's voice got its own row, not Ana's.
+-        #expect(fixture.meeting.speakers.contains { $0.name.isEmpty && $0.id != anaID })
++    /// Numbering is per recording and must not infer identity.
++    @Test func separateRecordingsDoNotTriggerVoiceIdentityMatching() throws {
++        let f = Self.make()
++        Self.setTranscript(["Speaker 1"], on: f)
++        Self.setTranscript(["Speaker 1"], on: f, recording: f.recordingB)
++        f.recording.speakerVoiceprints = ["Speaker 1": Self.unitVector(axis: 0)]
++        f.recordingB.speakerVoiceprints = ["Speaker 1": Self.unitVector(axis: 0)]
++        f.viewModel.syncSpeakers(for: f.meeting)
++        try f.context.save()
++        #expect(f.meeting.speakers.count == 2)
++        #expect(f.meeting.speakers.allSatisfy { $0.voiceprintData == nil && $0.name.isEmpty })
+     }
+ 
+-    /// The other half of the same fix: one person heard in two recordings,
+-    /// renumbered independently by each one's own diarizer run, must still be
+-    /// recognized as one person rather than becoming two rows.
+-    @Test func theSameVoiceAcrossTwoRecordingsIsRecognizedRegardlessOfLabel() throws {
+-        let fixture = Self.make()
+-        let ana = Self.unitVector(axis: 0)
+-        let bruno = Self.unitVector(axis: 4)
+-
+-        Self.setTranscript(["Speaker 1", "Speaker 2"], on: fixture)
+-        fixture.recording.speakerVoiceprints = ["Speaker 1": ana, "Speaker 2": bruno]
+-        fixture.viewModel.syncSpeakers(for: fixture.meeting)
+-        try fixture.context.save()
+-
+-        let anaRow = try #require(fixture.meeting.speakers.first { $0.label == "Speaker 1" })
+-        anaRow.name = "Ana"
+-        let anaID = anaRow.id
+-        #expect(fixture.meeting.speakers.count == 2)
+-
+-        // A second recording's diarizer hears the same two voices but numbers
+-        // them independently: Ana is still "Speaker 1" here, Bruno "Speaker 2"
+-        // — coincidentally the same numbering, which must not be required.
+-        Self.setTranscript(["Speaker 1", "Speaker 2"], on: fixture, recording: fixture.recordingB)
+-        fixture.recordingB.speakerVoiceprints = [
+-            "Speaker 1": Self.unitVector(axis: 0, noise: 0.05),
+-            "Speaker 2": Self.unitVector(axis: 4, noise: 0.05)
+-        ]
+-        fixture.viewModel.syncSpeakers(for: fixture.meeting)
+-        try fixture.context.save()
+-
+-        // Still two people, not four — the second recording's voices were
+-        // recognized rather than creating duplicate rows.
+-        #expect(fixture.meeting.speakers.count == 2)
+-        let named = fixture.meeting.speakers.filter { !$0.name.isEmpty }
+-        #expect(named.count == 1)
+-        #expect(named.first?.id == anaID)
++    /// Even identical synthetic vectors cannot merge two recordings.
++    @Test func identicalSyntheticVoicesAreNotMergedAcrossRecordings() throws {
++        let f = Self.make()
++        Self.setTranscript(["Speaker 1"], on: f)
++        Self.setTranscript(["Speaker 1"], on: f, recording: f.recordingB)
++        f.recording.speakerVoiceprints = ["Speaker 1": Self.unitVector(axis: 0)]
++        f.recordingB.speakerVoiceprints = ["Speaker 1": Self.unitVector(axis: 0)]
++        f.viewModel.syncSpeakers(for: f.meeting)
++        try f.context.save()
++        #expect(f.meeting.speakers.count == 2)
++        #expect(f.meeting.speakers.allSatisfy { $0.name.isEmpty && $0.voiceprintData == nil })
+     }
+ }
