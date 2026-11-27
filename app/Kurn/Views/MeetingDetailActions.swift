@@ -291,4 +291,15 @@ extension MeetingDetailView {
             actionError = error
         }
     }
+
+    func placeholder(icon: String, title: String, subtitle: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: icon).font(.largeTitle).foregroundStyle(Theme.textTertiary)
+                .accessibilityHidden(true)
+            Text(title).font(.headline).foregroundStyle(Theme.textPrimary)
+            Text(subtitle).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity).padding(.top, 60)
+    }
 }

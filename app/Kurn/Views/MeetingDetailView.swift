@@ -20,6 +20,9 @@ struct MeetingDetailView: View {
     /// context save — see `sortedRecordings` in `MeetingDetailActions.swift`
     /// for why `meeting.recordings` itself isn't used.
     @Query var queriedRecordings: [Recording]
+    /// Scoped to this meeting so handwritten notes saved during a recording
+    /// appear immediately when returning to the detail screen.
+    @Query var queriedPaperNotes: [PaperNote]
 
     @Environment(\.modelContext) var modelContext
     @Environment(\.meetingLibrary) var meetingLibrary
@@ -105,6 +108,9 @@ struct MeetingDetailView: View {
     /// empty until transcription finishes. Not `private` —
     /// `MeetingDetailPhotos.swift` needs it.
     @State var presentedPhoto: MeetingPhoto?
+    /// Read-only full-page handwritten note viewer. Not `private` —
+    /// `MeetingDetailPaperNotes.swift` drives it.
+    @State var presentedPaperNote: PaperNote?
     /// The Documents section's state. Not `private` —
     /// `MeetingDetailAttachments.swift` and the toolbar need it.
     @State var attachments = MeetingAttachmentsViewModel()
@@ -150,6 +156,10 @@ struct MeetingDetailView: View {
             filter: #Predicate<Recording> { $0.meeting?.id == meetingID },
             sort: \Recording.recordedAt
         )
+        _queriedPaperNotes = Query(
+            filter: #Predicate<PaperNote> { $0.meeting?.id == meetingID },
+            sort: \PaperNote.createdAt
+        )
     }
 
     var body: some View {
@@ -183,6 +193,9 @@ struct MeetingDetailView: View {
         .sheet(item: $shareItem) { item in ActivityView(items: item.urls) }
         .sheet(item: $presentedPhoto) { photo in
             PhotoViewerView(photo: photo, onDelete: { deletePhoto(photo) })
+        }
+        .sheet(item: $presentedPaperNote) { note in
+            PaperNoteViewerView(note: note)
         }
         .fileImporter(
             isPresented: $attachments.isShowingImporter,
@@ -428,6 +441,7 @@ struct MeetingDetailView: View {
             addSegmentButton
                 .clearListRow(insets: EdgeInsets(top: 8, leading: 20, bottom: 24, trailing: 20))
             photosStrip
+            paperNotesSection
             attachmentsSection
         }
         .listStyle(.plain)
@@ -502,16 +516,5 @@ struct MeetingDetailView: View {
             .foregroundStyle(Theme.textTertiary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 2)
-    }
-
-    func placeholder(icon: String, title: String, subtitle: String) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: icon).font(.largeTitle).foregroundStyle(Theme.textTertiary)
-                .accessibilityHidden(true)
-            Text(title).font(.headline).foregroundStyle(Theme.textPrimary)
-            Text(subtitle).font(.subheadline).foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity).padding(.top, 60)
     }
 }
