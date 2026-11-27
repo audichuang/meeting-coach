@@ -26,11 +26,10 @@ struct CoachBackend: Sendable, Equatable {
     /// Read off the main actor too (ProviderFactory), so it reads `UserDefaults`
     /// and the Keychain directly rather than `AppSettings`.
     static func current(defaults: UserDefaults = .standard) -> CoachBackend? {
-        let server = debugOverride("KURN_DEBUG_COACH_SERVER_URL") ?? defaults.string(forKey: serverURLKey) ?? ""
-        let invite = debugOverride("KURN_DEBUG_COACH_INVITE")
-            ?? KeychainManager.shared.value(for: AIProvider.meetingCoach.keychainAccount) ?? ""
-        if let base = workerBaseURL(server), !invite.isEmpty {
-            return CoachBackend(baseURL: base, token: invite, viaWorker: true)
+        let server = defaults.string(forKey: serverURLKey) ?? ""
+        let invite = KeychainManager.shared.value(for: AIProvider.meetingCoach.keychainAccount) ?? ""
+        if let worker = workerBackend(serverURL: server, invite: invite) {
+            return worker
         }
         #if DEBUG
         let key = ProviderFactory.storedAPIKey(for: .openAI)
@@ -39,6 +38,15 @@ struct CoachBackend: Sendable, Equatable {
         }
         #endif
         return nil
+    }
+
+    /// Resolves a Worker backend from explicit server URL and invite strings,
+    /// applying the existing HTTPS/host validation and DEBUG env overrides.
+    static func workerBackend(serverURL: String, invite: String) -> CoachBackend? {
+        let server = debugOverride("KURN_DEBUG_COACH_SERVER_URL") ?? serverURL
+        let token = debugOverride("KURN_DEBUG_COACH_INVITE") ?? invite
+        guard let base = workerBaseURL(server), !token.isEmpty else { return nil }
+        return CoachBackend(baseURL: base, token: token, viaWorker: true)
     }
 
     /// DEBUG only: an unsigned simulator build cannot reach the Keychain.

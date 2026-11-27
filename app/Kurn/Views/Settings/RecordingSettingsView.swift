@@ -23,9 +23,14 @@ struct RecordingSettingsView: View {
     /// re-authentication prompt.
     @State private var authError: AppError?
     private let authorizer = SensitiveActionAuthorizer()
-    /// The invite code being edited; written to the Keychain as it changes.
-    @State private var inviteDraft = ""
-    @State private var coachUsage: CoachUsageStatus = .unknown
+    /// The invite code and server URL drafts plus monthly usage status.
+    @State private var coachServer = CoachServerSettingsController()
+    @FocusState private var focusedField: CoachField?
+
+    private enum CoachField: Hashable {
+        case serverURL
+        case invite
+    }
 
     var body: some View {
         Form {
@@ -37,13 +42,18 @@ struct RecordingSettingsView: View {
         }
         .navigationTitle(NSLocalizedString("settings.recording", comment: "Recording"))
         .onAppear {
-            if case .found(let value) = settings.credentials.readKey(for: .meetingCoach) { inviteDraft = value }
+            coachServer.load(settings: settings)
         }
-        .task(id: "\(settings.coachServerURL)|\(settings.credentials.revision)") {
-            // Debounces typing in either field before asking the server.
-            try? await Task.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
-            coachUsage = await CoachUsageStatus.load()
+        .onChange(of: focusedField) { previous, current in
+            if previous == .serverURL, current != .serverURL {
+                coachServer.commitServerURL(settings: settings)
+            }
+            if previous == .invite, current != .invite {
+                coachServer.commitInvite(settings: settings)
+            }
+        }
+        .onDisappear {
+            coachServer.disappear(settings: settings)
         }
         .modelDownloadAlerts(downloads, settings: settings) { showingNetworkSettings = true }
         .errorAlert($authError)
@@ -118,23 +128,35 @@ struct RecordingSettingsView: View {
             LabeledContent(NSLocalizedString("settings.meeting_coach_server", comment: "Server URL for the coach")) {
                 TextField(
                     "https://",
-                    text: Binding(get: { settings.coachServerURL }, set: { settings.coachServerURL = $0 })
+                    text: Binding(
+                        get: { coachServer.serverURLDraft },
+                        set: { coachServer.editServerURL($0) }
+                    )
                 )
                 .multilineTextAlignment(.trailing)
                 .keyboardType(.URL)
                 .textContentType(.URL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .focused($focusedField, equals: .serverURL)
+                .onSubmit { coachServer.commitServerURL(settings: settings, forceReload: true) }
                 .accessibilityLabel(NSLocalizedString("settings.meeting_coach_server", comment: "Server URL for the coach"))
             }
             LabeledContent(NSLocalizedString("settings.meeting_coach_invite", comment: "Invite code for the coach server")) {
-                SecureField(NSLocalizedString("settings.meeting_coach_invite", comment: "Invite code for the coach server"), text: $inviteDraft)
-                    .multilineTextAlignment(.trailing)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .onChange(of: inviteDraft) { _, newValue in settings.credentials.saveKey(newValue, for: .meetingCoach) }
+                SecureField(
+                    NSLocalizedString("settings.meeting_coach_invite", comment: "Invite code for the coach server"),
+                    text: Binding(
+                        get: { coachServer.inviteDraft },
+                        set: { coachServer.editInvite($0) }
+                    )
+                )
+                .multilineTextAlignment(.trailing)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused($focusedField, equals: .invite)
+                .onSubmit { coachServer.commitInvite(settings: settings, forceReload: true) }
             }
-            if let usageText = coachUsage.text {
+            if let usageText = coachServer.usage.text {
                 LabeledContent(NSLocalizedString("settings.meeting_coach_usage", comment: "This month's coach spend"), value: usageText)
             }
             LabeledContent(NSLocalizedString("settings.meeting_coach_name", comment: "Your name, used by the coach")) {
@@ -266,34 +288,6 @@ struct RecordingSettingsView: View {
             case .cancelled: break
             case .denied(let error): authError = error
             }
-        }
-    }
-}
-
-/// The Settings row for the Worker's `GET /v1/usage`.
-enum CoachUsageStatus: Equatable {
-    case unknown
-    case loaded(CoachBackend.Usage)
-    case unauthorized
-    case failed
-
-    static func load() async -> CoachUsageStatus {
-        guard let backend = CoachBackend.current(), backend.viaWorker else { return .unknown }
-        do {
-            return .loaded(try await backend.usage())
-        } catch {
-            return error.isCoachUnauthorized ? .unauthorized : .failed
-        }
-    }
-
-    var text: String? {
-        switch self {
-        case .unknown: return nil
-        case .loaded(let usage):
-            return String(format: NSLocalizedString("settings.meeting_coach_usage_value", comment: "Spent of cap, USD"),
-                          usage.month.usd, usage.monthlyCapUSD)
-        case .unauthorized: return NSLocalizedString("settings.meeting_coach_invite_invalid", comment: "Invite code rejected")
-        case .failed: return NSLocalizedString("settings.meeting_coach_usage_failed", comment: "Usage could not be loaded")
         }
     }
 }
