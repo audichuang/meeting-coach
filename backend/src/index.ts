@@ -111,9 +111,10 @@ function openai(env: Env, path: string, body: unknown): Promise<Response> {
 }
 
 async function realtimeSession(env: Env, caller: Caller): Promise<Response> {
-  // The secret only has to open the socket; the App asks for a fresh one per (re)connect.
+  // The secret only gates opening sockets, and one secret can open several
+  // sessions while valid, so keep it short; the App fetches one per (re)connect.
   const upstream = await openai(env, "/realtime/client_secrets", {
-    expires_after: { anchor: "created_at", seconds: 600 },
+    expires_after: { anchor: "created_at", seconds: 60 },
     session: TRANSCRIPTION_SESSION,
   });
   const text = await upstream.text();
