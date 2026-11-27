@@ -64,3 +64,5 @@ __pycache__/
 # Node (scripts/screenshots marketing screenshot renderer)
 node_modules/
 scripts/screenshots/screenshots-framed/
+
+Config/Secrets.xcconfig

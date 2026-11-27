@@ -45,6 +45,10 @@
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
+	<key>CoachAccessClientID</key>
+	<string>$(COACH_ACCESS_CLIENT_ID)</string>
+	<key>CoachAccessClientSecret</key>
+	<string>$(COACH_ACCESS_CLIENT_SECRET)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>

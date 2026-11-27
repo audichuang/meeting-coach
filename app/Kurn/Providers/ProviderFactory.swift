@@ -100,11 +100,13 @@ enum ProviderFactory {
     ) throws -> any TranscriptionProvider {
         var provider = provider
         var key = ""
+        var extraHeaders: [String: String] = [:]
         if provider.id == AIProvider.meetingCoach.id {
             // The coach's formal transcript goes wherever the coach does now (Worker or, in DEBUG, OpenAI).
             let backend = CoachBackend.current()
             provider = backend?.provider ?? AIProvider.openAI
             key = backend?.token ?? ""
+            extraHeaders = backend?.accessHeaders ?? [:]
         } else {
             key = storedAPIKey(for: provider)
         }
@@ -133,7 +135,8 @@ enum ProviderFactory {
                 apiKey: key,
                 transcriptionModel: resolvedModel,
                 transcriptionPrompt: prompt,
-                largeTransferPolicy: transferPolicy
+                largeTransferPolicy: transferPolicy,
+                extraHeaders: extraHeaders
             )
             return provider.id == AIProvider.meetingCoach.id ? CoachTranscriptionProvider(base: openAI) : openAI
         case .anthropic, .googleGemini, .appleOnDevice:

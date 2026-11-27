@@ -1077,6 +1077,7 @@
 "coach.status.unauthorized" = "Invite code rejected; check it in Settings";
 "coach.error.quota" = "This month's allowance is used up.";
 "coach.error.unauthorized" = "Invite code rejected; check it in Settings.";
+"coach.error.accessMissing" = "此版本缺少服务器访问凭证，请重新安装正式版。";
 "settings.meeting_coach_server" = "Server URL";
 "settings.meeting_coach_invite" = "Invite code";
 "settings.meeting_coach_usage" = "This month";

@@ -163,7 +163,7 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         var request = URLRequest(url: backend.baseURL.appending(path: "realtime/session"))
         request.httpMethod = "POST"
         request.timeoutInterval = 15
-        request.setValue("Bearer \(backend.token)", forHTTPHeaderField: "Authorization")
+        backend.authorize(&request)
         let (data, _) = try await LLMHTTP.sendValidated(request, session: session)
         let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         guard let value = root?["value"] as? String, !value.isEmpty else {

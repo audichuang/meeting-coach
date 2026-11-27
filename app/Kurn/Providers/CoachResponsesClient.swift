@@ -56,7 +56,7 @@ struct CoachResponsesClient: CoachLLM {
         var request = URLRequest(url: backend.baseURL.appending(path: "responses"))
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
-        request.setValue("Bearer \(backend.token)", forHTTPHeaderField: "Authorization")
+        backend.authorize(&request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         do {

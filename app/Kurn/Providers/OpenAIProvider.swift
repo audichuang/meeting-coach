@@ -22,6 +22,8 @@ struct OpenAIProvider: LLMProvider, TranscriptionProvider {
     /// Optional `prompt` field steering vocabulary and script (meeting coach).
     private let transcriptionPrompt: String?
     private let largeTransferPolicy: LargeTransferPolicy
+    /// Extra transcription-route headers (the meeting coach Worker's Cloudflare Access token).
+    private let extraHeaders: [String: String]
 
     init(
         provider: AIProvider = .openAI,
@@ -30,8 +32,10 @@ struct OpenAIProvider: LLMProvider, TranscriptionProvider {
         transcriptionModel: String = "whisper-1",
         transcriptionPrompt: String? = nil,
         session: URLSession = .shared,
-        largeTransferPolicy: LargeTransferPolicy = .wifiOnly
+        largeTransferPolicy: LargeTransferPolicy = .wifiOnly,
+        extraHeaders: [String: String] = [:]
     ) {
+        self.extraHeaders = extraHeaders
         self.provider = provider
         self.apiKey = apiKey
         self.chatModel = model
@@ -130,6 +134,7 @@ struct OpenAIProvider: LLMProvider, TranscriptionProvider {
         // alone can take longer than 60s under load. 300s leaves comfortable headroom.
         request.timeoutInterval = LLMHTTP.transcriptionTimeout
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        for (name, value) in extraHeaders { request.setValue(value, forHTTPHeaderField: name) }
         request.setValue(
             "multipart/form-data; boundary=\(boundary)",
             forHTTPHeaderField: "Content-Type"

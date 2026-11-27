@@ -18,6 +18,8 @@ struct CoachBackend: Sendable, Equatable {
     /// The invite code for the Worker, or the OpenAI key when direct.
     let token: String
     let viaWorker: Bool
+    /// Cloudflare Access headers the Worker's front door requires; empty when direct.
+    var accessHeaders: [String: String] = [:]
 
     /// `UserDefaults` key of the server URL the user entered in Settings.
     static let serverURLKey = "settings.coachServerURL"
@@ -46,7 +48,7 @@ struct CoachBackend: Sendable, Equatable {
         let server = debugOverride("KURN_DEBUG_COACH_SERVER_URL") ?? serverURL
         let token = debugOverride("KURN_DEBUG_COACH_INVITE") ?? invite
         guard let base = workerBaseURL(server), !token.isEmpty else { return nil }
-        return CoachBackend(baseURL: base, token: token, viaWorker: true)
+        return CoachBackend(baseURL: base, token: token, viaWorker: true, accessHeaders: CoachAccess.headers())
     }
 
     /// DEBUG only: an unsigned simulator build cannot reach the Keychain.
@@ -63,9 +65,20 @@ struct CoachBackend: Sendable, Equatable {
             return AppError.apiError(statusCode: 402, message: NSLocalizedString("coach.error.quota", comment: "Monthly allowance used up"))
         }
         if error.isCoachUnauthorized {
+            // Access answers 401 before the Worker sees the invite code; a build without the token can only hit that.
+            if CoachAccess.headers().isEmpty {
+                return AppError.apiError(statusCode: 401, message: NSLocalizedString("coach.error.accessMissing", comment: "Build lacks the Cloudflare Access token"))
+            }
             return AppError.apiError(statusCode: 401, message: NSLocalizedString("coach.error.unauthorized", comment: "Invite code rejected"))
         }
         return error
+    }
+
+    /// Bearer invite code plus the Access headers. Only Worker requests go through here:
+    /// the short-lived key the App later uses against OpenAI directly must not carry them.
+    func authorize(_ request: inout URLRequest) {
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        for (name, value) in accessHeaders { request.setValue(value, forHTTPHeaderField: name) }
     }
 
     /// `https://host[/path]` → `https://host[/path]/v1`; anything else is `nil`.
@@ -98,9 +111,23 @@ struct CoachBackend: Sendable, Equatable {
     func usage(session: URLSession = .shared) async throws -> Usage {
         var request = URLRequest(url: baseURL.appending(path: "usage"))
         request.timeoutInterval = 15
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        authorize(&request)
         let (data, _) = try await LLMHTTP.sendValidated(request, session: session)
         return try JSONDecoder().decode(Usage.self, from: data)
+    }
+}
+
+/// The Cloudflare Access service token in front of the Worker. Both values come from
+/// `app/Config/Secrets.xcconfig` (gitignored) through Info.plist, so the public repo never holds them.
+enum CoachAccess {
+    static func headers(bundle: Bundle = .main) -> [String: String] {
+        func value(_ key: String) -> String {
+            let text = (bundle.object(forInfoDictionaryKey: key) as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return text.hasPrefix("$(") ? "" : text // an unset build setting can survive as a literal
+        }
+        let id = value("CoachAccessClientID"), secret = value("CoachAccessClientSecret")
+        guard !id.isEmpty, !secret.isEmpty else { return [:] }
+        return ["CF-Access-Client-Id": id, "CF-Access-Client-Secret": secret]
     }
 }
 

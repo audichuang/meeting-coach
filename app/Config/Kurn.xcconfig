@@ -1,0 +1,3 @@
+// Base configuration of the Kurn target. Secrets.xcconfig is gitignored; copy
+// Secrets.example.xcconfig to it and fill in the Cloudflare Access service token.
+#include? "Secrets.xcconfig"
