@@ -150,9 +150,10 @@ public enum TranscriptFusion {
         var elapsed: TimeInterval = 0
         for (index, overlap) in overlaps.enumerated() {
             elapsed += overlap.duration
+            // Clamped to `words.count`: rounding can use up every word before the last turn.
             let wordEnd = index == overlaps.count - 1
                 ? words.count
-                : max(wordStart + 1, min(words.count, Int((elapsed / totalDuration * Double(words.count)).rounded())))
+                : min(words.count, max(wordStart + 1, Int((elapsed / totalDuration * Double(words.count)).rounded())))
             guard wordEnd > wordStart else { continue }
             result.append(
                 TranscribedSpan(

@@ -11,6 +11,18 @@ struct TranscriptFusionTests {
 
     // MARK: - Speaker attribution
 
+    @Test func coarseSpanWhoseWordsRunOutBeforeTheLastTurnDoesNotCrash() {
+        // Rounding hands all four words to the first two turns; the third used to index past the end.
+        let turns = [
+            SpeakerTurn(speakerLabel: "A", start: 0, end: 0.1),
+            SpeakerTurn(speakerLabel: "B", start: 0.1, end: 39.8),
+            SpeakerTurn(speakerLabel: "A", start: 39.8, end: 39.9),
+            SpeakerTurn(speakerLabel: "B", start: 39.9, end: 40)
+        ]
+        let segments = TranscriptFusion.segments(spans: [TranscribedSpan(text: "a b c d", start: 0, end: 40)], turns: turns)
+        #expect(segments.map(\.text).joined(separator: " ") == "a b c d")
+    }
+
     @Test func spanInsideTurnGetsThatSpeaker() {
         let turns = [
             SpeakerTurn(speakerLabel: "Speaker 1", start: 0, end: 5),

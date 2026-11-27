@@ -97,7 +97,9 @@ actor WhisperTranscriber: Transcribing {
                     AppLog.transcription.atNotice.notice("whisper: chunk \(index + 1, privacy: .public)/\(total, privacy: .public) done in \(Date().timeIntervalSince(chunkStart), privacy: .public)s, spans=\(result.spans.count, privacy: .public) lang=\(result.language, privacy: .public)")
                     guard Self.hasOnlyUntimedSpans(result) else { return result }
                     let duration = (try? await AVURLAsset(url: chunk.url).load(.duration)).map(CMTimeGetSeconds) ?? 0
-                    return Self.spreadingUntimedSpans(result, across: duration)
+                    return taiwanMandarin
+                        ? Self.sentenceSpans(result, across: duration)
+                        : Self.spreadingUntimedSpans(result, across: duration)
                 } catch {
                     AppLog.transcription.atError.error("whisper: chunk \(index + 1, privacy: .public)/\(total, privacy: .public) failed for \(vendor, privacy: .public) after \(Date().timeIntervalSince(chunkStart), privacy: .public)s code=\(error.publicLogCode, privacy: .public) detail=\(error.localizedDescription, privacy: .private)")
                     throw error
@@ -115,6 +117,39 @@ actor WhisperTranscriber: Transcribing {
         var result = transcript
         for index in result.spans.indices { result.spans[index].text = ChineseText.traditional(result.spans[index].text) }
         return result
+    }
+
+    /// One span per sentence, timed in proportion to its length — for the Taiwan
+    /// Mandarin path, whose model returns one untimed blob per chunk. Left as one
+    /// span, fusion can only cut it at whitespace, which Chinese barely has, so
+    /// most of a 5-minute chunk would land on one speaker.
+    static func sentenceSpans(_ transcript: RawTranscript, across duration: TimeInterval) -> RawTranscript {
+        guard duration > 0, hasOnlyUntimedSpans(transcript) else { return transcript }
+        let sentences = transcript.spans.flatMap { sentences(in: $0.text) }
+        let total = Double(sentences.reduce(0) { $0 + $1.count })
+        guard total > 0 else { return transcript }
+        var result = transcript
+        var start: TimeInterval = 0
+        result.spans = sentences.map { sentence in
+            let end = start + duration * Double(sentence.count) / total
+            defer { start = end }
+            return TranscribedSpan(text: sentence, start: start, end: end)
+        }
+        return result
+    }
+
+    static func sentences(in text: String) -> [String] {
+        var sentences: [String] = []
+        var current = ""
+        for character in text {
+            current.append(character)
+            if "。！？!?".contains(character) {
+                sentences.append(current.trimmingCharacters(in: .whitespaces))
+                current = ""
+            }
+        }
+        sentences.append(current.trimmingCharacters(in: .whitespaces))
+        return sentences.filter { !$0.isEmpty }
     }
 
     /// Whether every span came back without a time range — what a model that

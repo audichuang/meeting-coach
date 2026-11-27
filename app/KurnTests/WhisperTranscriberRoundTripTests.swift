@@ -112,7 +112,7 @@ struct WhisperTranscriberRoundTripTests {
         let url = try AudioFixtures.m4aTone(seconds: 420, sampleRate: 16_000, bitRate: nil)
         defer { try? FileManager.default.removeItem(at: url) }
         let provider = ScriptedTranscriptionProvider { index in
-            RawTranscript(spans: [TranscribedSpan(text: index == 0 ? "这个数据对吗" : "开会结束", start: 0, end: 0)], language: "zh")
+            RawTranscript(spans: [TranscribedSpan(text: index == 0 ? "这个数据对吗？好的。" : "开会结束", start: 0, end: 0)], language: "zh")
         }
         let prompts = Recorded<String>()
         let transcript = try await WhisperTranscriber(resolveProvider: { _, _, _, prompt in
@@ -123,11 +123,13 @@ struct WhisperTranscriberRoundTripTests {
         #expect(prompts.values == [WhisperTranscriber.taiwanMandarinPrompt])
         #expect(provider.uploads.count == 2)
         #expect(provider.uploads.allSatisfy { $0.language == .chinese })
-        #expect(transcript.spans.map(\.text) == ["這個數據對嗎", "開會結束"])
-        let second = try #require(transcript.spans.last)
-        #expect(abs(second.start - 300) < 1)
-        #expect(abs((transcript.spans.first?.end ?? 0) - second.start) < 1)
-        #expect(second.end > 419)
+        // One span per sentence, timed by length (7 and 3 characters of the first 300 s).
+        #expect(transcript.spans.map(\.text) == ["這個數據對嗎？", "好的。", "開會結束"])
+        #expect(abs(transcript.spans[0].end - 210) < 1)
+        let last = try #require(transcript.spans.last)
+        #expect(abs(last.start - 300) < 1)
+        #expect(abs(transcript.spans[1].end - last.start) < 1)
+        #expect(last.end > 419)
     }
 
     @Test func formalTranscriptConfigurationPinsOpenAIAndKeepsTheUsersOtherStages() {
