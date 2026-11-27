@@ -26,6 +26,14 @@ enum FluidAudioModelAvailability {
         #endif
     }
 
+    static var isStreamingDiarizationInstalled: Bool {
+        #if canImport(FluidAudio)
+        FluidAudioDiarizationModelRuntime.isSortformerInstalled
+        #else
+        false
+        #endif
+    }
+
     static func isUnifiedStreamingInstalled() -> Bool {
         #if canImport(FluidAudio)
         FluidAudioASRModelRuntime.isUnifiedStreamingInstalled

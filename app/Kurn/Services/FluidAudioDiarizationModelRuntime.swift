@@ -36,6 +36,33 @@ enum FluidAudioDiarizationModelRuntime {
     }
 
     #if canImport(FluidAudio)
+    static var sortformerConfig: SortformerConfig { .fastV2_1 }
+
+    static var sortformerDirectory: URL {
+        ModelStore.modelsDirectory.appendingPathComponent(Repo.sortformer.folderName)
+    }
+
+    static var sortformerBundleName: String {
+        ModelNames.Sortformer.bundle(for: sortformerConfig) ?? ModelNames.Sortformer.defaultBundle
+    }
+
+    static var isSortformerInstalled: Bool {
+        isSortformerInstalled()
+    }
+
+    static func isSortformerInstalled(
+        directory: URL = sortformerDirectory,
+        enumerate: (String) -> [String]? = FluidAudioRuntimePolicy.modelContents,
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> Bool {
+        FluidAudioRuntimePolicy.missingFiles(
+            [sortformerBundleName],
+            in: directory,
+            enumerate: enumerate,
+            fileExists: fileExists
+        ).isEmpty
+    }
+
     static var pyannoteDirectory: URL {
         ModelStore.modelsDirectory.appendingPathComponent(Repo.diarizer.folderName)
     }

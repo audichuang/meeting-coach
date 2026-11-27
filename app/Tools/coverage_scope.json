@@ -77,6 +77,16 @@
       "maxLines": 40
     },
     {
+      "pattern": "Kurn/Services/FluidAudioDiarizationModelRuntime+Sortformer.swift",
+      "reason": "Adapter: loads the cached Sortformer CoreML model locally and exposes explicit download. Cache completeness checks remain in measured FluidAudioDiarizationModelRuntime.",
+      "maxLines": 66
+    },
+    {
+      "pattern": "Kurn/Services/LiveSpeakerDiarizationService+Sortformer.swift",
+      "reason": "Adapter: forwards streaming audio chunks to FluidAudio's SortformerDiarizer and maps DiarizerTimelineUpdate to LiveSpeakerSpan. Queueing, availability fallback and dominant-speaker overlap live in measured LiveSpeakerDiarizationService and KurnCore's LiveSpeakerTimeline.",
+      "maxLines": 70
+    },
+    {
       "pattern": "Kurn/Services/FluidAudioNemotronDiarizer+Models.swift",
       "reason": "Adapter: local CoreML loading, audio decoding and native streaming diarization. Installation, cancellation, failure and fallback policy remain in the measured actor; speaker timelines and budgets are tested in KurnCore.",
       "maxLines": 60
