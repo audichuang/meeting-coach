@@ -1,7 +1,7 @@
 # meeting-coach
 
 - 此 repo 是 public：不寫公司、主管、同事、真實會議內容或本機路徑，測試一律用合成資料。
-- iOS 模擬器代號 `MC`：只用名稱以 `MC ` 開頭的模擬器（例如 `MC iPad mini`），其他代號的不碰，用完關機。
-- 常駐機 `MC iPad mini` 不用時收在 NAS（`sim-vault park`），清單上看不到是正常的：用前先 `sim-vault ensure "MC iPad mini"` 取回，再用名稱指定 destination；取不回來（例如 NAS 沒掛上）就停下回報，不要新建同名機，同名空機之後被 park 會蓋掉封存。
-- App 在 `app/`，建置與測試規則見 `app/CLAUDE.md`；本機 xcodebuild 包 `heavy --`。
+- iOS 模擬器代號 `MC`：只用常駐機 `MC iPad mini`，一律經 `scripts/sim.sh`（建置測試 `scripts/sim.sh xcodebuild test …`、手動看畫面 `up`／`down`），不直接下 `xcodebuild -destination`、`simctl boot`、`sim-vault ensure`。腳本會從 NAS 取回、先開機再測、持 lease 防別人關機，閒置 15 分鐘自動收回 NAS；別人在用時它會等，不要另建 `MC iPad mini 2` 之類的第二台：今天就有一台被 xcodebuild 自己開關 22 次、PosterBoard 長到 5.7G、留在本機沒收。取不回來（例如 NAS 沒掛上）就停下回報，不要新建同名機，同名空機被 park 會蓋掉封存。
+- 派工給別的 agent 時，brief 直接抄 `scripts/sim.sh` 的指令，不另指定模擬器 UDID 或 `-derivedDataPath`（建置快取由腳本固定一份）。
+- App 在 `app/`，建置與測試規則見 `app/CLAUDE.md`（其中的 `iPhone 17` 指令是 CI 用；本機改走 `scripts/sim.sh`，它已包 `heavy`）。
 - 決定以 `docs/decisions.md` 為準，用詞以 `GLOSSARY.md` 為準。
