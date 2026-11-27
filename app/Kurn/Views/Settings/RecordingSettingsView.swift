@@ -36,6 +36,15 @@ struct RecordingSettingsView: View {
             privacySection
         }
         .navigationTitle(NSLocalizedString("settings.recording", comment: "Recording"))
+        .onAppear {
+            if case .found(let value) = settings.credentials.readKey(for: .meetingCoach) { inviteDraft = value }
+        }
+        .task(id: "\(settings.coachServerURL)|\(settings.credentials.revision)") {
+            // Debounces typing in either field before asking the server.
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            coachUsage = await CoachUsageStatus.load()
+        }
         .modelDownloadAlerts(downloads, settings: settings) { showingNetworkSettings = true }
         .errorAlert($authError)
         .navigationDestination(isPresented: $showingNetworkSettings) {
@@ -163,15 +172,6 @@ struct RecordingSettingsView: View {
             Text(NSLocalizedString("settings.meeting_coach", comment: "Meeting coach"))
         } footer: {
             Text(NSLocalizedString("settings.meeting_coach_footer", comment: "Explains the coach sends audio through the server"))
-        }
-        .onAppear {
-            if case .found(let value) = settings.credentials.readKey(for: .meetingCoach) { inviteDraft = value }
-        }
-        .task(id: "\(settings.coachServerURL)|\(settings.credentials.revision)") {
-            // Debounces typing in either field before asking the server.
-            try? await Task.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
-            coachUsage = await CoachUsageStatus.load()
         }
     }
 

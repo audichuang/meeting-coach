@@ -26,14 +26,9 @@ struct CoachBackend: Sendable, Equatable {
     /// Read off the main actor too (ProviderFactory), so it reads `UserDefaults`
     /// and the Keychain directly rather than `AppSettings`.
     static func current(defaults: UserDefaults = .standard) -> CoachBackend? {
-        var server = defaults.string(forKey: serverURLKey) ?? ""
-        var invite = KeychainManager.shared.value(for: AIProvider.meetingCoach.keychainAccount) ?? ""
-        #if DEBUG
-        // An unsigned simulator build cannot reach the Keychain.
-        let environment = ProcessInfo.processInfo.environment
-        if let value = environment["KURN_DEBUG_COACH_SERVER_URL"], !value.isEmpty { server = value }
-        if let value = environment["KURN_DEBUG_COACH_INVITE"], !value.isEmpty { invite = value }
-        #endif
+        let server = debugOverride("KURN_DEBUG_COACH_SERVER_URL") ?? defaults.string(forKey: serverURLKey) ?? ""
+        let invite = debugOverride("KURN_DEBUG_COACH_INVITE")
+            ?? KeychainManager.shared.value(for: AIProvider.meetingCoach.keychainAccount) ?? ""
         if let base = workerBaseURL(server), !invite.isEmpty {
             return CoachBackend(baseURL: base, token: invite, viaWorker: true)
         }
@@ -44,6 +39,25 @@ struct CoachBackend: Sendable, Equatable {
         }
         #endif
         return nil
+    }
+
+    /// DEBUG only: an unsigned simulator build cannot reach the Keychain.
+    private static func debugOverride(_ key: String) -> String? {
+        #if DEBUG
+        if let value = ProcessInfo.processInfo.environment[key], !value.isEmpty { return value }
+        #endif
+        return nil
+    }
+
+    /// The Worker's 402/401 in the user's words, keeping the status code for `isCoachQuotaExhausted`.
+    static func explained(_ error: Error) -> Error {
+        if error.isCoachQuotaExhausted {
+            return AppError.apiError(statusCode: 402, message: NSLocalizedString("coach.error.quota", comment: "Monthly allowance used up"))
+        }
+        if error.isCoachUnauthorized {
+            return AppError.apiError(statusCode: 401, message: NSLocalizedString("coach.error.unauthorized", comment: "Invite code rejected"))
+        }
+        return error
     }
 
     /// `https://host[/path]` → `https://host[/path]/v1`; anything else is `nil`.
@@ -79,6 +93,20 @@ struct CoachBackend: Sendable, Equatable {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, _) = try await LLMHTTP.sendValidated(request, session: session)
         return try JSONDecoder().decode(Usage.self, from: data)
+    }
+}
+
+/// The formal transcript's client, with the Worker's refusals explained for the alert.
+struct CoachTranscriptionProvider: TranscriptionProvider {
+    let base: any TranscriptionProvider
+    var provider: AIProvider { base.provider }
+
+    func transcribe(audioData: Data, fileName: String, language: MeetingLanguage) async throws -> RawTranscript {
+        do {
+            return try await base.transcribe(audioData: audioData, fileName: fileName, language: language)
+        } catch {
+            throw CoachBackend.explained(error)
+        }
     }
 }
 

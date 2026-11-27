@@ -128,13 +128,14 @@ enum ProviderFactory {
                 largeTransferPolicy: transferPolicy
             )
         case .openAICompatible:
-            return OpenAIProvider(
+            let openAI = OpenAIProvider(
                 provider: provider,
                 apiKey: key,
                 transcriptionModel: resolvedModel,
                 transcriptionPrompt: prompt,
                 largeTransferPolicy: transferPolicy
             )
+            return provider.id == AIProvider.meetingCoach.id ? CoachTranscriptionProvider(base: openAI) : openAI
         case .anthropic, .googleGemini, .appleOnDevice:
             // Reachable only defensively — `configuredTranscriptionProviders`
             // already excludes these via `supportsTranscription`. They have no

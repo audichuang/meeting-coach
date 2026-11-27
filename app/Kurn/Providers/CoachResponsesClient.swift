@@ -59,7 +59,11 @@ struct CoachResponsesClient: CoachLLM {
         request.setValue("Bearer \(backend.token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        return try await LLMHTTP.sendValidated(request, session: session).0
+        do {
+            return try await LLMHTTP.sendValidated(request, session: session).0
+        } catch {
+            throw CoachBackend.explained(error)
+        }
     }
 
     static func usage(_ root: [String: Any]) -> CoachTokenUsage {

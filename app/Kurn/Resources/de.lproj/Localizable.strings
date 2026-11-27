@@ -1075,6 +1075,8 @@
 "settings.meeting_coach_footer" = "While recording, audio is sent to OpenAI through the server above for a live transcript and suggestion cards. Without a server URL and invite code nothing is sent.";
 "coach.status.quota" = "This month's allowance is used up; AI stopped";
 "coach.status.unauthorized" = "Invite code rejected; check it in Settings";
+"coach.error.quota" = "This month's allowance is used up.";
+"coach.error.unauthorized" = "Invite code rejected; check it in Settings.";
 "settings.meeting_coach_server" = "Server URL";
 "settings.meeting_coach_invite" = "Invite code";
 "settings.meeting_coach_usage" = "This month";

@@ -7,10 +7,10 @@
 "error.invalid_provider_url" = "供應商 URL 無效或不被允許。請使用不含憑證、查詢引數、片段或自訂埠的公共 HTTPS 主機名。";
 "error.provider_response_too_large" = "供應商響應超過了安全大小限制。";
 "error.ambiguous_provider_result" = "連線在供應商結果得到確認前中斷。為避免重複計費，Kurn 未自動重試。請先檢查供應商，再重試。";
-"error.network_policy_restricted" = "音訊上傳和模型下載設定為僅使用 Wi-Fi，而此裝置正在使用蜂窩資料或低資料模式。請連線 Wi-Fi，或在“轉寫”設定的“大型傳輸”中允許蜂窩網路和低資料模式，然後重試。";
+"error.network_policy_restricted" = "音訊上傳和模型下載設定為僅使用 Wi-Fi，而此裝置正在使用蜂窩資料或低資料模式。請連線 Wi-Fi，或在「轉寫」設定的「大型傳輸」中允許蜂窩網路和低資料模式，然後重試。";
 "error.network_policy_restricted.title" = "需要 Wi-Fi";
 "error.network_policy_restricted.open_settings" = "開啟設定";
-"error.cloud_transcription_consent_required" = "雲端轉寫需要獲得音訊上傳許可。請在“轉寫”設定中檢視目的地和傳輸策略。";
+"error.cloud_transcription_consent_required" = "雲端轉寫需要獲得音訊上傳許可。請在「轉寫」設定中檢視目的地和傳輸策略。";
 "settings.network.large_transfers" = "大型傳輸";
 "settings.network.allow_expensive" = "允許蜂窩網路";
 "settings.network.allow_constrained" = "允許低資料模式";
@@ -42,7 +42,7 @@
 "error.model_download_required" = "%@ 需要一次性下載模型。";
 "error.model_download_failed" = "模型下載失敗：%@";
 "error.model_download_timeout" = "裝置端模型超時。請檢查網路連線後重試。";
-"error.whisper_cpp_load_failed" = "無法載入裝置端 Whisper 模型。請在“儲存”中刪除後重新下載。";
+"error.whisper_cpp_load_failed" = "無法載入裝置端 Whisper 模型。請在「儲存」中刪除後重新下載。";
 "error.whisper_cpp_failed" = "裝置端 Whisper 轉寫失敗。";
 "error.resource_unavailable" = "無法繼續：%@";
 "error.resource_low_storage" = "請在繼續前釋放至少 %@ 的儲存空間。目前可用：%@。";
@@ -82,7 +82,7 @@
 "settings.fluid_audio.nemotron_diarization_footer" = "Nemotron 3 最多支援 8 位講者，並自動偵測人數。它沒有相容的聲紋。重新處理後請核對講者名稱：編號標籤不能確認聲音的身份。";
 "settings.fluid_audio.live_model" = "即時預覽模型";
 "settings.fluid_audio.live_automatic" = "自動（%@）";
-"settings.fluid_audio.live_model_footer" = "此模型僅用於錄製時的即時預覽。其選擇和下載獨立於“轉寫”設定中的最終轉寫模型。";
+"settings.fluid_audio.live_model_footer" = "此模型僅用於錄製時的即時預覽。其選擇和下載獨立於「轉寫」設定中的最終轉寫模型。";
 "settings.fluid_audio.download_selected" = "下載所選模型";
 "settings.fluid_audio.download_message" = "要下載 %@（約 %@）以在此裝置上使用嗎？模型只需下載一次。音訊會保留在你的裝置上。";
 "ack.fluid_audio_model_licenses" = "FluidAudio 模型許可";
@@ -214,7 +214,7 @@
 "recorder.already_active" = "錄音正在啟動或已有錄音進行中。";
 "recorder.meeting_unavailable" = "該會議已不在目前資料庫中。";
 "recorder.write_failed" = "錄音已暫停，因為無法儲存音訊。請檢查可用儲存空間，然後停止錄音以保留部分錄音。";
-"recorder.capture_stalled" = "錄音已暫停，因為音訊不再寫入檔案。輕點“繼續”重試，或輕點“停止”保留部分錄音。";
+"recorder.capture_stalled" = "錄音已暫停，因為音訊不再寫入檔案。輕點「繼續」重試，或輕點「停止」保留部分錄音。";
 "recorder.storage_unknown" = "無法檢查可用儲存空間。錄音將繼續；請留意裝置儲存空間。";
 "recorder.storage_low" = "預計剩餘錄音時間：%@。請釋放空間或停止錄音以保留目前內容。";
 "recorder.partial_saved" = "收音失敗後已儲存部分錄音。再次錄音前請檢查可用儲存空間。";
@@ -293,7 +293,7 @@
 "meetings.summary_count.other" = "%d 個摘要";
 "meetings.bucket" = "資料庫";
 "meetings.bucket.all" = "全部";
-"meetings.bucket.inbox" = "收件箱";
+"meetings.bucket.inbox" = "收件匣";
 "meetings.bucket.favorites" = "收藏";
 "meetings.bucket.archive" = "封存";
 "folder.section.library" = "資料庫";
@@ -302,9 +302,9 @@
 "folder.rename" = "重新命名";
 "folder.delete" = "刪除";
 "folder.delete.confirm" = "刪除此資料夾？";
-"folder.delete.message" = "其中的會議將保留在收件箱中，僅刪除資料夾本身。";
+"folder.delete.message" = "其中的會議將保留在收件匣中，僅刪除資料夾本身。";
 "folder.move_to" = "移動到資料夾";
-"folder.inbox" = "收件箱（無資料夾）";
+"folder.inbox" = "收件匣（無資料夾）";
 "folder.name_placeholder" = "資料夾名稱";
 "folder.empty" = "尚無資料夾。點選 + 建立一個。";
 "folder.deleted" = "已刪除資料夾";
@@ -459,7 +459,7 @@
 "attach.files" = "檔案";
 "attach.new_meeting" = "新會議";
 "attach.meetings" = "會議";
-"attach.done.title" = "已新增到“%@”";
+"attach.done.title" = "已新增到「%@」";
 "attach.done.message" = "會議摘要將結合逐字稿和照片使用此文件。";
 "detail.record_new" = "錄製新片段";
 "detail.transcribe" = "轉寫";
@@ -698,7 +698,7 @@
 "settings.diarization_engine_footer" = "神經網路引擎更準確但需要下載；啟發式引擎可立即離線使用。";
 "settings.diarization_speaker_count" = "講者數";
 "settings.diarization_speaker_count_auto" = "自動";
-"settings.diarization_speaker_count_footer" = "如果你知道會議有多少人參加，請在此設定。選擇“自動”時由引擎判斷；若引擎把所有人合併成了一位講者，Kurn 會自行重新聚類音訊。";
+"settings.diarization_speaker_count_footer" = "如果你知道會議有多少人參加，請在此設定。選擇「自動」時由引擎判斷；若引擎把所有人合併成了一位講者，Kurn 會自行重新聚類音訊。";
 "settings.diarization_preprocessing" = "講者分離音訊清理";
 "detail.playback_enhancement" = "增強音訊";
 "common.on" = "開啟";
@@ -725,7 +725,7 @@
 "settings.model_download.message_sherpa_onnx" = "此引擎會從 Hugging Face 下載分割和講者嵌入模型（共約 35 MB），使講者分離完全在本裝置上執行，且不使用 Apple 神經網路引擎加速。模型會保留。";
 "settings.whisper_cpp.package_missing" = "使用此功能前，請先將 whisper.cpp Swift 包新增到 Kurn target 中。";
 "settings.whisper_cpp.model" = "Whisper 模型";
-"settings.whisper_cpp.model_footer" = "模型越大轉寫越準確，但下載資料更多、速度更慢。每個模型單獨下載，可在“儲存”中刪除。";
+"settings.whisper_cpp.model_footer" = "模型越大轉寫越準確，但下載資料更多、速度更慢。每個模型單獨下載，可在「儲存」中刪除。";
 "settings.whisper_cpp.choose_model" = "選擇 Whisper 模型";
 "whisper_cpp.model.base" = "Base";
 "whisper_cpp.model.small" = "Small";
@@ -879,7 +879,7 @@
 "settings.wiki_bulk_progress" = "%1$d / %2$d 場會議";
 "settings.wiki_clear" = "清除維基";
 "settings.wiki_footer" = "使用你的 AI 供應商為每場會議產生一篇精簡條目。預設關閉。";
-"settings.wiki_section_footer" = "“產生缺失項”僅建立尚不存在的條目；“重建全部”會重新產生所有條目，包括已是最新的條目。";
+"settings.wiki_section_footer" = "「產生缺失項」僅建立尚不存在的條目；「重建全部」會重新產生所有條目，包括已是最新的條目。";
 "settings.wiki_needs_key" = "請為你的摘要供應商新增 API 金鑰以構建會議維基。";
 "settings.correction_title" = "AI 校正";
 "settings.correction" = "校正轉寫錯誤";
@@ -969,7 +969,7 @@
 "store_recovery.restore_confirm_title" = "恢復此備份?";
 "store_recovery.restore_confirm_message" = "你目前的資料將被移至一旁而非刪除,並替換為此備份。";
 "store_recovery.salvage_button" = "嘗試資料恢復";
-"store_recovery.salvage_result_recovered" = "已恢復 %d 個會議。點按“分享”以儲存它們。";
+"store_recovery.salvage_result_recovered" = "已恢復 %d 個會議。點按「分享」以儲存它們。";
 "store_recovery.salvage_result_none" = "未能恢復任何資料。";
 "store_recovery.export_diagnostics_button" = "匯出診斷資訊";
 "store_recovery.start_fresh_button" = "重新開始";
@@ -1075,6 +1075,8 @@
 "settings.meeting_coach_footer" = "錄音時會經由上方的伺服器把聲音送到 OpenAI，產生即時逐字稿與建議卡；沒有填伺服器網址與邀請碼就不會送出。";
 "coach.status.quota" = "本月額度已用完，AI 已停止";
 "coach.status.unauthorized" = "邀請碼無效，請到設定檢查";
+"coach.error.quota" = "本月額度已用完。";
+"coach.error.unauthorized" = "邀請碼無效，請到設定檢查。";
 "settings.meeting_coach_server" = "伺服器網址";
 "settings.meeting_coach_invite" = "邀請碼";
 "settings.meeting_coach_usage" = "本月用量";
