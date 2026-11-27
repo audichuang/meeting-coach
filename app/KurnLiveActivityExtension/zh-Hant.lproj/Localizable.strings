@@ -1,0 +1,22 @@
+"live_activity.recording" = "錄音中";
+"live_activity.paused" = "已暫停";
+"live_activity.pause" = "暫停";
+"live_activity.resume" = "繼續";
+"live_activity.stop" = "停止";
+"live_activity.highlight" = "標記";
+
+"intent.startRecording.title" = "開始錄音";
+"intent.startRecording.description" = "無需開啟 App即可開始一段新的 Kurn 錄音。";
+"intent.startRecording.shortTitle" = "開始錄音";
+"intent.startRecording.notReady" = "Kurn 尚未準備好開始錄音。請在 App 中重試。";
+"control.startRecording.title" = "開始錄音";
+"control.startRecording.displayName" = "開始錄音";
+"control.startRecording.description" = "開始一段新的 Kurn 錄音。將其新增到鎖定螢幕後，即使裝置處於鎖定狀態，也可以透過點一下觸發。";
+"widget.startRecording.displayName" = "開始錄音";
+"widget.startRecording.description" = "從主螢幕、鎖定螢幕或待機顯示開始新的 Kurn 錄音。小元件從不顯示會議內容。";
+"widget.startRecording.title" = "錄音";
+"widget.startRecording.subtitle" = "開始新的會議";
+
+/* Live Activity button intent (hidden from Shortcuts) */
+"intent.recordingControl.title" = "控制錄音";
+"intent.recordingControl.action" = "操作";

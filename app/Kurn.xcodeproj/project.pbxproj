@@ -468,6 +468,8 @@
 				de,
 				it,
 				"zh-Hans",
+				"zh-Hant",
+				ja,
 			);
 			mainGroup = AA0000000000000000000001;
 			packageReferences = (
