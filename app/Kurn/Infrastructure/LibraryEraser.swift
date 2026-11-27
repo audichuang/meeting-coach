@@ -88,6 +88,7 @@ enum LibraryEraser {
         try deleteAll(MeetingPhoto.self, in: context)
         try deleteAll(MeetingAttachment.self, in: context)
         try deleteAll(CoachRecord.self, in: context)
+        try deleteAll(PaperNote.self, in: context)
         try context.save()
     }
 

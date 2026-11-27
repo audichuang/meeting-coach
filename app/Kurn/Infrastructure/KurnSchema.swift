@@ -138,9 +138,8 @@ enum KurnSchemaV4: VersionedSchema {
 /// Version 1.4.0: adds `CoachRecord` (the meeting coach's live transcript,
 /// suggestion ledgers and spend for one recording) and its cascade
 /// relationship on `Meeting`. Purely additive, so a lightweight stage covers
-/// it. This is the *current* version, so it lists the live `@Model` classes;
-/// when the next version is added, these get frozen copies of their own the
-/// way `KurnSchemaV4Models.swift` does for 1.3.0.
+/// it. Frozen (see `KurnSchemaV5Models.swift`) now that `KurnSchemaV6` is
+/// current.
 enum KurnSchemaV5: VersionedSchema {
     static var versionIdentifier: Schema.Version { Schema.Version(1, 4, 0) }
 
@@ -165,15 +164,53 @@ enum KurnSchemaV5: VersionedSchema {
     }
 }
 
+/// Version 1.5.0: adds `PaperNote` (handwritten PencilKit notes per recording,
+/// stored in page coordinates with optional stroke-batch time anchors) and its
+/// cascade relationship on `Meeting`. Purely additive, so a lightweight stage
+/// covers it. This is the *current* version, so it lists the live `@Model`
+/// classes; when the next version is added, these get frozen copies of their
+/// own the way `KurnSchemaV5Models.swift` does for 1.4.0.
+enum KurnSchemaV6: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(1, 5, 0) }
+
+    static var models: [any PersistentModel.Type] {
+        [
+            Meeting.self,
+            Recording.self,
+            Transcript.self,
+            Speaker.self,
+            Summary.self,
+            Folder.self,
+            Tag.self,
+            SmartFolder.self,
+            SemanticChunk.self,
+            WikiArticle.self,
+            GeneratedDocument.self,
+            ChatSession.self,
+            MeetingPhoto.self,
+            MeetingAttachment.self,
+            CoachRecord.self,
+            PaperNote.self
+        ]
+    }
+}
+
 /// The app's migration plan. `KurnSchemaV1` shipped with no stages — the
 /// correct, documented shape for "this is the first version we've ever
-/// declared", nothing to migrate *from* yet. `KurnSchemaV2`, `KurnSchemaV3`
-/// `KurnSchemaV4` and `KurnSchemaV5` are all purely additive, so a lightweight stage covers
-/// each. The next *non*-additive model change adds `KurnSchemaV6` here with a
+/// declared", nothing to migrate *from* yet. `KurnSchemaV2` through
+/// `KurnSchemaV6` are all purely additive, so a lightweight stage covers each.
+/// The next *non*-additive model change adds `KurnSchemaV7` here with a
 /// `.custom` stage; it must never edit an earlier version in place.
 enum KurnSchemaMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [KurnSchemaV1.self, KurnSchemaV2.self, KurnSchemaV3.self, KurnSchemaV4.self, KurnSchemaV5.self]
+        [
+            KurnSchemaV1.self,
+            KurnSchemaV2.self,
+            KurnSchemaV3.self,
+            KurnSchemaV4.self,
+            KurnSchemaV5.self,
+            KurnSchemaV6.self
+        ]
     }
 
     static var stages: [MigrationStage] {
@@ -181,7 +218,8 @@ enum KurnSchemaMigrationPlan: SchemaMigrationPlan {
             .lightweight(fromVersion: KurnSchemaV1.self, toVersion: KurnSchemaV2.self),
             .lightweight(fromVersion: KurnSchemaV2.self, toVersion: KurnSchemaV3.self),
             .lightweight(fromVersion: KurnSchemaV3.self, toVersion: KurnSchemaV4.self),
-            .lightweight(fromVersion: KurnSchemaV4.self, toVersion: KurnSchemaV5.self)
+            .lightweight(fromVersion: KurnSchemaV4.self, toVersion: KurnSchemaV5.self),
+            .lightweight(fromVersion: KurnSchemaV5.self, toVersion: KurnSchemaV6.self)
         ]
     }
 }
@@ -193,12 +231,12 @@ enum KurnModelGraph {
     /// The current model graph, for call sites that need the bare type list
     /// (e.g. an in-memory test container with no migration concerns).
     static var currentModels: [any PersistentModel.Type] {
-        KurnSchemaV5.models
+        KurnSchemaV6.models
     }
 
     /// The versioned schema production and screenshot containers should use.
     static var schema: Schema {
-        Schema(versionedSchema: KurnSchemaV5.self)
+        Schema(versionedSchema: KurnSchemaV6.self)
     }
 
     /// The version a store written by the current graph is at — what backup
@@ -206,7 +244,7 @@ enum KurnModelGraph {
     /// rather than being pinned to whichever version happened to be current
     /// when the call site was written.
     static var currentSchemaVersion: Schema.Version {
-        KurnSchemaV5.versionIdentifier
+        KurnSchemaV6.versionIdentifier
     }
 
     /// The migration plan production and screenshot containers should use.

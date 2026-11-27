@@ -44,6 +44,7 @@ final class RecorderViewModel {
     let recorder: AudioRecorderService
     let liveTranscription: LiveTranscriptionService
     let coach: MeetingCoachSession?
+    let paperNotes: PaperNoteSession
 
     var error: AppError?
     var permissionDenied = false
@@ -88,6 +89,7 @@ final class RecorderViewModel {
         options: RecorderOptions = RecorderOptions(),
         recorder: AudioRecorderService = AudioRecorderService(),
         liveTranscription: LiveTranscriptionService? = nil,
+        coachSession: MeetingCoachSession? = nil,
         fileFinalizer: any RecordingFileFinalizing = RecordingFileFinalizer(),
         lifecycleSaver: any RecordingLifecycleSaving = ModelContextRecordingLifecycleSaver(),
         onRecordingSaved: @escaping () -> Void = {}
@@ -96,7 +98,16 @@ final class RecorderViewModel {
         self.modelContext = modelContext
         self.defaultMode = defaultMode
         self.recorder = recorder
-        if let coachConfiguration = options.coach {
+        self.paperNotes = PaperNoteSession(
+            meeting: meeting,
+            modelContext: modelContext,
+            elapsed: { [weak recorder] in recorder?.elapsed ?? 0 }
+        )
+        let hasCoach = coachSession != nil || options.coach != nil
+        if let coachSession {
+            self.coach = coachSession
+            self.liveTranscription = liveTranscription ?? coachSession.makeLiveTranscription()
+        } else if let coachConfiguration = options.coach {
             let session = MeetingCoachSession(
                 meeting: meeting,
                 modelContext: modelContext,
@@ -112,9 +123,9 @@ final class RecorderViewModel {
         self.fileFinalizer = fileFinalizer
         self.lifecycleSaver = lifecycleSaver
         self.alwaysUseBuiltInMic = options.alwaysUseBuiltInMic
-        self.liveTranscriptionEnabled = options.liveTranscriptionEnabled || options.coach != nil
-        self.liveTranscriptionModelsConsented = options.liveTranscriptionModelsConsented || options.coach != nil
-        self.liveTranscriptionModel = options.coach != nil ? .automatic : options.liveTranscriptionModel
+        self.liveTranscriptionEnabled = options.liveTranscriptionEnabled || hasCoach
+        self.liveTranscriptionModelsConsented = options.liveTranscriptionModelsConsented || hasCoach
+        self.liveTranscriptionModel = hasCoach ? .automatic : options.liveTranscriptionModel
         self.largeTransferPolicy = options.largeTransferPolicy
         self.hideLiveActivityMeetingTitle = options.hideLiveActivityMeetingTitle
         self.onRecordingSaved = onRecordingSaved
@@ -324,6 +335,7 @@ final class RecorderViewModel {
         guard let recording = prepareCaptureOwnershipOrPresentError() else { return }
         let fileName = recording.fileName
         coach?.begin(recordingID: recording.id)
+        paperNotes.begin(recordingID: recording.id)
 
         let liveLanguage = meeting.language
         let liveStartTask: Task<Void, Never>? = liveTranscriptionEnabled && liveTranscriptionModelsConsented
@@ -513,6 +525,7 @@ final class RecorderViewModel {
             AppLog.persistence.atError.error("recording: finalizing transition save failed")
         }
         let result = recorder.stop()
+        paperNotes.finish()
         let finalized = finalizeCapture(recording, result: result)
         stopLiveTranscription(at: end, discarding: coach?.isCancelled ?? false)
         finishExternalRecordingState()
@@ -580,6 +593,7 @@ final class RecorderViewModel {
     @discardableResult
     private func discardShortRecording(_ recording: Recording, result: AudioRecordingResult?) -> Bool {
         coach?.cancel()
+        paperNotes.cancel()
         AudioFileStore.delete(fileName: recording.fileName)
         for capturedPhoto in result?.photos ?? [] {
             PhotoFileStore.delete(fileName: capturedPhoto.fileName)
@@ -600,6 +614,7 @@ final class RecorderViewModel {
         guard recording.captureState == .preparing || recording.captureState == .recording else { return }
         if AudioFileStore.byteSize(fileName: recording.fileName) == 0 {
             coach?.cancel()
+            paperNotes.cancel()
             AudioFileStore.delete(fileName: recording.fileName)
             MeetingLibrary.deleteRecordingRows(recording, in: modelContext)
             do {
@@ -629,6 +644,7 @@ final class RecorderViewModel {
     func cancel() {
         cancellationRequested = true
         coach?.cancel()
+        paperNotes.cancel()
         stopLiveTranscription(at: recorder.elapsed, discarding: true)
         recorder.cancel()
         if let recording = activeRecording {

@@ -86,6 +86,11 @@ final class Meeting {
     @Relationship(deleteRule: .cascade, inverse: \CoachRecord.meeting)
     var coachRecords: [CoachRecord] = []
 
+    /// Handwritten paper notes authored while recording, one per recording that
+    /// has ink strokes. Cascade-deleted so deleting the meeting erases them.
+    @Relationship(deleteRule: .cascade, inverse: \PaperNote.meeting)
+    var paperNotes: [PaperNote] = []
+
     /// JSON-encoded `SummaryMapCheckpoint` while a staged (map-reduce) summary
     /// or wiki generation is in flight for this meeting (SwiftData can't store
     /// arbitrary `Codable` values directly). Cleared on success; kept on
@@ -239,6 +244,11 @@ final class Meeting {
     /// Attachments in the order they were added.
     var sortedAttachments: [MeetingAttachment] {
         attachments.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// Handwritten paper notes in the order they were created.
+    var sortedPaperNotes: [PaperNote] {
+        paperNotes.sorted { $0.createdAt < $1.createdAt }
     }
 
     /// `assembledTranscriptText()` followed by the text of the meeting's
