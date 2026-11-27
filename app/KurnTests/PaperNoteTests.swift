@@ -74,18 +74,29 @@ struct PaperNoteTests {
             context.insert(recording)
             try context.save()
 
+            let sleepClock = VirtualSleepClock()
+            let serializeStarted = AsyncStream<Void>.makeStream()
             let session = PaperNoteSession(
                 meeting: meeting,
                 modelContext: context,
                 debounceInterval: .milliseconds(30),
+                sleepClock: sleepClock,
                 elapsed: { elapsed },
-                now: { clock }
+                now: { clock },
+                serialize: { snapshot in
+                    serializeStarted.continuation.yield(())
+                    return await PaperNoteSession.serializeOffMain(snapshot)
+                }
             )
             session.begin(recordingID: recordingID)
             session.drawingDidChange(expectedDrawing)
             #expect(session.hasUnsavedChanges)
 
-            try await Task.sleep(for: .milliseconds(120))
+            await sleepClock.waitForWaiters(atLeast: 2)
+            sleepClock.advance(by: 0.03)
+            var startedIterator = serializeStarted.stream.makeAsyncIterator()
+            _ = await startedIterator.next()
+            await session.waitForInFlightFlush()
             #expect(!session.hasUnsavedChanges)
             #expect(session.lastSavedAt == clock)
 
@@ -115,7 +126,7 @@ struct PaperNoteTests {
         #expect(saved.recordingID == recordingID)
         #expect(saved.pageWidth == PaperNote.defaultPageWidth)
         #expect(saved.updatedAt == clock)
-        #expect(saved.anchors.count == 2)
+        try #require(saved.anchors.count == 2)
         #expect(saved.anchors[0].recordingOffset == 42.5)
         #expect(saved.anchors[0].strokeCount == 1)
         #expect(saved.anchors[1].recordingOffset == 92.5)
@@ -211,17 +222,21 @@ struct PaperNoteTests {
         context.insert(meeting)
         try context.save()
 
+        let sleepClock = VirtualSleepClock()
         let session = PaperNoteSession(
             meeting: meeting,
             modelContext: context,
             debounceInterval: .milliseconds(30),
+            sleepClock: sleepClock,
             elapsed: { 5 }
         )
         session.begin(recordingID: UUID())
         session.drawingDidChange(makeSampleDrawing())
+        await sleepClock.waitForWaiters(atLeast: 2)
         session.cancel()
 
-        try await Task.sleep(for: .milliseconds(90))
+        sleepClock.advance(by: 6.0)
+        await session.waitForInFlightFlush()
         #expect(try context.fetch(FetchDescriptor<PaperNote>()).isEmpty)
     }
 
@@ -695,5 +710,56 @@ struct PaperNoteTests {
             try context.fetch(FetchDescriptor<PaperNote>(predicate: #Predicate { $0.recordingID == recordingID })).first
         )
         #expect(saved.loadDrawing().strokes.count == 1)
+    }
+
+    @Test func inFlightBatchAndNewStrokeBatchPreserveDistinctAnchorsOnFinish() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Anchor Race")
+        context.insert(meeting)
+        try context.save()
+
+        let gate = GatedDrawingSerializer()
+        let sleepClock = VirtualSleepClock()
+        var clock = Date(timeIntervalSince1970: 1_760_000_000)
+        var elapsed: TimeInterval = 42.5
+        let recordingID = UUID()
+
+        let session = PaperNoteSession(
+            meeting: meeting,
+            modelContext: context,
+            debounceInterval: .milliseconds(30),
+            sleepClock: sleepClock,
+            elapsed: { elapsed },
+            now: { clock },
+            serialize: { snapshot in await gate.serialize(snapshot) }
+        )
+        session.begin(recordingID: recordingID)
+
+        let stroke1 = makeSampleDrawing(offsetY: 160)
+        session.drawingDidChange(stroke1)
+        await sleepClock.waitForWaiters(atLeast: 2)
+        sleepClock.advance(by: 0.03)
+        for _ in 0..<100 where !gate.hasWaitingCall {
+            await Task.yield()
+        }
+        try #require(gate.hasWaitingCall)
+
+        // Second stroke batch arrives while batch 1's serialization is in flight.
+        clock = Date(timeIntervalSince1970: 1_760_000_050)
+        elapsed = 92.5
+        let stroke2 = PKDrawing(strokes: stroke1.strokes + makeSampleDrawing(offsetY: 260).strokes)
+        session.drawingDidChange(stroke2)
+        session.finish()
+        gate.releaseNext()
+
+        let saved = try #require(
+            try context.fetch(FetchDescriptor<PaperNote>(predicate: #Predicate { $0.recordingID == recordingID })).first
+        )
+        try #require(saved.anchors.count == 2)
+        #expect(saved.anchors[0].recordingOffset == 42.5)
+        #expect(saved.anchors[0].strokeCount == 1)
+        #expect(saved.anchors[1].recordingOffset == 92.5)
+        #expect(saved.anchors[1].strokeCount == 2)
     }
 }

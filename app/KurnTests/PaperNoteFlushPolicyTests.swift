@@ -113,55 +113,6 @@ struct PaperNoteFlushPolicyTests {
         #expect(notes.count == 1)
     }
 
-    /// Deterministic virtual `SleepClock` for verifying max-wait without real wall-clock delays.
-    private final class ManualSleepClock: SleepClock, @unchecked Sendable {
-        private struct Waiter {
-            let id: UUID
-            let deadline: TimeInterval
-            let continuation: CheckedContinuation<Void, Error>
-        }
-
-        private let lock = NSLock()
-        private var currentTime: TimeInterval = 0
-        private var waiters: [Waiter] = []
-
-        var activeWaiterCount: Int { lock.withLock { waiters.count } }
-
-        func sleep(seconds: TimeInterval) async throws {
-            let waiterID = UUID()
-            try await withTaskCancellationHandler {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    let shouldCancel: Bool = lock.withLock {
-                        if Task.isCancelled { return true }
-                        waiters.append(Waiter(id: waiterID, deadline: currentTime + seconds, continuation: continuation))
-                        return false
-                    }
-                    if shouldCancel {
-                        continuation.resume(throwing: CancellationError())
-                    }
-                }
-            } onCancel: {
-                let cancelled: CheckedContinuation<Void, Error>? = self.lock.withLock {
-                    guard let index = self.waiters.firstIndex(where: { $0.id == waiterID }) else { return nil }
-                    return self.waiters.remove(at: index).continuation
-                }
-                cancelled?.resume(throwing: CancellationError())
-            }
-        }
-
-        func advance(by seconds: TimeInterval) {
-            let ready: [CheckedContinuation<Void, Error>] = lock.withLock {
-                currentTime += seconds
-                let due = waiters.filter { $0.deadline <= currentTime + 1e-9 }
-                waiters.removeAll { $0.deadline <= currentTime + 1e-9 }
-                return due.map(\.continuation)
-            }
-            for continuation in ready {
-                continuation.resume()
-            }
-        }
-    }
-
     @Test func continuousWritingFlushesAtMaxWaitIntervalUsingInjectableClock() async throws {
         let container = TestModelContainer.make()
         let context = container.mainContext
@@ -169,7 +120,7 @@ struct PaperNoteFlushPolicyTests {
         context.insert(meeting)
         try context.save()
 
-        let clock = ManualSleepClock()
+        let clock = VirtualSleepClock()
         var saveCount = 0
         let session = PaperNoteSession(
             meeting: meeting,

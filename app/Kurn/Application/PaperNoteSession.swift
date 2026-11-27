@@ -65,9 +65,10 @@ final class PaperNoteSession {
     @ObservationIgnored private var serializationTask: Task<Void, Never>?
     @ObservationIgnored private var drawingGeneration: UInt64 = 0
     @ObservationIgnored private var persistedGeneration: UInt64 = 0
+    @ObservationIgnored private var inFlightGeneration: UInt64 = 0
     @ObservationIgnored private var needsFollowUpFlush = false
     @ObservationIgnored private var pendingBatchOffset: TimeInterval?
-    @ObservationIgnored private var inFlightBatchOffset: TimeInterval?
+    @ObservationIgnored private var inFlightBatch: (strokeCount: Int, offset: TimeInterval)?
     @ObservationIgnored private var isCancelled = false
 
     nonisolated static func serializeOffMain(
@@ -139,6 +140,12 @@ final class PaperNoteSession {
     /// serialization (and any coalesced follow-up) completes.
     func flush() async {
         startCoalescedBackgroundFlush()
+        await waitForInFlightFlush()
+    }
+
+    /// Waits for any serialization already in flight (and any coalesced
+    /// follow-up) to finish without triggering a new flush.
+    func waitForInFlightFlush() async {
         while let task = serializationTask {
             await task.value
         }
@@ -180,10 +187,17 @@ final class PaperNoteSession {
         maxWaitTask = nil
         serializationTask?.cancel()
         serializationTask = nil
+        inFlightGeneration = 0
         needsFollowUpFlush = false
-        if let inFlight = inFlightBatchOffset {
-            pendingBatchOffset = inFlight
-            inFlightBatchOffset = nil
+        let supersededInFlight = inFlightBatch
+        inFlightBatch = nil
+        var precedingBatch: (strokeCount: Int, offset: TimeInterval)?
+        if let supersededInFlight {
+            if pendingBatchOffset == nil {
+                pendingBatchOffset = supersededInFlight.offset
+            } else {
+                precedingBatch = supersededInFlight
+            }
         }
 
         guard !isCancelled, hasUnsavedChanges, let recordingID else { return }
@@ -204,7 +218,8 @@ final class PaperNoteSession {
             strokeCount: snapshot.strokeCount,
             recordingID: recordingID,
             generation: drawingGeneration,
-            batchOffset: batchOffset
+            batchOffset: batchOffset,
+            precedingBatch: precedingBatch
         ) {
             hasUnsavedChanges = false
         }
@@ -226,12 +241,13 @@ final class PaperNoteSession {
         maxWaitTask = nil
         serializationTask?.cancel()
         serializationTask = nil
+        inFlightGeneration = 0
         needsFollowUpFlush = false
         note = nil
         recordingID = nil
         hasUnsavedChanges = false
         pendingBatchOffset = nil
-        inFlightBatchOffset = nil
+        inFlightBatch = nil
     }
 
     private func scheduleDebouncedSave() {
@@ -246,7 +262,9 @@ final class PaperNoteSession {
                 return
             }
             guard !Task.isCancelled else { return }
-            self?.startCoalescedBackgroundFlush()
+            guard let self else { return }
+            self.debounceTask = nil
+            self.startCoalescedBackgroundFlush()
         }
         scheduleMaxWaitIfNeeded()
     }
@@ -294,7 +312,8 @@ final class PaperNoteSession {
         let generation = drawingGeneration
         let batchOffset = pendingBatchOffset
         pendingBatchOffset = nil
-        inFlightBatchOffset = batchOffset
+        inFlightGeneration = generation
+        inFlightBatch = batchOffset.map { (strokeCount: snapshot.strokeCount, offset: $0) }
         let serialize = self.serialize
 
         serializationTask = Task { [weak self] in
@@ -315,8 +334,11 @@ final class PaperNoteSession {
         generation: UInt64,
         batchOffset: TimeInterval?
     ) {
-        serializationTask = nil
-        inFlightBatchOffset = nil
+        if generation == inFlightGeneration {
+            serializationTask = nil
+            inFlightGeneration = 0
+            inFlightBatch = nil
+        }
 
         guard !isCancelled, let recordingID else { return }
         guard generation > persistedGeneration else {
@@ -362,17 +384,26 @@ final class PaperNoteSession {
         strokeCount: Int,
         recordingID: UUID,
         generation: UInt64,
-        batchOffset: TimeInterval?
+        batchOffset: TimeInterval?,
+        precedingBatch: (strokeCount: Int, offset: TimeInterval)? = nil
     ) -> Bool {
         let timestamp = now()
-        var appendedAnchor = false
+        var appendedAnchorCount = 0
+        if let precedingBatch, precedingBatch.strokeCount > 0 {
+            anchors.append(PaperStrokeAnchor(
+                strokeCount: precedingBatch.strokeCount,
+                recordingOffset: precedingBatch.offset,
+                recordedAt: timestamp
+            ))
+            appendedAnchorCount += 1
+        }
         if let batchOffset, strokeCount > 0 {
             anchors.append(PaperStrokeAnchor(
                 strokeCount: strokeCount,
                 recordingOffset: batchOffset,
                 recordedAt: timestamp
             ))
-            appendedAnchor = true
+            appendedAnchorCount += 1
         }
 
         let target: PaperNote
@@ -397,11 +428,11 @@ final class PaperNoteSession {
 
         if let failure = persist(modelContext) {
             AppLog.persistence.atError.error("PaperNoteSession: save failed code=\(failure.logCode, privacy: .public)")
-            if appendedAnchor {
-                anchors.removeLast()
+            if appendedAnchorCount > 0 {
+                anchors.removeLast(appendedAnchorCount)
             }
             if pendingBatchOffset == nil {
-                pendingBatchOffset = batchOffset
+                pendingBatchOffset = precedingBatch?.offset ?? batchOffset
             }
             return false
         }
