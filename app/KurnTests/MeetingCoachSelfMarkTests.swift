@@ -99,12 +99,14 @@ private actor ClockStubDiarizerEngine: LiveSpeakerDiarizerEngine {
     private let firstProcessGate: TestGate?
     private var fedSamples = 0
     private var didGate = false
+    private(set) var processedSampleCounts: [Int] = []
 
     init(firstProcessGate: TestGate? = nil) {
         self.firstProcessGate = firstProcessGate
     }
 
     func process(samples: [Float], sampleRate: Double) async throws -> LiveDiarizerUpdate? {
+        processedSampleCounts.append(samples.count)
         if let firstProcessGate, !didGate {
             didGate = true
             await firstProcessGate.wait()
@@ -246,6 +248,27 @@ struct MeetingCoachSelfMarkTests {
         #expect(finishUpdates == 1)
         #expect(service.dominantSpeaker(from: 18, to: 25) == "A")
         #expect(await stub.didCleanup)
+    }
+
+    @Test func liveDiarizerGivesUpInsteadOfFillingAGapLongerThanTheSilenceLimit() async throws {
+        let processGate = TestGate()
+        let stub = ClockStubDiarizerEngine(firstProcessGate: processGate)
+        let service = LiveSpeakerDiarizationService(isInstalled: { true }, engineFactory: { stub })
+        await service.start()
+
+        try appendSeconds(1, slotValue: 0.1, to: service)
+        await waitForGate(processGate)
+        // 50 s while inference stalls: the 16 s queue keeps the newest, leaving a 34 s gap.
+        try appendSeconds(50, slotValue: 0.2, to: service)
+        await processGate.open()
+        await waitUntil { !service.isAvailable }
+
+        #expect(!service.isAvailable)
+        #expect(await stub.processedSampleCounts == [24_000])
+        try appendSeconds(1, slotValue: 0.1, to: service)
+        #expect(service.dominantSpeaker(from: 35, to: 52) == nil)
+        await service.stop()
+        #expect(service.dominantSpeaker(from: 0, to: 1) == "A")
     }
 
     @Test func stopKeepsOnlyCoverageTheEngineFinalized() async throws {

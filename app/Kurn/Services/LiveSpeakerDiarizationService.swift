@@ -75,7 +75,10 @@ final class LiveSpeakerDiarizationService {
     private let isInstalled: @Sendable () -> Bool
     private let engineFactory: EngineFactory
     private var engine: (any LiveSpeakerDiarizerEngine)?
-    @ObservationIgnored private var pumpTask: Task<Void, Never>?
+    /// Returns `true` when the pump gave up on live diarization for this meeting.
+    @ObservationIgnored private var pumpTask: Task<Bool, Never>?
+    /// Longer gaps mean inference is falling behind real time; filling them with silence only adds work.
+    private nonisolated static let maximumSilenceFill: TimeInterval = 30
 
     /// Bounded audio handoff from the real-time render thread to the background
     /// diarization task. Never creates Tasks on the audio callback.
@@ -167,9 +170,9 @@ final class LiveSpeakerDiarizationService {
         pumpTask = nil
         isAvailable = false
         activePump?.cancel()
-        await activePump?.value
+        let gaveUp = await activePump?.value ?? false
         guard let activeEngine else { return }
-        if !discarding {
+        if !discarding, !gaveUp {
             do {
                 if let update = try await activeEngine.finish() {
                     timelineBox.ingest(update)
@@ -191,6 +194,7 @@ final class LiveSpeakerDiarizationService {
     ) {
         let queue = audioQueue
         let box = timelineBox
+        let markUnavailable: @MainActor @Sendable () -> Void = { [weak self] in self?.isAvailable = false }
         pumpTask = Task.detached(priority: .utility) {
             func feed(_ samples: [Float], sampleRate: Double) async throws {
                 if let update = try await engine.process(samples: samples, sampleRate: sampleRate) {
@@ -198,26 +202,39 @@ final class LiveSpeakerDiarizationService {
                     await MainActor.run { onUpdate() }
                 }
             }
+            // Already-finalized labels stay; later segments get none, so labels never drift.
+            func giveUp(_ code: String) async -> Bool {
+                AppLog.transcription.atNotice.notice(
+                    "LiveSpeakerDiarizationService: stopping live diarization code=\(code, privacy: .public)"
+                )
+                queue.invalidate(session)
+                await markUnavailable()
+                return true
+            }
             var fedSamples = 0
             while let chunk = await queue.next(for: session) {
-                guard queue.isCurrent(session), !Task.isCancelled else { return }
+                guard queue.isCurrent(session), !Task.isCancelled else { return false }
                 do {
-                    // Silence stands in for audio dropped on overflow (or after a failed chunk),
-                    // so the engine's frame clock keeps counting recording time.
-                    if chunk.startSample > fedSamples {
-                        try await feed([Float](repeating: 0, count: chunk.startSample - fedSamples), sampleRate: chunk.sampleRate)
-                        fedSamples = chunk.startSample
+                    // Silence stands in for audio dropped on overflow, so the engine's frame
+                    // clock keeps counting recording time.
+                    let gap = chunk.startSample - fedSamples
+                    if gap > 0 {
+                        guard Double(gap) / chunk.sampleRate <= Self.maximumSilenceFill else {
+                            return await giveUp("gap_too_long")
+                        }
+                        try await feed([Float](repeating: 0, count: gap), sampleRate: chunk.sampleRate)
                     }
                     try await feed(chunk.samples, sampleRate: chunk.sampleRate)
                     fedSamples = chunk.startSample + chunk.samples.count
                 } catch is CancellationError {
-                    return
+                    return false
                 } catch {
                     AppLog.transcription.atNotice.notice(
                         "LiveSpeakerDiarizationService: chunk failed code=\(error.publicLogCode, privacy: .public)"
                     )
                 }
             }
+            return false
         }
     }
 }
