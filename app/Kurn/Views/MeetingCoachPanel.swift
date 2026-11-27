@@ -48,11 +48,22 @@ struct MeetingCoachPanel: View {
                     .id(card.candidate.id)
                     .transition(.opacity)
             }
+            if let hint = MeetingCoachSpeakerHintPresentation.hintText(
+                isModelInstalled: coach.isSpeakerModelInstalled,
+                hasLabeledSegments: coach.segments.contains { $0.speakerLabel != nil }
+            ) {
+                Text(hint)
+                    .font(.caption)
+                    .foregroundStyle(secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("coach.speaker.hint")
+            }
             transcript
         }
         .padding(14)
         .background(panelBackground)
         .kurnAnimation(.easeOut(duration: 0.25), value: coach.currentCardID)
+        .onAppear { coach.refreshSpeakerModelAvailability() }
 
         if embedsModals {
             content.meetingCoachModals(coach: coach)

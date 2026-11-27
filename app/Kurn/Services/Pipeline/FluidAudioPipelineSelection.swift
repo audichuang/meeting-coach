@@ -31,7 +31,7 @@ struct FluidAudioPipelineSelection {
             switch set {
             case .vad: true
             case .onDeviceASR, .diarization, .liveTranscriptionASR, .whisperCppASR, .sherpaOnnxDiarization,
-                 .fluidAudioASR, .fluidAudioDiarization, .fluidAudioUnifiedStreaming: false
+                 .fluidAudioASR, .fluidAudioDiarization, .fluidAudioUnifiedStreaming, .streamingDiarization: false
             }
         }
     }

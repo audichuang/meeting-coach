@@ -1116,3 +1116,7 @@
 "coach.speaker.not_me" = "私ではない";
 "coach.speaker.self" = "自分";
 "coach.speaker.accessibility_hint" = "タップして自分の発言かどうかを設定";
+"settings.coach.speaker_model" = "話者ラベルモデル";
+"settings.coach.speaker_model_not_installed" = "未ダウンロード";
+"settings.coach.speaker_model_download" = "ダウンロード";
+"coach.speaker.download_hint" = "設定で話者ラベルモデルをダウンロードすると「これは私」を設定できます";

@@ -1116,3 +1116,7 @@
 "coach.speaker.not_me" = "Not me";
 "coach.speaker.self" = "Me";
 "coach.speaker.accessibility_hint" = "Tap to mark whether this is you";
+"settings.coach.speaker_model" = "Speaker tagging model";
+"settings.coach.speaker_model_not_installed" = "Not downloaded";
+"settings.coach.speaker_model_download" = "Download";
+"coach.speaker.download_hint" = "Download the speaker tagging model in Settings to mark \"This is me\"";

@@ -420,4 +420,114 @@ struct MeetingCoachSelfMarkTests {
         let notes = try v7Context.fetch(FetchDescriptor<PaperNote>())
         #expect(notes.first?.strokeCount == 2)
     }
+
+    @Test func speakerModelInstalledStateDrivesCoachHintAndSettingsRow() async throws {
+        // 1. Presentation of the hint above the live transcript.
+        let hintWhenMissing = MeetingCoachSpeakerHintPresentation.hintText(
+            isModelInstalled: false,
+            hasLabeledSegments: false
+        )
+        #expect(hintWhenMissing == NSLocalizedString("coach.speaker.download_hint", comment: ""))
+        #expect(MeetingCoachSpeakerHintPresentation.hintText(isModelInstalled: true, hasLabeledSegments: false) == nil)
+        #expect(MeetingCoachSpeakerHintPresentation.hintText(isModelInstalled: false, hasLabeledSegments: true) == nil)
+
+        // 2. Presentation of the Settings row across not-installed, downloading, and installed states.
+        let notInstalledRow = MeetingCoachSpeakerModelRowPresentation(
+            isInstalled: false,
+            installedBytes: 0,
+            isDownloadingThis: false,
+            isAnyDownloading: false
+        )
+        #expect(notInstalledRow.title == NSLocalizedString("settings.coach.speaker_model", comment: ""))
+        #expect(notInstalledRow.detailText == NSLocalizedString("settings.coach.speaker_model_not_installed", comment: ""))
+        #expect(notInstalledRow.showsDownloadButton && notInstalledRow.isDownloadEnabled)
+        #expect(!notInstalledRow.showsProgress && !notInstalledRow.showsDeleteButton)
+
+        let downloadingRow = MeetingCoachSpeakerModelRowPresentation(
+            isInstalled: false,
+            installedBytes: 0,
+            isDownloadingThis: true,
+            isAnyDownloading: true
+        )
+        #expect(!downloadingRow.showsDownloadButton && !downloadingRow.showsDeleteButton)
+        #expect(downloadingRow.showsProgress)
+
+        let installedBytes: Int64 = 28_500_000
+        let installedRow = MeetingCoachSpeakerModelRowPresentation(
+            isInstalled: true,
+            installedBytes: installedBytes,
+            isDownloadingThis: false,
+            isAnyDownloading: false
+        )
+        #expect(installedRow.detailText == AudioFileStore.formattedSize(installedBytes))
+        #expect(!installedRow.showsDownloadButton && !installedRow.showsProgress)
+        #expect(installedRow.showsDeleteButton && installedRow.isDeleteEnabled)
+
+        // 3. ModelDownloadController + MeetingCoachSession react to download and delete.
+        let suiteName = "MeetingCoachSelfMarkTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(cloudStore: InMemoryCloudKeyValueStore(), defaults: defaults)
+
+        nonisolated(unsafe) var installed = false
+        nonisolated(unsafe) var diskBytes: Int64 = 0
+        nonisolated(unsafe) var downloadedSets: [ModelSet] = []
+        nonisolated(unsafe) var deleted = false
+
+        let controller = ModelDownloadController(
+            downloader: { set, _, onProgress in
+                downloadedSets.append(set)
+                onProgress(ModelDownloadStatus(fractionCompleted: 0.5, phase: .downloading))
+                installed = true
+                diskBytes = installedBytes
+                onProgress(ModelDownloadStatus(fractionCompleted: 1, phase: .compiling))
+            },
+            isStreamingDiarizationInstalled: { installed },
+            streamingDiarizationSizeBytes: { diskBytes },
+            deleteStreamingDiarizationFiles: {
+                deleted = true
+                installed = false
+                diskBytes = 0
+            }
+        )
+
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Hint Toggle")
+        context.insert(meeting)
+        let session = MeetingCoachSession(
+            meeting: meeting,
+            modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "", budgetUSD: 10, backend: .test),
+            llm: RecordingCoachLLM(),
+            isSpeakerModelInstalled: { installed },
+            elapsed: { 0 }
+        )
+
+        #expect(!controller.isStreamingDiarizationReady)
+        #expect(controller.streamingDiarizationBytes == 0)
+        #expect(!session.isSpeakerModelInstalled)
+
+        controller.requestStreamingDiarizationDownload()
+        #expect(controller.showingStreamingDiarizationConsent)
+        controller.confirmStreamingDiarization(settings: settings)
+        await waitUntil { !controller.isDownloading }
+
+        #expect(downloadedSets == [.streamingDiarization])
+        #expect(controller.isStreamingDiarizationReady)
+        #expect(controller.streamingDiarizationBytes == installedBytes)
+        session.refreshSpeakerModelAvailability()
+        #expect(session.isSpeakerModelInstalled)
+
+        controller.requestDeleteStreamingDiarization()
+        #expect(controller.showingStreamingDiarizationDeleteConfirm)
+        controller.confirmDeleteStreamingDiarization()
+
+        #expect(deleted)
+        #expect(!controller.isStreamingDiarizationReady)
+        #expect(controller.streamingDiarizationBytes == 0)
+        session.refreshSpeakerModelAvailability()
+        #expect(!session.isSpeakerModelInstalled)
+    }
 }

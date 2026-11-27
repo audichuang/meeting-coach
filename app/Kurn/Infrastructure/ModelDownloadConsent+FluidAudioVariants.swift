@@ -17,6 +17,8 @@ extension ModelDownloadConsent {
             try await FluidAudioDiarizationModelRuntime.download(model, onProgress: onProgress)
         case .fluidAudioUnifiedStreaming:
             try await FluidAudioASRModelRuntime.downloadUnifiedStreaming(onProgress: onProgress)
+        case .streamingDiarization:
+            try await FluidAudioDiarizationModelRuntime.downloadSortformer(onProgress: onProgress)
         default:
             throw AppError.modelDownloadRequired(TranscriptionEngine.fluidAudioParakeet.displayName)
         }

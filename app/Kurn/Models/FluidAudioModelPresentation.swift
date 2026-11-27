@@ -6,6 +6,7 @@ enum FluidAudioModelPresentation {
         case transcription
         case diarization
         case live
+        case coach
     }
 
     struct DownloadActionState: Equatable {
@@ -93,6 +94,8 @@ enum FluidAudioModelPresentation {
             return .diarization
         case .liveTranscriptionASR, .fluidAudioUnifiedStreaming:
             return .live
+        case .streamingDiarization:
+            return .coach
         case nil:
             return nil
         }

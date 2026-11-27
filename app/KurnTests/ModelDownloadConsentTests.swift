@@ -87,7 +87,7 @@ struct ModelDownloadConsentTests {
 
     @Test(arguments: [
         ModelSet.liveTranscriptionASR, .onDeviceASR, .diarization, .vad,
-        .whisperCppASR(.base), .sherpaOnnxDiarization
+        .whisperCppASR(.base), .sherpaOnnxDiarization, .streamingDiarization
     ])
     func everySetIsStoppedOnABlockedPathBeforeDownloading(_ set: ModelSet) async {
         await #expect(throws: AppError.self) {

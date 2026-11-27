@@ -19,6 +19,8 @@ enum ModelSet: Sendable, Equatable {
     case fluidAudioASR(FluidAudioASRModel)
     case fluidAudioDiarization(FluidAudioDiarizationModel)
     case fluidAudioUnifiedStreaming
+    /// On-device streaming diarizer (FluidAudio Sortformer) for live speaker labels ("本人標記").
+    case streamingDiarization
     /// whisper.cpp GGML weights. Carries the variant because, unlike the
     /// FluidAudio sets, the user chooses which weight file to download.
     case whisperCppASR(WhisperCppModel)
@@ -47,6 +49,8 @@ enum ModelSet: Sendable, Equatable {
             FluidAudioModelAvailability.isDiarizationInstalled(model)
         case .fluidAudioUnifiedStreaming:
             FluidAudioModelAvailability.isUnifiedStreamingInstalled()
+        case .streamingDiarization:
+            FluidAudioModelAvailability.isStreamingDiarizationInstalled
         }
     }
 }

@@ -52,6 +52,10 @@ final class ModelDownloadController {
     var showingVADConsent = false
     var showingWhisperCppConsent = false
     var showingFluidAudioModelConsent = false
+    var showingStreamingDiarizationConsent = false
+    var showingStreamingDiarizationDeleteConfirm = false
+    var isStreamingDiarizationReady = false
+    var streamingDiarizationBytes: Int64 = 0
     var pendingFluidAudioSelection: FluidAudioModelSelection?
 
     /// Variant chooser shown when whisper.cpp is picked and its weights aren't on
@@ -102,6 +106,9 @@ final class ModelDownloadController {
     let isFluidAudioDiarizationInstalled: (FluidAudioDiarizationModel) -> Bool
     let isFluidAudioUnifiedStreamingInstalled: () -> Bool
     let isAutomaticFluidAudioLiveInstalled: () -> Bool
+    let isStreamingDiarizationInstalled: () -> Bool
+    let streamingDiarizationSizeBytes: () -> Int64
+    let deleteStreamingDiarizationFiles: () -> Void
 
     init(
         downloader: @escaping Downloader = { set, policy, onProgress in
@@ -111,7 +118,10 @@ final class ModelDownloadController {
         isFluidAudioASRInstalled: @escaping (FluidAudioASRModel) -> Bool = FluidAudioModelAvailability.isASRInstalled,
         isFluidAudioDiarizationInstalled: @escaping (FluidAudioDiarizationModel) -> Bool = FluidAudioModelAvailability.isDiarizationInstalled,
         isFluidAudioUnifiedStreamingInstalled: @escaping () -> Bool = FluidAudioModelAvailability.isUnifiedStreamingInstalled,
-        isAutomaticFluidAudioLiveInstalled: @escaping () -> Bool = { FluidAudioModelAvailability.automaticLive }
+        isAutomaticFluidAudioLiveInstalled: @escaping () -> Bool = { FluidAudioModelAvailability.automaticLive },
+        isStreamingDiarizationInstalled: @escaping () -> Bool = { FluidAudioModelAvailability.isStreamingDiarizationInstalled },
+        streamingDiarizationSizeBytes: @escaping () -> Int64 = { ModelStore.sizeOnDisk(.streamingDiarization) },
+        deleteStreamingDiarizationFiles: @escaping () -> Void = { ModelStore.delete(.streamingDiarization) }
     ) {
         self.downloader = downloader
         self.isWhisperCppInstalled = isWhisperCppInstalled
@@ -119,6 +129,11 @@ final class ModelDownloadController {
         self.isFluidAudioDiarizationInstalled = isFluidAudioDiarizationInstalled
         self.isFluidAudioUnifiedStreamingInstalled = isFluidAudioUnifiedStreamingInstalled
         self.isAutomaticFluidAudioLiveInstalled = isAutomaticFluidAudioLiveInstalled
+        self.isStreamingDiarizationInstalled = isStreamingDiarizationInstalled
+        self.streamingDiarizationSizeBytes = streamingDiarizationSizeBytes
+        self.deleteStreamingDiarizationFiles = deleteStreamingDiarizationFiles
+        self.isStreamingDiarizationReady = isStreamingDiarizationInstalled()
+        self.streamingDiarizationBytes = self.isStreamingDiarizationReady ? streamingDiarizationSizeBytes() : 0
     }
 
     // MARK: - Engine selection (consent gates)
@@ -440,6 +455,8 @@ final class ModelDownloadController {
             disableDeletedLegacyFluidAudioDiarization(settings: settings)
         case .fluidAudioASR, .nemotronDiarization:
             handleDeletedFluidAudioVariant(model, settings: settings)
+        case .streamingDiarization:
+            refreshStreamingDiarizationState()
         case .sherpaOnnxDiarization:
             settings.sherpaOnnxModelsConsented = false
             if settings.diarizationEngine == .sherpaOnnx {

@@ -480,6 +480,22 @@ struct ModelDownloadAlerts: ViewModifier {
                 Text(NSLocalizedString("settings.model_download.message_whisper_cpp", comment: ""))
             }
             .fluidAudioModelDownloadConsent(downloads, settings: settings)
+            .modelDownloadDialog(
+                isPresented: $downloads.showingStreamingDiarizationConsent,
+                onConfirm: { downloads.confirmStreamingDiarization(settings: settings) },
+                onCancel: {}
+            )
+            .kurnDialog(
+                isPresented: $downloads.showingStreamingDiarizationDeleteConfirm,
+                iconSystemName: "trash.fill",
+                iconTint: Theme.accent,
+                title: NSLocalizedString("settings.models.delete_confirm", comment: "Confirm delete model"),
+                message: NSLocalizedString("settings.models.delete_message", comment: "Re-download later"),
+                primaryTitle: NSLocalizedString("settings.models.delete", comment: "Delete model"),
+                primaryRole: .destructive,
+                primaryAction: { downloads.confirmDeleteStreamingDiarization() },
+                secondaryTitle: NSLocalizedString("common.cancel", comment: "Cancel")
+            )
             .errorAlert($downloads.error, onOpenNetworkSettings: onOpenNetworkSettings)
     }
 

@@ -42,6 +42,7 @@ struct RecordingSettingsView: View {
         .navigationTitle(NSLocalizedString("settings.recording", comment: "Recording"))
         .onAppear {
             coachServer.load(settings: settings)
+            downloads.refreshStreamingDiarizationState()
         }
         .onChange(of: focusedField) { previous, current in
             if previous == .invite, current != .invite {
@@ -170,10 +171,54 @@ struct RecordingSettingsView: View {
                 Text(String(format: NSLocalizedString("settings.meeting_coach_max_cards", comment: "Most automatic cards per 10 minutes"),
                             settings.coachMaxCardsPerWindow))
             }
+            coachSpeakerModelRow
         } header: {
             Text(NSLocalizedString("settings.meeting_coach", comment: "Meeting coach"))
         } footer: {
             Text(NSLocalizedString("settings.meeting_coach_footer", comment: "Explains the coach sends audio through the server"))
+        }
+    }
+
+    @ViewBuilder
+    private var coachSpeakerModelRow: some View {
+        let isDownloadingThis = FluidAudioModelPresentation.downloadSection(for: downloads.downloadingModel) == .coach
+        let row = MeetingCoachSpeakerModelRowPresentation(
+            isInstalled: downloads.isStreamingDiarizationReady,
+            installedBytes: downloads.streamingDiarizationBytes,
+            isDownloadingThis: isDownloadingThis,
+            isAnyDownloading: downloads.isDownloading
+        )
+        HStack(spacing: 12) {
+            Text(row.title)
+            Spacer()
+            Text(row.detailText)
+                .foregroundStyle(Theme.textSecondary)
+                .accessibilityIdentifier("settings.coach.speaker_model.status")
+            if row.showsDownloadButton {
+                Button(NSLocalizedString("settings.coach.speaker_model_download", comment: "Download")) {
+                    downloads.requestStreamingDiarizationDownload()
+                }
+                .buttonStyle(.borderless)
+                .disabled(!row.isDownloadEnabled)
+                .accessibilityIdentifier("settings.coach.speaker_model.download")
+            } else if row.showsDeleteButton {
+                Button {
+                    downloads.requestDeleteStreamingDiarization()
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .tint(.red)
+                .disabled(!row.isDeleteEnabled)
+                .accessibilityLabel(
+                    "\(row.title): \(NSLocalizedString("settings.models.delete", comment: "Delete model"))"
+                )
+                .accessibilityIdentifier("settings.coach.speaker_model.delete")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        if row.showsProgress {
+            ModelDownloadProgressRow(progress: downloads.downloadProgress, onCancel: downloads.cancelDownload)
         }
     }
 

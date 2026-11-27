@@ -143,3 +143,51 @@ struct LiveTranscriptSegmentPresentation: Equatable, Sendable {
         self.init(speakerLabel: segment.speakerLabel, selfSpeakerLabel: selfSpeakerLabel)
     }
 }
+
+/// Pure presentation model for the "講者標記模型" row in Settings -> Recording -> Meeting Coach.
+/// Displays the actual on-disk byte size when installed (never a hard-coded estimate).
+struct MeetingCoachSpeakerModelRowPresentation: Equatable, Sendable {
+    let title: String
+    let detailText: String
+    let showsDownloadButton: Bool
+    let isDownloadEnabled: Bool
+    let showsProgress: Bool
+    let showsDeleteButton: Bool
+    let isDeleteEnabled: Bool
+
+    init(
+        isInstalled: Bool,
+        installedBytes: Int64,
+        isDownloadingThis: Bool,
+        isAnyDownloading: Bool
+    ) {
+        self.title = NSLocalizedString("settings.coach.speaker_model", comment: "Speaker tagging model")
+        if isInstalled {
+            self.detailText = installedBytes > 0
+                ? AudioFileStore.formattedSize(installedBytes)
+                : NSLocalizedString("settings.models.installed", comment: "Already downloaded")
+        } else {
+            self.detailText = NSLocalizedString(
+                "settings.coach.speaker_model_not_installed",
+                comment: "Not downloaded"
+            )
+        }
+        self.showsDownloadButton = !isInstalled && !isDownloadingThis
+        self.isDownloadEnabled = !isInstalled && !isAnyDownloading
+        self.showsProgress = isDownloadingThis
+        self.showsDeleteButton = isInstalled && !isDownloadingThis
+        self.isDeleteEnabled = isInstalled && !isAnyDownloading
+    }
+}
+
+/// Pure presentation for the one-line hint above the live transcript when the
+/// speaker-tagging model is not yet installed.
+enum MeetingCoachSpeakerHintPresentation {
+    static func hintText(isModelInstalled: Bool, hasLabeledSegments: Bool) -> String? {
+        guard !isModelInstalled && !hasLabeledSegments else { return nil }
+        return NSLocalizedString(
+            "coach.speaker.download_hint",
+            comment: "Hint telling the user to download the speaker tagging model in Settings to mark This is me"
+        )
+    }
+}

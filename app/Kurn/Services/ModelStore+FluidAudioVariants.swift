@@ -2,7 +2,7 @@ import KurnCore
 
 extension ModelStore.ModelGroup {
     func canClaimFolder(_ folder: String) -> Bool {
-        if self == .fluidAudioASR || self == .nemotronDiarization {
+        if self == .fluidAudioASR || self == .nemotronDiarization || self == .streamingDiarization {
             return fallbackFolderNames.contains(folder)
         }
         return !Self.allCases.contains { group in

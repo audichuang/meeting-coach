@@ -27,6 +27,7 @@ enum ModelStore {
         case sherpaOnnxDiarization
         case fluidAudioASR
         case nemotronDiarization
+        case streamingDiarization
 
         var id: String { rawValue }
 
@@ -38,7 +39,9 @@ enum ModelStore {
             switch self {
             case .whisperCpp: return WhisperCppModelDownloader.modelsDirectory
             case .sherpaOnnxDiarization: return SherpaOnnxModelDownloader.modelsDirectory
-            case .liveTranscription, .onDeviceLanguage, .diarization, .vad, .fluidAudioASR, .nemotronDiarization: return ModelStore.modelsDirectory
+            case .liveTranscription, .onDeviceLanguage, .diarization, .vad,
+                    .fluidAudioASR, .nemotronDiarization, .streamingDiarization:
+                return ModelStore.modelsDirectory
             }
         }
 
@@ -75,6 +78,8 @@ enum ModelStore {
                 return FluidAudioASRModel.allCases.filter { $0 != .parakeetV3 }.map(\.folderName)
             case .nemotronDiarization:
                 return [FluidAudioDiarizationModel.nemotron3.folderName]
+            case .streamingDiarization:
+                return ["diar-streaming-sortformer-coreml"]
             case .whisperCpp:
                 // Deterministic: the app names these folders itself, so unlike
                 // the FluidAudio groups there is nothing to discover.
@@ -103,6 +108,8 @@ enum ModelStore {
                 return "FluidAudio ASR"
             case .nemotronDiarization:
                 return FluidAudioDiarizationModel.nemotron3.displayName
+            case .streamingDiarization:
+                return NSLocalizedString("settings.coach.speaker_model", comment: "Speaker tagging model")
             }
         }
 
@@ -124,7 +131,9 @@ enum ModelStore {
         var isSelfVerifying: Bool {
             switch self {
             case .whisperCpp, .sherpaOnnxDiarization: return true
-            case .liveTranscription, .onDeviceLanguage, .diarization, .vad, .fluidAudioASR, .nemotronDiarization: return false
+            case .liveTranscription, .onDeviceLanguage, .diarization, .vad,
+                    .fluidAudioASR, .nemotronDiarization, .streamingDiarization:
+                return false
             }
         }
 

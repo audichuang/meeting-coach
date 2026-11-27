@@ -99,6 +99,10 @@ struct FluidAudioModelPresentationTests {
         #expect(FluidAudioModelPresentation.downloadSection(for: modelSet) == .live)
     }
 
+    @Test func streamingDiarizationProgressStaysInTheCoachSection() {
+        #expect(FluidAudioModelPresentation.downloadSection(for: .streamingDiarization) == .coach)
+    }
+
     @Test func noDownloadMeansNoProgressSection() {
         #expect(FluidAudioModelPresentation.downloadSection(for: nil) == nil)
     }

@@ -57,6 +57,7 @@ final class MeetingCoachSession {
     private(set) var segments: [LiveTranscriptSegment] = []
     private(set) var gaps: [LiveTranscriptGap] = []
     var selfSpeakerLabel: String?
+    private(set) var isSpeakerModelInstalled: Bool
     private(set) var connection: LiveConnectionState = .connecting
     private(set) var cost = CoachCostMeter()
     private(set) var budget: CoachBudgetGuard
@@ -103,6 +104,7 @@ final class MeetingCoachSession {
     /// Resolves the dominant anonymous speaker label for a live transcript window,
     /// returning `nil` when streaming diarization is unavailable.
     @ObservationIgnored var speakerLookup: (@Sendable (TimeInterval, TimeInterval) -> String?)?
+    @ObservationIgnored private let checkSpeakerModelInstalled: @Sendable () -> Bool
 
     init(
         meeting: Meeting,
@@ -111,6 +113,7 @@ final class MeetingCoachSession {
         llm: (any CoachLLM)? = nil,
         trigger: (any SuggestionTriggerStrategy)? = nil,
         speakerLookup: (@Sendable (TimeInterval, TimeInterval) -> String?)? = nil,
+        isSpeakerModelInstalled: @escaping @Sendable () -> Bool = { FluidAudioModelAvailability.isStreamingDiarizationInstalled },
         elapsed: @escaping @MainActor () -> TimeInterval
     ) {
         self.meeting = meeting
@@ -124,8 +127,14 @@ final class MeetingCoachSession {
         self.llm = llm ?? CoachResponsesClient(backend: configuration.backend)
         self.trigger = trigger ?? EventSuggestionTrigger(mentionsUser: ChineseText.nameMatcher(for: configuration.userName))
         self.speakerLookup = speakerLookup
+        self.checkSpeakerModelInstalled = isSpeakerModelInstalled
+        self.isSpeakerModelInstalled = isSpeakerModelInstalled()
         self.elapsed = elapsed
         (events, eventSink) = AsyncStream.makeStream(of: LiveTranscriptEvent.self)
+    }
+
+    func refreshSpeakerModelAvailability() {
+        isSpeakerModelInstalled = checkSpeakerModelInstalled()
     }
 
     /// The live-transcription service the recorder feeds, backed by the cloud

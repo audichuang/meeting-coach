@@ -1116,3 +1116,7 @@
 "coach.speaker.not_me" = "不是我";
 "coach.speaker.self" = "我";
 "coach.speaker.accessibility_hint" = "點一下標記是否為本人發言";
+"settings.coach.speaker_model" = "講者標記模型";
+"settings.coach.speaker_model_not_installed" = "未下載";
+"settings.coach.speaker_model_download" = "下載";
+"coach.speaker.download_hint" = "到設定下載講者標記模型，即可標記「這是我」";

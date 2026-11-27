@@ -3,7 +3,7 @@ import KurnCore
 extension ModelSet {
     var isFluidAudioVariant: Bool {
         switch self {
-        case .fluidAudioASR, .fluidAudioDiarization, .fluidAudioUnifiedStreaming: return true
+        case .fluidAudioASR, .fluidAudioDiarization, .fluidAudioUnifiedStreaming, .streamingDiarization: return true
         default: return false
         }
     }

@@ -421,6 +421,7 @@ enum PipelineEvaluationMatrix {
         case .fluidAudioASR(let model): return "fluidAudioASR:\(model.rawValue)"
         case .fluidAudioDiarization(let model): return "fluidAudioDiarization:\(model.rawValue)"
         case .fluidAudioUnifiedStreaming: return "fluidAudioUnifiedStreaming"
+        case .streamingDiarization: return "streamingDiarization"
         }
     }
 
