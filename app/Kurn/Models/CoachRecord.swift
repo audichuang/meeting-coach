@@ -33,6 +33,9 @@ final class CoachRecord {
     var wrapUpData: Data?
     var costUSD: Double = 0
     var transcribedSeconds: Double = 0
+    /// Anonymous speaker label (e.g. "A"…"D") the user marked as themselves in this recording.
+    /// Scoped strictly to this record; never copied to any other meeting.
+    var selfSpeakerLabel: String?
 
     init(id: UUID = UUID(), meeting: Meeting, recordingID: UUID?, userName: String, createdAt: Date = Date()) {
         self.id = id

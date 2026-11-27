@@ -187,12 +187,18 @@ struct SchemaV3MigrationTests {
         #expect(frozenV5.subtracting(frozenV4) == ["CoachRecord"])
     }
 
-    @Test func theCurrentSchemaIsV6AndAddsOnlyThePaperNoteEntity() {
-        #expect(KurnModelGraph.currentSchemaVersion == Schema.Version(1, 5, 0))
-        let frozen = Set(Schema(KurnSchemaV5.models).entities.map(\.name))
+    @Test func v6AddsOnlyThePaperNoteEntity() {
+        let frozenV5 = Set(Schema(KurnSchemaV5.models).entities.map(\.name))
+        let frozenV6 = Set(Schema(KurnSchemaV6.models).entities.map(\.name))
+        #expect(frozenV6.subtracting(frozenV5) == ["PaperNote"])
+    }
+
+    @Test func theCurrentSchemaIsV7AndAddsSelfSpeakerLabelToCoachRecord() {
+        #expect(KurnModelGraph.currentSchemaVersion == Schema.Version(1, 6, 0))
+        let frozenV6 = Set(Schema(KurnSchemaV6.models).entities.map(\.name))
         let current = Set(KurnModelGraph.schema.entities.map(\.name))
-        #expect(current.subtracting(frozen) == ["PaperNote"])
-        let liveIdentifiers = Set(KurnSchemaV6.models.map { ObjectIdentifier($0) })
-        #expect(KurnSchemaV5.models.allSatisfy { !liveIdentifiers.contains(ObjectIdentifier($0)) })
+        #expect(current == frozenV6)
+        let liveIdentifiers = Set(KurnSchemaV7.models.map { ObjectIdentifier($0) })
+        #expect(KurnSchemaV6.models.allSatisfy { !liveIdentifiers.contains(ObjectIdentifier($0)) })
     }
 }
