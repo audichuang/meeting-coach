@@ -134,6 +134,17 @@ struct AppSettingsTests {
         }
     }
 
+    /// The owner wants no Face ID / passcode prompt: a value an earlier build
+    /// stored as on must not bring the lock back.
+    @Test func recordingsLockIsAlwaysOffEvenWhenStoredOn() {
+        let key = "settings.requireAuthForRecordings"
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: key)
+        defer { if let previous { defaults.set(previous, forKey: key) } else { defaults.removeObject(forKey: key) } }
+        defaults.set(true, forKey: key)
+        #expect(AppSettings().requireAuthForRecordings == false)
+    }
+
     @Test func freshSettingsUseAlwaysAvailablePipeline() {
         withScopedDefaults { settings in
             #expect(settings.pipelineConfiguration == PipelineConfiguration())

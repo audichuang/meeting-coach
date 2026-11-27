@@ -756,8 +756,6 @@
 "settings.models.corrupt" = "Échec de la vérification — supprimez-le et retéléchargez-le.";
 
 /* Sécurité des enregistrements */
-"settings.require_auth_for_recordings" = "Exiger l'authentification";
-"settings.require_auth_for_recordings_footer" = "Face ID, Touch ID ou le code de l’appareil, une fois par session.";
 "settings.recording_section_privacy_footer" = "Les fichiers audio sont toujours chiffrés sur le disque à l'aide du code de l'appareil, quels que soient ces réglages.";
 "settings.hide_live_activity_meeting_title" = "Masquer le titre sur l'écran verrouillé";
 "settings.hide_live_activity_meeting_title_footer" = "Affiche un intitulé générique \"Enregistrement…\" sur l'écran verrouillé, la Dynamic Island et l'Apple Watch associée, à la place du titre réel de la réunion pendant l'enregistrement.";

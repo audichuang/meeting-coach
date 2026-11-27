@@ -756,8 +756,6 @@
 "settings.models.corrupt" = "検証に失敗しました — 削除して再ダウンロードしてください。";
 
 /* Recordings security */
-"settings.require_auth_for_recordings" = "認証を必須にする";
-"settings.require_auth_for_recordings_footer" = "Face ID、Touch ID、またはデバイスのパスコードで、セッションごとに1回認証します。";
 "settings.recording_section_privacy_footer" = "これらの設定にかかわらず、オーディオファイルは常にデバイスのパスコードを使ってディスク上で暗号化されます。";
 "settings.hide_live_activity_meeting_title" = "ロック画面で会議のタイトルを非表示";
 "settings.hide_live_activity_meeting_title_footer" = "録音中、ロック画面、Dynamic Island、ペアリングしたApple Watchに、実際の会議のタイトルではなく汎用の「録音中…」というラベルを表示します。";

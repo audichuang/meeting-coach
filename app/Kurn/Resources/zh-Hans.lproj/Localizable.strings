@@ -756,8 +756,6 @@
 "settings.models.corrupt" = "验证失败——请移除后重新下载。";
 
 /* 录音安全 */
-"settings.require_auth_for_recordings" = "需要身份验证";
-"settings.require_auth_for_recordings_footer" = "每个使用会话一次 Face ID、Touch ID 或设备密码验证。";
 "settings.recording_section_privacy_footer" = "无论这些设置如何，音频文件始终使用设备密码在磁盘上加密。";
 "settings.hide_live_activity_meeting_title" = "在锁屏上隐藏会议标题";
 "settings.hide_live_activity_meeting_title_footer" = "录音时，在锁屏、灵动岛和已配对的 Apple Watch 上显示通用的「正在录音…」标签，而非真实的会议标题。";

@@ -756,8 +756,6 @@
 "settings.models.corrupt" = "驗證失敗——請移除後重新下載。";
 
 /* 錄音安全 */
-"settings.require_auth_for_recordings" = "需要身份驗證";
-"settings.require_auth_for_recordings_footer" = "每次開啟 App 時一次 Face ID、Touch ID 或裝置密碼驗證。";
 "settings.recording_section_privacy_footer" = "無論這些設定如何，音訊檔案一律以裝置密碼在磁碟上加密。";
 "settings.hide_live_activity_meeting_title" = "在鎖定畫面上隱藏會議標題";
 "settings.hide_live_activity_meeting_title_footer" = "錄音時，在鎖定畫面、動態島和已配對的 Apple Watch 上顯示通用的「正在錄音…」標籤，而非真實的會議標題。";

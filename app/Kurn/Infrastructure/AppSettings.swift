@@ -68,7 +68,6 @@ final class AppSettings {
         static let allowsConstrainedNetworkTransfers = "settings.allowsConstrainedNetworkTransfers"
         static let cloudTranscriptionConsentKeys = "settings.cloudTranscriptionConsentKeys"
         static let logLevel = "settings.logLevel"
-        static let requireAuthForRecordings = "settings.requireAuthForRecordings"
         static let hideLiveActivityMeetingTitle = "settings.hideLiveActivityMeetingTitle"
         static let meetingsSortOrder = "settings.meetingsSortOrder"
         static let autoTaggingEnabled = "settings.autoTaggingEnabled"
@@ -251,13 +250,11 @@ final class AppSettings {
         }
     }
 
-    /// When on, the recordings UI requires Face ID / Touch ID / passcode once
-    /// per foreground session before listing meetings or playing audio. Audio
-    /// files are always encrypted at rest by iOS Data Protection regardless
-    /// of this toggle. Defaults to on so the secure path is the default.
-    var requireAuthForRecordings: Bool {
-        didSet { defaults.set(requireAuthForRecordings, forKey: Keys.requireAuthForRecordings) }
-    }
+    /// Always off: the owner wants no Face ID / passcode prompt anywhere, so the
+    /// lock screen (`RecordingAccessGate`) and `SensitiveActionAuthorizer` never
+    /// ask. A value stored by an earlier build is ignored. Audio files are still
+    /// encrypted at rest by iOS Data Protection.
+    var requireAuthForRecordings: Bool { false }
 
     /// When on, the Lock Screen / Dynamic Island Live Activity shows a generic
     /// "Recording…" label instead of the real meeting title, since the Live
@@ -686,20 +683,6 @@ final class AppSettings {
         // so it is an explicit opt-in, same as wiki generation.
         correctionEnabled = defaults.bool(forKey: Keys.correctionEnabled, default: false)
         aiTitleCloudEnabled = defaults.bool(forKey: Keys.aiTitleCloudEnabled, default: false)
-        // Screenshot automation (fastlane `snapshot`) always forces this off so
-        // the recordings lock screen never blocks an unattended UI test run;
-        // so does the injected store-open failure, whose recovery actions
-        // re-authenticate (`ModelStoreRecoveryViewModel`) and would otherwise
-        // stop at a prompt no UI test can answer.
-        #if DEBUG
-        let unattendedUITestRun = ProcessInfo.processInfo.arguments.contains("UI-Testing-Screenshots")
-            || ProcessInfo.processInfo.environment["UI_TESTING_STORE_OPEN_FAILURE_REASON"] != nil
-        requireAuthForRecordings = unattendedUITestRun
-            ? false
-            : defaults.bool(forKey: Keys.requireAuthForRecordings, default: true)
-        #else
-        requireAuthForRecordings = defaults.bool(forKey: Keys.requireAuthForRecordings, default: true)
-        #endif
         hideLiveActivityMeetingTitle = defaults.bool(forKey: Keys.hideLiveActivityMeetingTitle, default: true)
         // FluidAudio rather than the heuristic engine, which is what every user
         // got who never opened Settings. `PipelineConfiguration.effectiveDiarization`

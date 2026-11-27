@@ -756,8 +756,6 @@
 "settings.models.corrupt" = "Verifica non riuscita — rimuovilo e scaricalo di nuovo.";
 
 /* Sicurezza delle registrazioni */
-"settings.require_auth_for_recordings" = "Richiedi Autenticazione";
-"settings.require_auth_for_recordings_footer" = "Face ID, Touch ID o il codice del dispositivo, una volta per sessione.";
 "settings.recording_section_privacy_footer" = "I file audio sono sempre crittografati su disco usando il codice del dispositivo, indipendentemente da queste impostazioni.";
 "settings.hide_live_activity_meeting_title" = "Nascondi Titolo su Schermata Bloccata";
 "settings.hide_live_activity_meeting_title_footer" = "Mostra un'etichetta generica \"Registrazione…\" sulla Schermata Bloccata, nella Dynamic Island e sull'Apple Watch abbinato al posto del titolo reale della riunione durante la registrazione.";
