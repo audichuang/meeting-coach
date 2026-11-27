@@ -2,7 +2,7 @@
 //  PaperRecorderView.swift
 //  Kurn
 //
-//  The iPad-first "paper" recording screen: an opaque writing surface fills
+//  The "paper" recording screen (iPad and iPhone): an opaque writing surface fills
 //  the screen while recording, Liquid Glass controls and the drawing tool
 //  palette float above it, and the meeting coach adapts by orientation
 //  (side column in landscape; collapsible single-line bar in portrait).
@@ -107,13 +107,11 @@ struct PaperRecorderView: View {
 
             VStack(spacing: 8) {
                 topControlBar
-                PaperToolPalette(
-                    selection: $toolState,
-                    canUndo: canvasController.canUndo,
-                    canRedo: canvasController.canRedo,
-                    onUndo: { canvasController.undo() },
-                    onRedo: { canvasController.redo() }
-                )
+                // Scrolls sideways on a narrow iPhone rather than widening the screen.
+                ViewThatFits(in: .horizontal) {
+                    toolPalette
+                    ScrollView(.horizontal, showsIndicators: false) { toolPalette }
+                }
                 statusBanners
             }
             .padding(.horizontal, 12)
@@ -122,136 +120,161 @@ struct PaperRecorderView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var toolPalette: some View {
+        PaperToolPalette(
+            selection: $toolState,
+            canUndo: canvasController.canUndo,
+            canRedo: canvasController.canRedo,
+            onUndo: { canvasController.undo() },
+            onRedo: { canvasController.redo() }
+        )
+    }
+
+    /// One row when it fits (iPad, iPhone landscape); on a narrow iPhone the
+    /// title capsule and the recording controls take a row each instead of
+    /// pushing the paper off screen.
     private var topControlBar: some View {
-        HStack(spacing: 8) {
+        ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
-                Button(role: hasRecordingInProgress ? .destructive : .cancel) {
-                    session.discard()
-                } label: {
-                    Image(systemName: hasRecordingInProgress ? "trash" : "xmark")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(hasRecordingInProgress ? Theme.accent : Theme.textPrimary)
-                        .accessibilityHidden(true)
-                        .frame(width: 32, height: 32)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(
-                    hasRecordingInProgress
-                        ? NSLocalizedString("recorder.discard", comment: "Discard the in-progress recording")
-                        : NSLocalizedString("common.cancel", comment: "Cancel")
-                )
-                .accessibilityIdentifier("recorder.discard")
-
-                statusPill
-
-                Button {
-                    showingTitlePopover = true
-                } label: {
-                    Text(vm.meetingTitle.isEmpty
-                         ? NSLocalizedString("recorder.add_title", comment: "Add title…")
-                         : vm.meetingTitle)
-                        .font(Theme.subheadlineEmphasized)
-                        .foregroundStyle(vm.meetingTitle.isEmpty ? Theme.textSecondary : Theme.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: 180, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(NSLocalizedString("paper.title.edit", comment: "Edit meeting title"))
-                .popover(isPresented: $showingTitlePopover) {
-                    titleEditorPopover
-                }
+                titleCapsule
+                Spacer(minLength: 6)
+                controlsCapsule
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .glassEffect(.regular.interactive(), in: .capsule)
-
-            Spacer(minLength: 6)
-
-            HStack(spacing: 6) {
-                Button {
-                    vm.markHighlight()
-                } label: {
-                    Image(systemName: "bookmark.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(vm.state == .recording ? Theme.warning : Theme.textTertiary)
-                        .accessibilityHidden(true)
-                        .frame(width: 32, height: 32)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(vm.state != .recording)
-                .sensoryFeedback(.success, trigger: vm.highlightCount)
-                .accessibilityLabel(NSLocalizedString("recorder.highlight", comment: "Highlight"))
-
-                Button {
-                    showingPhotoCapture = true
-                } label: {
-                    Image(systemName: "camera.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(vm.state == .recording ? Theme.textPrimary : Theme.textTertiary)
-                        .accessibilityHidden(true)
-                        .frame(width: 32, height: 32)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(vm.state != .recording)
-                .accessibilityLabel(NSLocalizedString("recorder.photo", comment: "Photo"))
-
-                Button {
-                    vm.togglePause()
-                } label: {
-                    Image(systemName: vm.state == .paused ? "play.fill" : "pause.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(vm.state == .idle ? Theme.textTertiary : Theme.textPrimary)
-                        .accessibilityHidden(true)
-                        .frame(width: 34, height: 32)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(vm.state == .idle)
-                .accessibilityLabel(
-                    vm.state == .paused
-                        ? NSLocalizedString("recorder.resume", comment: "Resume")
-                        : NSLocalizedString("recorder.pause", comment: "Pause")
-                )
-                .accessibilityIdentifier("recorder.pause")
-
-                Button {
-                    vm.stopAndSave()
-                } label: {
-                    Label(NSLocalizedString("recorder.stop", comment: "Stop"), systemImage: "stop.fill")
-                        .font(.footnote.weight(.semibold))
-                        .labelStyle(.iconOnly)
-                        .frame(width: 34, height: 32)
-                }
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.circle)
-                .tint(Theme.accent)
-                .disabled(vm.state == .idle)
-                .accessibilityLabel(NSLocalizedString("recorder.stop", comment: "Stop"))
-                .accessibilityIdentifier("recorder.stop")
-
-                Button {
-                    session.minimize()
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(session.canMinimize ? Theme.textPrimary : Theme.textTertiary)
-                        .accessibilityHidden(true)
-                        .frame(width: 32, height: 32)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!session.canMinimize)
-                .accessibilityLabel(NSLocalizedString("recorder.minimize", comment: "Minimize the recorder"))
-                .accessibilityIdentifier("recorder.minimize")
+            VStack(spacing: 8) {
+                HStack { titleCapsule; Spacer(minLength: 0) }
+                HStack { Spacer(minLength: 0); controlsCapsule }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .glassEffect(.regular.interactive(), in: .capsule)
         }
+    }
+
+    private var titleCapsule: some View {
+        HStack(spacing: 8) {
+            Button(role: hasRecordingInProgress ? .destructive : .cancel) {
+                session.discard()
+            } label: {
+                Image(systemName: hasRecordingInProgress ? "trash" : "xmark")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(hasRecordingInProgress ? Theme.accent : Theme.textPrimary)
+                    .accessibilityHidden(true)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                hasRecordingInProgress
+                    ? NSLocalizedString("recorder.discard", comment: "Discard the in-progress recording")
+                    : NSLocalizedString("common.cancel", comment: "Cancel")
+            )
+            .accessibilityIdentifier("recorder.discard")
+
+            statusPill
+
+            Button {
+                showingTitlePopover = true
+            } label: {
+                Text(vm.meetingTitle.isEmpty
+                     ? NSLocalizedString("recorder.add_title", comment: "Add title…")
+                     : vm.meetingTitle)
+                    .font(Theme.subheadlineEmphasized)
+                    .foregroundStyle(vm.meetingTitle.isEmpty ? Theme.textSecondary : Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 180, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(NSLocalizedString("paper.title.edit", comment: "Edit meeting title"))
+            .popover(isPresented: $showingTitlePopover) {
+                titleEditorPopover
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .glassEffect(.regular.interactive(), in: .capsule)
+    }
+
+    private var controlsCapsule: some View {
+        HStack(spacing: 6) {
+            Button {
+                vm.markHighlight()
+            } label: {
+                Image(systemName: "bookmark.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(vm.state == .recording ? Theme.warning : Theme.textTertiary)
+                    .accessibilityHidden(true)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.state != .recording)
+            .sensoryFeedback(.success, trigger: vm.highlightCount)
+            .accessibilityLabel(NSLocalizedString("recorder.highlight", comment: "Highlight"))
+
+            Button {
+                showingPhotoCapture = true
+            } label: {
+                Image(systemName: "camera.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(vm.state == .recording ? Theme.textPrimary : Theme.textTertiary)
+                    .accessibilityHidden(true)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.state != .recording)
+            .accessibilityLabel(NSLocalizedString("recorder.photo", comment: "Photo"))
+
+            Button {
+                vm.togglePause()
+            } label: {
+                Image(systemName: vm.state == .paused ? "play.fill" : "pause.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(vm.state == .idle ? Theme.textTertiary : Theme.textPrimary)
+                    .accessibilityHidden(true)
+                    .frame(width: 34, height: 32)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.state == .idle)
+            .accessibilityLabel(
+                vm.state == .paused
+                    ? NSLocalizedString("recorder.resume", comment: "Resume")
+                    : NSLocalizedString("recorder.pause", comment: "Pause")
+            )
+            .accessibilityIdentifier("recorder.pause")
+
+            Button {
+                vm.stopAndSave()
+            } label: {
+                Label(NSLocalizedString("recorder.stop", comment: "Stop"), systemImage: "stop.fill")
+                    .font(.footnote.weight(.semibold))
+                    .labelStyle(.iconOnly)
+                    .frame(width: 34, height: 32)
+            }
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.circle)
+            .tint(Theme.accent)
+            .disabled(vm.state == .idle)
+            .accessibilityLabel(NSLocalizedString("recorder.stop", comment: "Stop"))
+            .accessibilityIdentifier("recorder.stop")
+
+            Button {
+                session.minimize()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(session.canMinimize ? Theme.textPrimary : Theme.textTertiary)
+                    .accessibilityHidden(true)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!session.canMinimize)
+            .accessibilityLabel(NSLocalizedString("recorder.minimize", comment: "Minimize the recorder"))
+            .accessibilityIdentifier("recorder.minimize")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .glassEffect(.regular.interactive(), in: .capsule)
     }
 
     private var statusPill: some View {

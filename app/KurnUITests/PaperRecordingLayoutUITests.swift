@@ -229,7 +229,8 @@ final class PaperRecordingLayoutUITests: XCTestCase {
         guard UIDevice.current.userInterfaceIdiom == .phone else {
             throw XCTSkip("Paper iPhone layout test runs on iPhone simulators")
         }
-        let shotDir = ProcessInfo.processInfo.environment["MC_SHOT_DIR"]
+        let env = ProcessInfo.processInfo.environment
+        let shotDir = env["MC_SHOT_DIR"]
 
         let app = XCUIApplication()
         app.launchArguments += [
@@ -239,6 +240,9 @@ final class PaperRecordingLayoutUITests: XCTestCase {
             "-AppleLocale", "zh_TW"
         ]
         app.launchEnvironment["KURN_DEBUG_COACH_PREVIEW"] = "1"
+        if let captureFile = env["MC_CAPTURE_FILE"], !captureFile.isEmpty {
+            app.launchEnvironment["KURN_DEBUG_CAPTURE_FILE"] = captureFile
+        }
         XCUIDevice.shared.orientation = .portrait
         app.launch()
 
@@ -250,6 +254,9 @@ final class PaperRecordingLayoutUITests: XCTestCase {
         XCTAssertTrue(canvas.waitForExistence(timeout: 15), "iPhone should show the paper canvas")
         let collapsedBar = app.buttons["coach.portrait.bar"].firstMatch
         XCTAssertTrue(collapsedBar.waitForExistence(timeout: 15), "Portrait coach should collapse to a single-line bar")
+        // Without MC_CAPTURE_FILE the simulator has no microphone and the recorder reports it.
+        let okButton = app.buttons.matching(NSPredicate(format: "label == '好' OR label == 'OK'")).firstMatch
+        if okButton.waitForExistence(timeout: 2) { okButton.tap() }
 
         let windowFrame = app.windows.firstMatch.frame
         let areaRatio = (canvas.frame.width * canvas.frame.height) / max(1, windowFrame.width * windowFrame.height)
