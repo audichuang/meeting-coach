@@ -22,6 +22,8 @@ import Synchronization
 struct LiveDiarizerUpdate: Sendable, Equatable {
     let finalized: [LiveSpeakerSpan]
     let tentative: [LiveSpeakerSpan]
+    /// Recording time up to which the engine's frame predictions are final.
+    var finalizedThrough: TimeInterval = 0
 }
 
 protocol LiveSpeakerDiarizerEngine: Sendable {
@@ -39,18 +41,32 @@ private struct LiveSpeakerAudioChunk: Sendable {
 }
 
 private final class LiveSpeakerTimelineBox: Sendable {
-    private let mutex = Mutex(LiveSpeakerTimeline())
+    private struct State {
+        var timeline = LiveSpeakerTimeline()
+        var finalizedThrough: TimeInterval = 0
+    }
+
+    private let mutex = Mutex(State())
 
     func reset() {
-        mutex.withLock { $0.reset() }
+        mutex.withLock { $0 = State() }
     }
 
-    func ingest(finalized: [LiveSpeakerSpan], tentative: [LiveSpeakerSpan]) {
-        mutex.withLock { $0.ingest(finalized: finalized, tentative: tentative) }
+    func ingest(_ update: LiveDiarizerUpdate) {
+        mutex.withLock {
+            $0.timeline.ingest(finalized: update.finalized, tentative: update.tentative)
+            $0.finalizedThrough = max($0.finalizedThrough, update.finalizedThrough)
+        }
     }
 
+    /// The session has ended, so whatever spans exist are final.
+    func markComplete() {
+        mutex.withLock { $0.finalizedThrough = .infinity }
+    }
+
+    /// `nil` until every frame up to `end` is final, so a label is never decided on tentative audio.
     func dominantSpeaker(from start: TimeInterval, to end: TimeInterval) -> String? {
-        mutex.withLock { $0.dominantSpeaker(from: start, to: end) }
+        mutex.withLock { end <= $0.finalizedThrough ? $0.timeline.dominantSpeaker(from: start, to: end) : nil }
     }
 }
 
@@ -142,8 +158,8 @@ final class LiveSpeakerDiarizationService {
         )
     }
 
-    /// Returns the dominant meeting-local speaker label for `[start, end]`,
-    /// or `nil` when diarization is unavailable or no speaker overlapped.
+    /// Returns the dominant meeting-local speaker label for `[start, end]`, or `nil` when
+    /// diarization is unavailable, has not finalized through `end` yet, or no speaker overlapped.
     nonisolated func dominantSpeaker(from start: TimeInterval, to end: TimeInterval) -> String? {
         timelineBox.dominantSpeaker(from: start, to: end)
     }
@@ -161,14 +177,15 @@ final class LiveSpeakerDiarizationService {
         if !discarding {
             do {
                 if let update = try await activeEngine.finish() {
-                    ingest(update)
-                    onUpdate?()
+                    timelineBox.ingest(update)
                 }
             } catch {
                 AppLog.transcription.atNotice.notice(
                     "LiveSpeakerDiarizationService: finish failed code=\(error.publicLogCode, privacy: .public)"
                 )
             }
+            timelineBox.markComplete()
+            onUpdate?()
         }
         await activeEngine.cleanup()
     }
@@ -183,7 +200,7 @@ final class LiveSpeakerDiarizationService {
         pumpTask = Task.detached(priority: .utility) {
             func feed(_ samples: [Float], sampleRate: Double) async throws {
                 if let update = try await engine.process(samples: samples, sampleRate: sampleRate) {
-                    box.ingest(finalized: update.finalized, tentative: update.tentative)
+                    box.ingest(update)
                     await MainActor.run { onUpdate() }
                 }
             }
@@ -208,9 +225,5 @@ final class LiveSpeakerDiarizationService {
                 }
             }
         }
-    }
-
-    private nonisolated func ingest(_ update: LiveDiarizerUpdate) {
-        timelineBox.ingest(finalized: update.finalized, tentative: update.tentative)
     }
 }

@@ -14,6 +14,7 @@ import FluidAudio
 
 actor SortformerLiveDiarizerEngine: LiveSpeakerDiarizerEngine {
     private let diarizer: SortformerDiarizer
+    private let frameDuration: TimeInterval
 
     init() throws {
         var timelineConfig = DiarizerTimelineConfig.sortformerDefault
@@ -21,6 +22,7 @@ actor SortformerLiveDiarizerEngine: LiveSpeakerDiarizerEngine {
         // over a 2-hour meeting; `LiveSpeakerTimeline` owns the accumulated spans.
         timelineConfig.maxStoredFrames = 0
         timelineConfig.storeSegments = false
+        self.frameDuration = TimeInterval(timelineConfig.frameDurationSeconds)
         self.diarizer = try FluidAudioDiarizationModelRuntime.makeLocalSortformerDiarizer(
             timelineConfig: timelineConfig
         )
@@ -30,28 +32,30 @@ actor SortformerLiveDiarizerEngine: LiveSpeakerDiarizerEngine {
         guard let update = try diarizer.process(samples: samples, sourceSampleRate: sampleRate) else {
             return nil
         }
-        return Self.convert(update)
+        return convert(update)
     }
 
     func finish() throws -> LiveDiarizerUpdate? {
         guard let update = try diarizer.finalizeSession() else {
             return nil
         }
-        return Self.convert(update)
+        return convert(update)
     }
 
     func cleanup() {
         diarizer.cleanup()
     }
 
-    private static func convert(_ update: DiarizerTimelineUpdate) -> LiveDiarizerUpdate {
+    private func convert(_ update: DiarizerTimelineUpdate) -> LiveDiarizerUpdate {
         LiveDiarizerUpdate(
             finalized: update.finalizedSegments.map {
                 LiveSpeakerSpan(speakerSlot: $0.speakerIndex, start: TimeInterval($0.startTime), end: TimeInterval($0.endTime))
             },
             tentative: update.tentativeSegments.map {
                 LiveSpeakerSpan(speakerSlot: $0.speakerIndex, start: TimeInterval($0.startTime), end: TimeInterval($0.endTime))
-            }
+            },
+            // `startFrame` is Sortformer's cumulative processed-frame count.
+            finalizedThrough: TimeInterval(update.chunkResult.startFrame + update.chunkResult.finalizedFrameCount) * frameDuration
         )
     }
 }

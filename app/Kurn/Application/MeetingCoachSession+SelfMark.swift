@@ -30,7 +30,7 @@ extension MeetingCoachSession {
     }
 
     /// Backfills any live segments that arrived before streaming diarization
-    /// produced an overlapping span. Never overwrites an already-assigned label.
+    /// finalized their time range. Never overwrites an already-assigned label.
     func refreshUnlabeledSegments() {
         guard !isCancelled, let speakerLookup else { return }
         var changed = false

@@ -111,7 +111,11 @@ private actor ClockStubDiarizerEngine: LiveSpeakerDiarizerEngine {
         let end = Double(fedSamples) / sampleRate
         guard let first = samples.first, first != 0 else { return nil }
         let slot = Int((first * 10).rounded()) - 1
-        return LiveDiarizerUpdate(finalized: [LiveSpeakerSpan(speakerSlot: slot, start: start, end: end)], tentative: [])
+        return LiveDiarizerUpdate(
+            finalized: [LiveSpeakerSpan(speakerSlot: slot, start: start, end: end)],
+            tentative: [],
+            finalizedThrough: end
+        )
     }
 
     func finish() async throws -> LiveDiarizerUpdate? { nil }
@@ -209,7 +213,8 @@ struct MeetingCoachSelfMarkTests {
                     ],
                     tentative: [
                         LiveSpeakerSpan(speakerSlot: 0, start: 18, end: 20)
-                    ]
+                    ],
+                    finalizedThrough: 20
                 )
             ],
             finishUpdate: LiveDiarizerUpdate(
@@ -487,6 +492,56 @@ struct MeetingCoachSelfMarkTests {
         let record = try #require(try context.fetch(FetchDescriptor<CoachRecord>()).first)
         #expect(record.segments.map(\.speakerLabel) == ["A", "B"])
         await session.finish(at: 45)
+    }
+
+    @Test func segmentLabelWaitsForFinalizedCoverageThenBackfillsDominantSpeaker() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coverage")
+        context.insert(meeting)
+
+        let stub = StubLiveDiarizerEngine(updates: [
+            // Frames are final only through 8 s; the tentative tail still guesses slot 0.
+            LiveDiarizerUpdate(
+                finalized: [LiveSpeakerSpan(speakerSlot: 0, start: 0, end: 8)],
+                tentative: [LiveSpeakerSpan(speakerSlot: 0, start: 8, end: 20)],
+                finalizedThrough: 8
+            ),
+            LiveDiarizerUpdate(
+                finalized: [LiveSpeakerSpan(speakerSlot: 1, start: 8, end: 20)],
+                tentative: [],
+                finalizedThrough: 20
+            )
+        ])
+        let service = LiveSpeakerDiarizationService(isInstalled: { true }, engineFactory: { stub })
+        let session = MeetingCoachSession(
+            meeting: meeting,
+            modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "", budgetUSD: 10, backend: .test),
+            llm: RecordingCoachLLM(),
+            speakerLookup: { [service] start, end in service.dominantSpeaker(from: start, to: end) },
+            elapsed: { 25 }
+        )
+        session.begin(recordingID: UUID())
+        var updates = 0
+        await service.start(onUpdate: {
+            updates += 1
+            session.refreshUnlabeledSegments()
+        })
+
+        service.append(try makeBuffer())
+        await waitUntil { updates >= 1 }
+        session.eventSink.yield(.final(LiveTranscriptSegment(start: 0, end: 20, text: "第一段", arrivedAt: 20)))
+        await waitUntil { session.segments.count == 1 }
+        #expect(session.segments[0].speakerLabel == nil)
+
+        service.append(try makeBuffer())
+        await waitUntil { updates >= 2 }
+        // A: 8 s, B: 12 s once every frame of the segment is final.
+        #expect(session.segments[0].speakerLabel == "B")
+
+        await service.stop(discarding: true)
+        await session.finish(at: 25)
     }
 
     @Test func v6StoreMigratesCleanlyToV7AndPersistsSelfSpeakerLabel() throws {
