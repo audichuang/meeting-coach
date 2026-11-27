@@ -25,15 +25,39 @@ struct SummaryViewModelStateTests {
         private var _calls = 0
         private var _failure: Error?
         private var _holds = false
+        private var _pauseFirstCall = false
+        private var _firstCallReleased = false
+        private var _firstCallContinuation: CheckedContinuation<Void, Never>?
 
         var calls: Int { lock.withLock { _calls } }
         func fail(with error: Error) { lock.withLock { _failure = error } }
         func holdUntilCancelled() { lock.withLock { _holds = true } }
+        func pauseFirstCall() { lock.withLock { _pauseFirstCall = true } }
+
+        func releaseFirstCall() {
+            let continuation = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                _firstCallReleased = true
+                let current = _firstCallContinuation
+                _firstCallContinuation = nil
+                return current
+            }
+            continuation?.resume()
+        }
 
         func summarize(systemPrompt: String, userPrompt: String) async throws -> SummaryResult {
-            let (failure, holds) = lock.withLock {
+            let (callIndex, failure, holds, pauseFirst) = lock.withLock {
                 _calls += 1
-                return (_failure, _holds)
+                return (_calls, _failure, _holds, _pauseFirstCall)
+            }
+            if callIndex == 1 && pauseFirst {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    let alreadyReleased = lock.withLock { () -> Bool in
+                        if _firstCallReleased { return true }
+                        _firstCallContinuation = continuation
+                        return false
+                    }
+                    if alreadyReleased { continuation.resume() }
+                }
             }
             if holds { try await Task.sleep(for: .seconds(3_600)) }
             if let failure { throw failure }
@@ -54,7 +78,11 @@ struct SummaryViewModelStateTests {
         let meeting: Meeting
         let reviewPrompt: ReviewPromptCoordinator
 
-        init(withTranscript: Bool = true) throws {
+        init(
+            withTranscript: Bool = true,
+            segments: [TranscriptSegment]? = nil,
+            resolveBudget: @escaping ContextBudget.Resolver = ContextBudget.live
+        ) throws {
             container = TestModelContainer.make()
             context = container.mainContext
             llm = ScriptedLLM()
@@ -64,7 +92,7 @@ struct SummaryViewModelStateTests {
             viewModel = SummaryViewModel(
                 modelContext: context,
                 reviewPrompt: reviewPrompt,
-                summaryService: SummaryService(resolveProvider: { _, _ in scripted })
+                summaryService: SummaryService(resolveProvider: { _, _ in scripted }, resolveBudget: resolveBudget)
             )
             meeting = Meeting(title: "Summary")
             context.insert(meeting)
@@ -73,7 +101,7 @@ struct SummaryViewModelStateTests {
             if withTranscript {
                 let transcript = Transcript(
                     recording: recording,
-                    segments: [TranscriptSegment(speakerLabel: "Speaker 1", startTime: 0, endTime: 5, text: "we ship")],
+                    segments: segments ?? [TranscriptSegment(speakerLabel: "Speaker 1", startTime: 0, endTime: 5, text: "we ship")],
                     language: "en"
                 )
                 context.insert(transcript)
@@ -227,5 +255,48 @@ struct SummaryViewModelStateTests {
         harness.viewModel.cancelSummary()
         await harness.awaitSummary()
         #expect(harness.llm.calls == 1)
+    }
+
+    @Test func deletingMeetingMidStagedSummaryStopsMapRunnerAndWritesNothing() async throws {
+        let segments = [
+            TranscriptSegment(speakerLabel: "Speaker 1", startTime: 0, endTime: 10, text: "alpha discussion about architecture roadmap and milestones"),
+            TranscriptSegment(speakerLabel: "Speaker 2", startTime: 10, endTime: 20, text: "beta discussion about delivery schedule and release risks"),
+            TranscriptSegment(speakerLabel: "Speaker 1", startTime: 20, endTime: 30, text: "gamma discussion about testing coverage and final signoff")
+        ]
+        let harness = try Harness(
+            segments: segments,
+            resolveBudget: { _, _ in ContextBudget(inputTokens: 15, mapBlockTokens: 10) }
+        )
+        harness.llm.pauseFirstCall()
+
+        harness.start()
+        await harness.waitUntilLLMCalled()
+
+        try MeetingLibrary(context: harness.context).deleteMeeting(harness.meeting)
+        harness.llm.releaseFirstCall()
+        await harness.awaitSummary()
+
+        #expect(harness.llm.calls == 1)
+        #expect(try harness.context.fetch(FetchDescriptor<Summary>()).isEmpty)
+        #expect(harness.viewModel.error == nil)
+        #expect(!harness.viewModel.isSummarizing)
+        #expect(harness.reviewPrompt.state.successfulMoments == 0)
+    }
+
+    @Test func deletingMeetingMidSinglePassSummaryWritesNoSummary() async throws {
+        let harness = try Harness()
+        harness.llm.pauseFirstCall()
+
+        harness.start()
+        await harness.waitUntilLLMCalled()
+
+        try MeetingLibrary(context: harness.context).deleteMeeting(harness.meeting)
+        harness.llm.releaseFirstCall()
+        await harness.awaitSummary()
+
+        #expect(try harness.context.fetch(FetchDescriptor<Summary>()).isEmpty)
+        #expect(harness.viewModel.error == nil)
+        #expect(!harness.viewModel.isSummarizing)
+        #expect(harness.reviewPrompt.state.successfulMoments == 0)
     }
 }

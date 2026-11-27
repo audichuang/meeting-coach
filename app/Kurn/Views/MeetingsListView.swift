@@ -33,6 +33,7 @@ struct MeetingsListView: View {
     // content lives in `MeetingsListToolbar.swift`, and a `private` member is
     // not visible to an extension declared in another file.
     @Environment(\.modelContext) var modelContext
+    @Environment(\.meetingLibrary) var meetingLibrary
     @Environment(AppSettings.self) var settings
     /// The app-wide recording session the record button starts or re-opens.
     @Environment(RecordingSessionController.self) var recordingSession
@@ -403,7 +404,7 @@ struct MeetingsListView: View {
             primaryAction: {
                 guard let meeting = pendingDelete else { return }
                 do throws(AppError) {
-                    try MeetingLibrary(context: modelContext).deleteMeeting(meeting)
+                    try (meetingLibrary ?? MeetingLibrary(context: modelContext)).deleteMeeting(meeting)
                 } catch {
                     saveError = error
                 }

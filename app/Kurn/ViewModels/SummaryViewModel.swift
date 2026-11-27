@@ -61,9 +61,13 @@ final class SummaryViewModel {
 
     /// Active summary task, owned here so the detail screen can cancel it.
     var summaryTask: Task<Void, Never>?
+    /// Meeting id of the summary currently in flight, if any.
+    private(set) var activeSummaryMeetingID: UUID?
     /// Active translation task. Not `private` —
     /// `SummaryViewModel+Translation.swift` needs it.
     var translationTask: Task<Void, Never>?
+    /// Meeting id of the translation currently in flight, if any.
+    var activeTranslationMeetingID: UUID?
 
     /// Coach recap requests that arrived while another summary was in flight,
     /// coalesced by meeting id so each pending meeting runs once with its latest transcripts.
@@ -166,6 +170,7 @@ final class SummaryViewModel {
     ) {
         isSummarizing = true
         isCancellingSummary = false
+        activeSummaryMeetingID = meeting.id
         summaryProgress = nil
         resetSummaryDraft()
         summaryRequestStartedAt = Date()
@@ -183,9 +188,7 @@ final class SummaryViewModel {
     private func drainNextCoachSummaryIfNeeded() {
         while !pendingCoachSummaries.isEmpty {
             let next = pendingCoachSummaries.removeFirst()
-            let meetingID = next.meetingID
-            let descriptor = FetchDescriptor<Meeting>(predicate: #Predicate { $0.id == meetingID })
-            guard let meeting = try? modelContext.fetch(descriptor).first else { continue }
+            guard let meeting = existingMeeting(id: next.meetingID) else { continue }
             beginSummary(
                 for: meeting,
                 provider: next.provider,
@@ -201,6 +204,34 @@ final class SummaryViewModel {
         guard isSummarizing else { return }
         isCancellingSummary = true
         summaryTask?.cancel()
+    }
+
+    /// Cancels any running summary or translation and drops any queued coach
+    /// recaps belonging to `meetingIDs`. Unrelated meetings keep running.
+    func cancelSummaries(for meetingIDs: Set<UUID>) {
+        guard !meetingIDs.isEmpty else { return }
+        pendingCoachSummaries.removeAll { meetingIDs.contains($0.meetingID) }
+        if let activeID = activeSummaryMeetingID, meetingIDs.contains(activeID) {
+            cancelSummary()
+        }
+        if let activeTranslationID = activeTranslationMeetingID, meetingIDs.contains(activeTranslationID) {
+            cancelTranslateSummary()
+        }
+    }
+
+    /// Cancels every running and queued summary or translation (e.g. Delete All Data).
+    func cancelAllSummaries() {
+        pendingCoachSummaries.removeAll()
+        cancelSummary()
+        cancelTranslateSummary()
+    }
+
+    func existingMeeting(id meetingID: UUID) -> Meeting? {
+        let descriptor = FetchDescriptor<Meeting>(predicate: #Predicate { $0.id == meetingID })
+        guard let meeting = try? modelContext.fetch(descriptor).first, !meeting.isDeleted else {
+            return nil
+        }
+        return meeting
     }
 
     private func generateSummary(
@@ -224,11 +255,14 @@ final class SummaryViewModel {
         defer {
             isSummarizing = false
             isCancellingSummary = false
+            activeSummaryMeetingID = nil
             summaryProgress = nil
             resetSummaryDraft()
             summaryTask = nil
             drainNextCoachSummaryIfNeeded()
         }
+
+        guard existingMeeting(id: meetingID) != nil else { return }
 
         guard !transcriptText.isEmpty else {
             error = .transcriptionFailed(
@@ -264,13 +298,16 @@ final class SummaryViewModel {
                 }
             )
             try Task.checkCancellation()
+            guard let liveMeeting = existingMeeting(id: meetingID) else {
+                throw CancellationError()
+            }
             // Same reasoning as `saveTranscript`: fail before constructing
             // the summary, and reuse the existing `catch` below.
             guard let sectionsData = JSONStorage.encodeAuthoritative(result.sections) else {
                 throw AppError.persistenceFailed(NSLocalizedString("error.summary_encode_failed", comment: "Encode failed"))
             }
             let summary = Summary(
-                meeting: meeting,
+                meeting: liveMeeting,
                 templateName: template.displayName,
                 provider: provider,
                 model: model
@@ -280,7 +317,7 @@ final class SummaryViewModel {
             // The staged run (if any) is fully done — map notes and reduce
             // both succeeded — so the checkpoint that got it here no longer
             // describes work still owed (H4).
-            meeting.summaryMapCheckpoint = nil
+            liveMeeting.summaryMapCheckpoint = nil
             persist()
             AppLog.transcription.atNotice.notice("VM: summary done")
             appSettings?.recordSummaryTemplateUsed(template.id)
@@ -292,9 +329,17 @@ final class SummaryViewModel {
         } catch let AppError.networkError(urlError) where urlError.code == .cancelled || Task.isCancelled || isCancellingSummary {
             AppLog.transcription.atNotice.notice("VM: summary cancelled")
         } catch let appError as AppError {
+            guard existingMeeting(id: meetingID) != nil else {
+                AppLog.transcription.atNotice.notice("VM: summary cancelled")
+                return
+            }
             error = appError
             AppLog.transcription.atError.error("VM: summary failed code=\(appError.logCode, privacy: .public)")
         } catch {
+            guard existingMeeting(id: meetingID) != nil else {
+                AppLog.transcription.atNotice.notice("VM: summary cancelled")
+                return
+            }
             self.error = .apiError(statusCode: 0, message: error.localizedDescription)
             AppLog.transcription.atError.error("VM: summary failed code=unexpected")
         }
@@ -333,8 +378,9 @@ final class SummaryViewModel {
     /// isn't `Sendable`, and this is called from the `@Sendable` closure
     /// `generateSummary` hands to `SummaryService.generate`.
     private func storeSummaryMapCheckpointDurably(_ checkpoint: SummaryMapCheckpoint, forMeetingID meetingID: UUID) throws {
-        let descriptor = FetchDescriptor<Meeting>(predicate: #Predicate { $0.id == meetingID })
-        guard let meeting = try? modelContext.fetch(descriptor).first else { return }
+        guard let meeting = existingMeeting(id: meetingID) else {
+            throw CancellationError()
+        }
         meeting.summaryMapCheckpoint = checkpoint
         do {
             try modelContext.save()

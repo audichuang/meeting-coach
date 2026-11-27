@@ -44,7 +44,7 @@ extension MeetingsListView {
     func deleteSelectedMeetings() {
         pendingBulkDelete = false
         do throws(AppError) {
-            try listSelection.deleteSelected(from: filtered, using: MeetingLibrary(context: modelContext))
+            try listSelection.deleteSelected(from: filtered, using: meetingLibrary ?? MeetingLibrary(context: modelContext))
         } catch {
             saveError = error
         }

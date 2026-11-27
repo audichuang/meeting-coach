@@ -41,8 +41,10 @@ extension SettingsView {
     /// which also removes the recovery copies a plain model delete leaves.
     func deleteAllData() {
         ReadAloudController.shared.stop()
+        summaries?.cancelAllSummaries()
         transcription?.cancelAllTranscriptions()
         Task {
+            await summaries?.summaryTask?.value
             await transcription?.awaitActiveTranscriptions()
             let residual: Int
             do {

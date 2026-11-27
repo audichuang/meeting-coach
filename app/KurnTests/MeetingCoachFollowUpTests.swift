@@ -453,4 +453,115 @@ struct MeetingCoachFollowUpTests {
         #expect(meetingX.summaries.count == 1)
         #expect(coachLLM.summarizeCalls.count == 1)
     }
+
+    @Test func deletingQueuedMeetingRemovesItsPendingCoachRecapWithoutCancellingActiveSummary() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let summaries = SummaryViewModel(modelContext: context)
+        let library = MeetingLibrary(
+            context: context,
+            onMeetingsDeleted: { summaries.cancelSummaries(for: $0) }
+        )
+
+        let meetingY = Meeting(title: "Meeting Y")
+        context.insert(meetingY)
+        let recordingY = Recording(meeting: meetingY, fileName: "y.m4a", duration: 30, transcriptionStatus: .done)
+        context.insert(recordingY)
+        insertTranscript("meeting Y transcript", on: recordingY, in: context)
+
+        let meetingX = Meeting(title: "Meeting X")
+        context.insert(meetingX)
+        let recordingX = Recording(meeting: meetingX, fileName: "x.m4a", duration: 60, transcriptionStatus: .done)
+        context.insert(recordingX)
+        context.insert(CoachRecord(meeting: meetingX, recordingID: recordingX.id, userName: "Tester"))
+        insertTranscript("meeting X transcript", on: recordingX, in: context)
+        try context.save()
+
+        let gatedLLM = GatedSummaryLLM()
+        let coachLLM = ScriptedLLMProvider(provider: .meetingCoach)
+
+        summaries.startSummary(
+            for: meetingY,
+            provider: .openAI,
+            model: "gpt-4o",
+            template: .general,
+            resolveProvider: { _, _ in gatedLLM }
+        )
+        for _ in 0..<2_000 where gatedLLM.callCount == 0 {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+
+        MeetingCoachFollowUp.finishAfterTranscript(
+            meeting: meetingX,
+            recording: recordingX,
+            summaries: summaries,
+            resolveSummaryProvider: { _, _ in coachLLM }
+        )
+
+        // Delete the queued meeting while Meeting Y is still summarizing.
+        try library.deleteMeeting(meetingX)
+        #expect(summaries.isSummarizing)
+        #expect(!summaries.isCancellingSummary)
+
+        gatedLLM.release()
+        await awaitAllSummaries(summaries)
+
+        #expect(meetingY.summaries.count == 1)
+        #expect(coachLLM.summarizeCalls.isEmpty)
+        #expect(try context.fetch(FetchDescriptor<Summary>()).count == 1)
+    }
+
+    @Test func bulkDeletingActiveAndQueuedMeetingsCancelsBothSummaries() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let summaries = SummaryViewModel(modelContext: context)
+        let library = MeetingLibrary(
+            context: context,
+            onMeetingsDeleted: { summaries.cancelSummaries(for: $0) }
+        )
+
+        let meetingY = Meeting(title: "Meeting Y")
+        context.insert(meetingY)
+        let recordingY = Recording(meeting: meetingY, fileName: "y.m4a", duration: 30, transcriptionStatus: .done)
+        context.insert(recordingY)
+        insertTranscript("meeting Y transcript", on: recordingY, in: context)
+
+        let meetingX = Meeting(title: "Meeting X")
+        context.insert(meetingX)
+        let recordingX = Recording(meeting: meetingX, fileName: "x.m4a", duration: 60, transcriptionStatus: .done)
+        context.insert(recordingX)
+        context.insert(CoachRecord(meeting: meetingX, recordingID: recordingX.id, userName: "Tester"))
+        insertTranscript("meeting X transcript", on: recordingX, in: context)
+        try context.save()
+
+        let gatedLLM = GatedSummaryLLM()
+        let coachLLM = ScriptedLLMProvider(provider: .meetingCoach)
+
+        summaries.startSummary(
+            for: meetingY,
+            provider: .openAI,
+            model: "gpt-4o",
+            template: .general,
+            resolveProvider: { _, _ in gatedLLM }
+        )
+        for _ in 0..<2_000 where gatedLLM.callCount == 0 {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+
+        MeetingCoachFollowUp.finishAfterTranscript(
+            meeting: meetingX,
+            recording: recordingX,
+            summaries: summaries,
+            resolveSummaryProvider: { _, _ in coachLLM }
+        )
+
+        // Bulk delete cancels the running summary immediately without needing gatedLLM.release().
+        try library.deleteMeetings([meetingY, meetingX])
+        await awaitAllSummaries(summaries)
+
+        #expect(coachLLM.summarizeCalls.isEmpty)
+        #expect(try context.fetch(FetchDescriptor<Summary>()).isEmpty)
+        #expect(summaries.error == nil)
+        #expect(!summaries.isSummarizing)
+    }
 }

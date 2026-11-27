@@ -67,6 +67,24 @@ struct MeetingLibraryTests {
         #expect(all.isEmpty)
     }
 
+    @Test func deleteMeetingNotifiesOnMeetingsDeletedOnlyAfterCommitSucceeds() throws {
+        let context = ModelContext(TestModelContainer.make())
+        var notified: [Set<UUID>] = []
+        let library = MeetingLibrary(context: context, onMeetingsDeleted: { notified.append($0) })
+        let meeting = try library.createMeeting(title: "Standup")
+
+        let failing = MeetingLibrary(
+            context: context,
+            persist: { _ in .persistenceFailed("disk") },
+            onMeetingsDeleted: { notified.append($0) }
+        )
+        #expect(throws: AppError.self) { try failing.deleteMeeting(meeting) }
+        #expect(notified.isEmpty)
+
+        try library.deleteMeeting(meeting)
+        #expect(notified == [[meeting.id]])
+    }
+
     // A minimized recorder leaves the meeting reachable mid-capture; deleting
     // it then would leave the recorder finalizing into a deleted row.
     @Test(arguments: [RecordingCaptureState.preparing, .recording, .finalizing])

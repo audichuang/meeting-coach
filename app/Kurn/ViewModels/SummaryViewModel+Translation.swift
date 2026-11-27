@@ -25,6 +25,7 @@ extension SummaryViewModel {
     ) {
         guard !isTranslatingSummary else { return }
         isTranslatingSummary = true
+        activeTranslationMeetingID = meeting.id
         translatingSummaryID = source.id
         translationTargetLanguage = targetLanguage
         translationTask = Task { [weak self] in
@@ -52,13 +53,17 @@ extension SummaryViewModel {
     ) async {
         let sourceSections = source.sections
         let sourceTemplateName = source.templateName
+        let meetingID = meeting.id
 
         defer {
             isTranslatingSummary = false
+            activeTranslationMeetingID = nil
             translatingSummaryID = nil
             translationTargetLanguage = nil
             translationTask = nil
         }
+
+        guard existingMeeting(id: meetingID) != nil else { return }
 
         guard !sourceSections.isEmpty else {
             error = .summaryTranslationFailed(
@@ -76,6 +81,9 @@ extension SummaryViewModel {
                 model: model
             )
             try Task.checkCancellation()
+            guard let liveMeeting = existingMeeting(id: meetingID) else {
+                throw CancellationError()
+            }
             guard let sectionsData = JSONStorage.encodeAuthoritative(result.sections) else {
                 throw AppError.persistenceFailed(NSLocalizedString("error.summary_encode_failed", comment: "Encode failed"))
             }
@@ -83,7 +91,7 @@ extension SummaryViewModel {
                 ? "\(sourceTemplateName!) (\(targetLanguage.displayName))"
                 : targetLanguage.displayName
             let translated = Summary(
-                meeting: meeting,
+                meeting: liveMeeting,
                 templateName: label,
                 provider: provider,
                 model: model
@@ -97,9 +105,17 @@ extension SummaryViewModel {
         } catch let AppError.networkError(urlError) where urlError.code == .cancelled || Task.isCancelled {
             AppLog.transcription.atNotice.notice("VM: summary translation cancelled")
         } catch let appError as AppError {
+            guard existingMeeting(id: meetingID) != nil else {
+                AppLog.transcription.atNotice.notice("VM: summary translation cancelled")
+                return
+            }
             error = appError
             AppLog.transcription.atError.error("VM: summary translation failed code=\(appError.logCode, privacy: .public)")
         } catch {
+            guard existingMeeting(id: meetingID) != nil else {
+                AppLog.transcription.atNotice.notice("VM: summary translation cancelled")
+                return
+            }
             self.error = .apiError(statusCode: 0, message: error.localizedDescription)
             AppLog.transcription.atError.error("VM: summary translation failed code=unexpected")
         }

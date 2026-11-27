@@ -67,9 +67,11 @@ final class MeetingCoachFollowUp {
             ?? (try? recording.modelContext?.fetch(
                 FetchDescriptor<CoachRecord>(predicate: #Predicate { $0.recordingID == recordingID })
             ))?.first
+        let recordID = record?.id
+        let context = recording.modelContext
         // shortcut: bills the whole recording at the list price; a resumed run that skipped
         // chunks is overcounted. Upgrade by summing the `usage.seconds` each chunk reports.
-        let recordSpend: @MainActor (Double) -> Void = { addSpend($0, to: record) }
+        let recordSpend: @MainActor (Double) -> Void = { addSpend($0, toRecordID: recordID, in: context) }
         recordSpend(recording.duration / 60 * CoachPricing.transcribePerMinute)
         let resolver: ProviderFactory.LLMResolver = resolveSummaryProvider ?? { _, model in
             let backend = CoachBackend.current()
@@ -87,10 +89,12 @@ final class MeetingCoachFollowUp {
         )
     }
 
-    private static func addSpend(_ usd: Double, to record: CoachRecord?) {
-        guard let record, usd > 0 else { return }
+    private static func addSpend(_ usd: Double, toRecordID recordID: UUID?, in context: ModelContext?) {
+        guard let recordID, let context, usd > 0 else { return }
+        let descriptor = FetchDescriptor<CoachRecord>(predicate: #Predicate { $0.id == recordID })
+        guard let record = try? context.fetch(descriptor).first, !record.isDeleted else { return }
         record.costUSD += usd
-        if let failure = record.modelContext?.saveOrError() {
+        if let failure = context.saveOrError() {
             AppLog.persistence.atError.error("MeetingCoachFollowUp: spend save failed code=\(failure.logCode, privacy: .public)")
         }
     }

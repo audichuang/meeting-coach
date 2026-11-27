@@ -37,6 +37,9 @@ struct AppEnvironment {
     /// Times the App Store rating request after finished transcripts and
     /// summaries; presented by `reviewPromptPresenter()`.
     let reviewPrompt: ReviewPromptCoordinator
+    /// Library mutations wired to cancel in-flight coordinator work when rows
+    /// are deleted.
+    let meetingLibrary: MeetingLibrary
 }
 
 @MainActor
@@ -87,6 +90,12 @@ final class AppComposition {
             }
         )
         let coachFollowUp = MeetingCoachFollowUp(transcription: transcription, settings: settings)
+        let meetingLibrary = MeetingLibrary(
+            context: context,
+            onMeetingsDeleted: { meetingIDs in
+                summaries.cancelSummaries(for: meetingIDs)
+            }
+        )
         return AppEnvironment(
             modelContainer: container,
             transcription: transcription,
@@ -98,7 +107,8 @@ final class AppComposition {
                 modelContext: context, settings: settings,
                 onCoachRecordingSaved: { coachFollowUp.start(meeting: $0, recordingID: $1) }
             ),
-            reviewPrompt: reviewPrompt
+            reviewPrompt: reviewPrompt,
+            meetingLibrary: meetingLibrary
         )
     }
 

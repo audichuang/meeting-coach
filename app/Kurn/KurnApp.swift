@@ -217,6 +217,7 @@ struct KurnApp: App {
                 .environment(appEnvironment.wiki)
                 .environment(appEnvironment.recordingSession)
                 .environment(appEnvironment.reviewPrompt)
+                .environment(\.meetingLibrary, appEnvironment.meetingLibrary)
                 .environment(incomingFiles)
                 // Both the app-switcher privacy placeholder and the lock screen
                 // live in a window above everything this hierarchy presents.
@@ -373,5 +374,16 @@ struct KurnApp: App {
         }
         #endif
         return try ModelContainerBootstrap.makeStore()
+    }
+}
+
+private struct MeetingLibraryKey: EnvironmentKey {
+    static let defaultValue: MeetingLibrary? = nil
+}
+
+extension EnvironmentValues {
+    var meetingLibrary: MeetingLibrary? {
+        get { self[MeetingLibraryKey.self] }
+        set { self[MeetingLibraryKey.self] = newValue }
     }
 }
