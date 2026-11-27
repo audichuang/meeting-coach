@@ -1,0 +1,17 @@
+{
+  "name": "meeting-coach-backend",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.9.1",
+    "@cloudflare/workers-types": "^5.20261124.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1",
+    "wrangler": "^4.167.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc",
+    "deploy": "wrangler d1 migrations apply meeting-coach --remote && wrangler deploy"
+  }
+}

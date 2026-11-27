@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "meeting-coach-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "meeting-coach",
+      "database_id": "c981647f-2747-429e-9aeb-0de6cf5bc098",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Secrets (not here): OPENAI_API_KEY, ADMIN_SECRET.
+  "vars": {
+    "MONTHLY_CAP_USD": "30",
+    "RATE_LIMIT_PER_MINUTE": "30",
+    "MAX_OUTPUT_TOKENS": "8000",
+    "REALTIME_SESSION_EST_MINUTES": "30"
+  }
+}
