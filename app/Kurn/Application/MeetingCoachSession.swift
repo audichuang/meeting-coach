@@ -123,14 +123,17 @@ final class MeetingCoachSession {
     /// The live-transcription service the recorder feeds, backed by the cloud
     /// transcriber instead of an on-device model. Stopping it is how the budget
     /// guard halts AI processing without touching the recording.
-    func makeLiveTranscription() -> LiveTranscriptionService {
+    func makeLiveTranscription(socketFactory: OpenAILiveTranscriber.SocketFactory? = nil) -> LiveTranscriptionService {
         let sink = eventSink
-        let open = OpenAILiveTranscriber.socketFactory(backend: backend)
+        let open = socketFactory ?? OpenAILiveTranscriber.socketFactory(backend: backend)
         let socket: OpenAILiveTranscriber.SocketFactory = { [weak self] in
+            guard let self else { throw CancellationError() }
+            let allowed = await MainActor.run { !self.isCancelled && !self.isAIStopped }
+            guard allowed else { throw CancellationError() }
             do {
                 return try await open()
             } catch {
-                await self?.handleServiceError(error)
+                await self.handleServiceError(error)
                 throw error
             }
         }
@@ -141,7 +144,7 @@ final class MeetingCoachSession {
         })
         onStopAI = { [weak live] in
             guard let live else { return }
-            Task { await live.stop() }
+            Task { await live.stop(discarding: true) }
         }
         return live
     }
@@ -178,6 +181,7 @@ final class MeetingCoachSession {
         eventTask?.cancel()
         eventTask = nil
         cancelInFlightAIWork()
+        onStopAI?()
     }
 
     /// The transcriber has stopped; close open gaps and persist the final state.
@@ -210,7 +214,7 @@ final class MeetingCoachSession {
     }
 
     private func handle(_ event: LiveTranscriptEvent) {
-        guard !isCancelled else { return }
+        guard !isCancelled, !isAIStopped else { return }
         switch event {
         case .partial:
             break

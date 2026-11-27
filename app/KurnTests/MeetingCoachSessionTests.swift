@@ -601,6 +601,119 @@ struct MeetingCoachSessionTests {
         #expect(try context.fetch(FetchDescriptor<CoachRecord>()).first?.segments.count == 1)
     }
 
+    @Test func stopAIIgnoresLateTranscriptAndBillingEvents() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "我", budgetUSD: 10, backend: .test),
+            llm: RefusingCoachLLM(status: 402), elapsed: { 200 }
+        )
+        coach.begin(recordingID: UUID())
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 0, end: 20, text: "大家好", arrivedAt: 20)))
+        await waitUntil { coach.transcriptAvailable }
+        await coach.askForCard()
+        #expect(coach.stopReason == .quota)
+
+        // Late live-transcription events arriving after stopAI must not mutate state or spend.
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 20, end: 40, text: "晚到的逐字", arrivedAt: 40)))
+        coach.eventSink.yield(.billedSeconds(20))
+        await coach.finish(at: 210)
+
+        let record = try #require(try context.fetch(FetchDescriptor<CoachRecord>()).first)
+        #expect(coach.segments.count == 1)
+        #expect(record.segments.count == 1)
+        #expect(coach.cost.transcribedSeconds == 0)
+        #expect(coach.cost.totalUSD == 0)
+        #expect(record.costUSD == 0)
+    }
+
+    @Test func cancelInvokesOnStopAI() throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "我", budgetUSD: 10, backend: .test),
+            llm: ScriptedCoachLLM(), elapsed: { 10 }
+        )
+        nonisolated(unsafe) var stopped = false
+        coach.onStopAI = { stopped = true }
+        coach.begin(recordingID: UUID())
+
+        coach.cancel()
+
+        #expect(stopped)
+    }
+
+    private final class StubRealtimeSocket: RealtimeSocket, @unchecked Sendable {
+        private let lock = NSLock()
+        private var sentMessages: [String] = []
+        private var isClosed = false
+        private let incoming: AsyncThrowingStream<String, Error>
+        private let feed: AsyncThrowingStream<String, Error>.Continuation
+        private var iterator: AsyncThrowingStream<String, Error>.AsyncIterator?
+
+        init() {
+            (incoming, feed) = AsyncThrowingStream.makeStream(of: String.self)
+            iterator = incoming.makeAsyncIterator()
+        }
+
+        var sent: [String] { lock.withLock { sentMessages } }
+        var closed: Bool { lock.withLock { isClosed } }
+        func serverSends(_ json: String) { feed.yield(json) }
+
+        func send(_ text: String) async throws { lock.withLock { sentMessages.append(text) } }
+        func receive() async throws -> String {
+            var it = lock.withLock { iterator! }
+            let next = try await it.next()
+            lock.withLock { iterator = it }
+            guard let next else { throw URLError(.networkConnectionLost) }
+            return next
+        }
+        func close() {
+            lock.withLock { isClosed = true }
+            feed.finish(throwing: CancellationError())
+        }
+    }
+
+    @Test func stopAIStopsLiveSocketWithoutCommittingAudio() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let socket = StubRealtimeSocket()
+        let opens = NSLock()
+        nonisolated(unsafe) var openCount = 0
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "我", budgetUSD: 10, backend: .test),
+            llm: RefusingCoachLLM(status: 402), elapsed: { 200 }
+        )
+        let live = coach.makeLiveTranscription(socketFactory: {
+            opens.withLock { openCount += 1 }
+            return socket
+        })
+        coach.begin(recordingID: UUID())
+        await live.start(language: .chinese, modelsConsented: true)
+        socket.serverSends(#"{"type":"session.created","session":{"expires_at":1}}"#)
+        await waitUntil { coach.connection == .live }
+
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 0, end: 20, text: "大家好", arrivedAt: 20)))
+        await waitUntil { coach.transcriptAvailable }
+        await coach.askForCard()
+        #expect(coach.stopReason == .quota)
+
+        await waitUntil { socket.closed && !live.isActive }
+        #expect(socket.closed)
+        #expect(!socket.sent.contains(#"{"type":"input_audio_buffer.commit"}"#))
+        #expect(opens.withLock { openCount } == 1)
+        await coach.finish(at: 210)
+    }
+
     @Test func liveSpendIsAddedToWhatThePostMeetingRunAlreadyRecorded() async throws {
         let container = TestModelContainer.make()
         let context = container.mainContext

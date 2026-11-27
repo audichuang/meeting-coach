@@ -409,4 +409,32 @@ struct OpenAILiveTranscriberTests {
         #expect(log.gaps == [LiveTranscriptGap(start: 0, end: 12)])
         #expect(log.all.last == .connection(.stopped))
     }
+
+    @Test func cancelledSocketOpenDoesNotScheduleReconnect() async throws {
+        let attempts = NSLock()
+        nonisolated(unsafe) var openCount = 0
+        nonisolated(unsafe) var sleepCount = 0
+        let log = EventLog()
+
+        let engine = OpenAILiveTranscriber(
+            makeSocket: {
+                attempts.withLock { openCount += 1 }
+                throw CancellationError()
+            },
+            sleep: { _ in
+                attempts.withLock { sleepCount += 1 }
+            },
+            onEvent: { log.add($0) }
+        )
+        try await engine.loadModels()
+        for _ in 0..<20 {
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+
+        #expect(attempts.withLock { openCount } == 1)
+        #expect(attempts.withLock { sleepCount } == 0)
+        #expect(!log.all.contains(.connection(.reconnecting)))
+        await engine.cleanup()
+    }
 }

@@ -150,7 +150,9 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
             guard let url = URL(string: "wss://api.openai.com/v1/realtime?intent=transcription") else {
                 throw AppError.invalidProviderURL
             }
+            try Task.checkCancellation()
             let key = backend.viaWorker ? try await mintClientSecret(backend: backend, session: session) : backend.token
+            try Task.checkCancellation()
             var request = URLRequest(url: url)
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
             return URLSessionRealtimeSocket(request: request)
@@ -267,7 +269,14 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
             let socket: any RealtimeSocket
             do {
                 socket = try await opening.value
+            } catch is CancellationError {
+                await self?.connectionCancelled(id)
+                return
             } catch {
+                if Task.isCancelled {
+                    await self?.connectionCancelled(id)
+                    return
+                }
                 AppLog.transcription.atError.error("OpenAILiveTranscriber: socket creation failed code=\(error.publicLogCode, privacy: .public)")
                 await self?.connectionLost(id, code: error.publicLogCode)
                 return
@@ -416,6 +425,15 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
             rotateAt = min(rotateAt, expiresAt - Self.expiryLead)
         }
         onEvent(.connection(.live))
+    }
+
+    private func connectionCancelled(_ id: Int) {
+        if id == draining?.connection.id {
+            closeDraining(reportGaps: false)
+            return
+        }
+        guard id == connection?.id else { return }
+        closeConnection(reportGaps: false)
     }
 
     private func connectionLost(_ id: Int, code: String) {
