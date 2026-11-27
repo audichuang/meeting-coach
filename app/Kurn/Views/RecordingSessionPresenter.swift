@@ -93,7 +93,7 @@ private struct RecordingSessionPresenter: ViewModifier {
     @State private var placement = RecordingMiniBarPlacement()
 
     private var isPad: Bool {
-        UIDevice.current.userInterfaceIdiom == .pad
+        PaperCanvasMetrics.usesPaperScreen(for: UIDevice.current.userInterfaceIdiom)
     }
 
     private var presentedBinding: Binding<Bool> {
@@ -121,7 +121,7 @@ private struct RecordingSessionPresenter: ViewModifier {
             } else {
                 base.sheet(isPresented: presentedBinding) {
                     if session.viewModel?.coach != nil {
-                        RecorderView(session: session)
+                        NavigationStack { RecorderView(session: session) }
                             .presentationSizing(.page)
                     } else {
                         NavigationStack { RecorderView(session: session) }

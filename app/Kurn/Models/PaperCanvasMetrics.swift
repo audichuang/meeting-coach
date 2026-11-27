@@ -9,6 +9,7 @@
 
 import CoreGraphics
 import Foundation
+import UIKit
 
 enum PaperCanvasMetrics {
     /// Fixed logical page width in points (matches iPad mini portrait width).
@@ -57,5 +58,12 @@ enum PaperCanvasMetrics {
         guard totalArea > 0 else { return 0 }
         let paperArea = max(0, paperFrame.width) * max(0, paperFrame.height)
         return paperArea / totalArea
+    }
+
+    /// Paper recording screen is iPad-only because Release PencilKit
+    /// `.default` drawing policy accepts only Apple Pencil; iPhone keeps
+    /// the legacy dark recording screen (with the coach panel when active).
+    static func usesPaperScreen(for idiom: UIUserInterfaceIdiom) -> Bool {
+        idiom == .pad
     }
 }

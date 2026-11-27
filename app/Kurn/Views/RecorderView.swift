@@ -20,9 +20,10 @@ struct RecorderView: View {
     /// view, so dismissing the screen minimizes the recording into the mini
     /// bar (`RecordingSessionPresenter`) rather than abandoning it.
     let session: RecordingSessionController
+    var idiom: UIUserInterfaceIdiom = UIDevice.current.userInterfaceIdiom
 
     private var usesPaperScreen: Bool {
-        UIDevice.current.userInterfaceIdiom == .pad || session.viewModel?.coach != nil
+        PaperCanvasMetrics.usesPaperScreen(for: idiom)
     }
 
     var body: some View {
@@ -33,9 +34,13 @@ struct RecorderView: View {
                 ProgressView()
             }
         }
-        // Locked for the legacy iPhone-only recorder, not the iPad paper
-        // recording screen or coach mode, which adapt to both orientations.
-        .onAppear { if !usesPaperScreen { AppOrientationLock.shared.lockToPortrait() } }
+        // Lock to portrait only for the non-coach iPhone recorder; both the
+        // iPad paper screen and the iPhone coach layout adapt to both orientations.
+        .onAppear {
+            if !usesPaperScreen && session.viewModel?.coach == nil {
+                AppOrientationLock.shared.lockToPortrait()
+            }
+        }
         .onDisappear { AppOrientationLock.shared.unlock() }
     }
 }
@@ -122,23 +127,27 @@ private struct RecorderContent: View {
             .ignoresSafeArea()
             .opacity(vm.state == .recording ? 1 : 0.4)
 
-            VStack(spacing: 0) {
-                Spacer()
-                statusBadge
-                startingIndicator
-                timer
-                    .padding(.top, 22)
-                waveform
-                    .padding(.top, 26)
-                titleField
-                    .padding(.top, 28)
-                liveTranscriptArea
-                routeMessage
-                Spacer()
-                controls
+            if let coach = vm.coach {
+                coachLayout(coach)
+            } else {
+                VStack(spacing: 0) {
+                    Spacer()
+                    statusBadge
+                    startingIndicator
+                    timer
+                        .padding(.top, 22)
+                    waveform
+                        .padding(.top, 26)
+                    titleField
+                        .padding(.top, 28)
+                    liveTranscriptArea
+                    routeMessage
+                    Spacer()
+                    controls
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 40)
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 40)
         }
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         .navigationTitle(NSLocalizedString("recorder.title", comment: "Record"))
@@ -171,6 +180,55 @@ private struct RecorderContent: View {
             guard vm.state == .recording else { return }
             levels.removeFirst()
             levels.append(vm.level)
+        }
+    }
+
+    // MARK: - Meeting coach layout (iPhone)
+
+    /// Landscape: recorder column beside the coach panel. Portrait: a compact
+    /// recorder header above it.
+    private func coachLayout(_ coach: MeetingCoachSession) -> some View {
+        GeometryReader { proxy in
+            let panel = MeetingCoachPanel(coach: coach, partialText: vm.livePartialText)
+            if proxy.size.width > proxy.size.height {
+                HStack(spacing: 24) {
+                    VStack(spacing: 0) {
+                        Spacer()
+                        statusBadge
+                        startingIndicator
+                        timer.padding(.top, 16)
+                        waveform.padding(.top, 20)
+                        titleField.padding(.top, 20)
+                        routeMessage
+                        Spacer()
+                        controls
+                    }
+                    .frame(width: 300)
+                    panel
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+            } else {
+                VStack(spacing: 12) {
+                    HStack(alignment: .center, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            statusBadge
+                            Text(vm.elapsed.clockDisplay)
+                                .font(.system(size: 40, weight: .ultraLight))
+                                .monospacedDigit()
+                                .foregroundStyle(.white)
+                        }
+                        waveform
+                    }
+                    titleField
+                    startingIndicator
+                    routeMessage
+                    panel
+                    controls
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+            }
         }
     }
 
