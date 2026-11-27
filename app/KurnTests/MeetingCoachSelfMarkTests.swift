@@ -72,6 +72,52 @@ private actor StubLiveDiarizerEngine: LiveSpeakerDiarizerEngine {
     }
 }
 
+private actor TestGate {
+    private var isOpen = false
+    private(set) var isEntered = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        isEntered = true
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        waiters.forEach { $0.resume() }
+        waiters.removeAll()
+    }
+}
+
+/// Emits one finalized span per non-silent chunk, timed by the samples it has been fed
+/// (like Sortformer's own frame clock). The chunk's first sample encodes the slot: 0.1 -> 0, 0.2 -> 1.
+private actor ClockStubDiarizerEngine: LiveSpeakerDiarizerEngine {
+    private let firstProcessGate: TestGate?
+    private var fedSamples = 0
+    private var didGate = false
+
+    init(firstProcessGate: TestGate? = nil) {
+        self.firstProcessGate = firstProcessGate
+    }
+
+    func process(samples: [Float], sampleRate: Double) async throws -> LiveDiarizerUpdate? {
+        if let firstProcessGate, !didGate {
+            didGate = true
+            await firstProcessGate.wait()
+        }
+        let start = Double(fedSamples) / sampleRate
+        fedSamples += samples.count
+        let end = Double(fedSamples) / sampleRate
+        guard let first = samples.first, first != 0 else { return nil }
+        let slot = Int((first * 10).rounded()) - 1
+        return LiveDiarizerUpdate(finalized: [LiveSpeakerSpan(speakerSlot: slot, start: start, end: end)], tentative: [])
+    }
+
+    func finish() async throws -> LiveDiarizerUpdate? { nil }
+    func cleanup() async {}
+}
+
 @MainActor
 struct MeetingCoachSelfMarkTests {
     private func waitUntil(_ condition: () -> Bool) async {
@@ -80,14 +126,77 @@ struct MeetingCoachSelfMarkTests {
         }
     }
 
-    private func makeBuffer(sampleRate: Double = 24_000, frames: Int = 2_400) throws -> AVAudioPCMBuffer {
+    private func makeBuffer(sampleRate: Double = 24_000, frames: Int = 2_400, value: Float = 0.05) throws -> AVAudioPCMBuffer {
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
         let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)))
         buffer.frameLength = AVAudioFrameCount(frames)
         if let channel = buffer.floatChannelData?[0] {
-            for idx in 0..<frames { channel[idx] = 0.05 }
+            for idx in 0..<frames { channel[idx] = value }
         }
         return buffer
+    }
+
+    private func waitForGate(_ gate: TestGate) async {
+        for _ in 0..<300 where !(await gate.isEntered) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    /// Appends `seconds` one-second buffers whose value encodes the speaker slot (see `ClockStubDiarizerEngine`).
+    private func appendSeconds(_ seconds: Int, slotValue: Float, to service: LiveSpeakerDiarizationService) throws {
+        for _ in 0..<seconds {
+            service.append(try makeBuffer(frames: 24_000, value: slotValue))
+        }
+    }
+
+    @Test func liveDiarizerSpansStayOnRecordingClockWhenAudioIsDroppedDuringModelLoad() async throws {
+        let loadGate = TestGate()
+        let stub = ClockStubDiarizerEngine()
+        let service = LiveSpeakerDiarizationService(
+            isInstalled: { true },
+            engineFactory: {
+                await loadGate.wait()
+                return stub
+            }
+        )
+        let starting = Task { await service.start() }
+        await waitForGate(loadGate)
+
+        // 20 s captured while the model loads: more than the 16 s queue holds.
+        try appendSeconds(20, slotValue: 0.1, to: service)
+        await loadGate.open()
+        await starting.value
+        #expect(service.isAvailable)
+
+        try appendSeconds(1, slotValue: 0.2, to: service)
+        await waitUntil { service.dominantSpeaker(from: 20, to: 21) != nil }
+
+        #expect(service.dominantSpeaker(from: 20, to: 21) == "B")
+        #expect(service.dominantSpeaker(from: 4, to: 20) == "A")
+        #expect(service.dominantSpeaker(from: 0, to: 4) == nil)
+        await service.stop(discarding: true)
+    }
+
+    @Test func liveDiarizerSpansStayOnRecordingClockWhenQueueOverflowsMidStream() async throws {
+        let processGate = TestGate()
+        let stub = ClockStubDiarizerEngine(firstProcessGate: processGate)
+        let service = LiveSpeakerDiarizationService(isInstalled: { true }, engineFactory: { stub })
+        await service.start()
+        #expect(service.isAvailable)
+
+        try appendSeconds(1, slotValue: 0.1, to: service)
+        await waitForGate(processGate)
+        // Inference stalls on the first second; 20 s more overflow the 16 s queue.
+        try appendSeconds(20, slotValue: 0.2, to: service)
+        await processGate.open()
+        try appendSeconds(1, slotValue: 0.1, to: service)
+        await waitUntil { service.dominantSpeaker(from: 21, to: 22) != nil }
+
+        #expect(service.dominantSpeaker(from: 0, to: 1) == "A")
+        #expect(service.dominantSpeaker(from: 1, to: 5) == nil)
+        #expect(service.dominantSpeaker(from: 5, to: 21) == "B")
+        #expect(service.dominantSpeaker(from: 21, to: 22) == "A")
+        await service.stop(discarding: true)
     }
 
     @Test func liveDiarizerAssignsDominantLabelByOverlapAndCleansUp() async throws {

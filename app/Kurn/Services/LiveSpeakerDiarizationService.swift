@@ -33,7 +33,9 @@ protocol LiveSpeakerDiarizerEngine: Sendable {
 private struct LiveSpeakerAudioChunk: Sendable {
     let samples: [Float]
     let sampleRate: Double
-    let duration: TimeInterval
+    /// Index of the first sample counted from the session's first captured buffer, so the
+    /// pump can fill dropped audio with silence and keep spans on the transcript's clock.
+    let startSample: Int
 }
 
 private final class LiveSpeakerTimelineBox: Sendable {
@@ -68,6 +70,7 @@ final class LiveSpeakerDiarizationService {
     /// diarization task. Never creates Tasks on the audio callback.
     private nonisolated let audioQueue = BoundedSessionQueue<LiveSpeakerAudioChunk>(maximumCost: 16)
     private nonisolated let timelineBox = LiveSpeakerTimelineBox()
+    private nonisolated let capturedSamples = Mutex(0)
 
     init(
         isInstalled: @escaping @Sendable () -> Bool = { FluidAudioModelAvailability.isStreamingDiarizationInstalled },
@@ -92,6 +95,9 @@ final class LiveSpeakerDiarizationService {
             return
         }
         let session = audioQueue.begin()
+        capturedSamples.withLock { $0 = 0 }
+        // Accept audio while the model loads so its samples are counted on the recording clock.
+        audioQueue.activate(session)
         let loadedEngine: any LiveSpeakerDiarizerEngine
         do {
             loadedEngine = try await Task.detached(priority: .utility) { [engineFactory] in
@@ -110,10 +116,6 @@ final class LiveSpeakerDiarizationService {
             await loadedEngine.cleanup()
             return
         }
-        guard audioQueue.activate(session) else {
-            await loadedEngine.cleanup()
-            return
-        }
         engine = loadedEngine
         isAvailable = true
         startPump(engine: loadedEngine, session: session, onUpdate: onUpdate)
@@ -129,8 +131,12 @@ final class LiveSpeakerDiarizationService {
         let duration = Double(frameCount) / sampleRate
         guard duration.isFinite, duration > 0 else { return }
         let samples = Array(UnsafeBufferPointer(start: channel, count: frameCount))
+        let startSample = capturedSamples.withLock { position in
+            defer { position += frameCount }
+            return position
+        }
         audioQueue.enqueue(
-            LiveSpeakerAudioChunk(samples: samples, sampleRate: sampleRate, duration: duration),
+            LiveSpeakerAudioChunk(samples: samples, sampleRate: sampleRate, startSample: startSample),
             cost: duration,
             for: session
         )
@@ -175,13 +181,24 @@ final class LiveSpeakerDiarizationService {
         let queue = audioQueue
         let box = timelineBox
         pumpTask = Task.detached(priority: .utility) {
+            func feed(_ samples: [Float], sampleRate: Double) async throws {
+                if let update = try await engine.process(samples: samples, sampleRate: sampleRate) {
+                    box.ingest(finalized: update.finalized, tentative: update.tentative)
+                    await MainActor.run { onUpdate() }
+                }
+            }
+            var fedSamples = 0
             while let chunk = await queue.next(for: session) {
                 guard queue.isCurrent(session), !Task.isCancelled else { return }
                 do {
-                    if let update = try await engine.process(samples: chunk.samples, sampleRate: chunk.sampleRate) {
-                        box.ingest(finalized: update.finalized, tentative: update.tentative)
-                        await MainActor.run { onUpdate() }
+                    // Silence stands in for audio dropped on overflow (or after a failed chunk),
+                    // so the engine's frame clock keeps counting recording time.
+                    if chunk.startSample > fedSamples {
+                        try await feed([Float](repeating: 0, count: chunk.startSample - fedSamples), sampleRate: chunk.sampleRate)
+                        fedSamples = chunk.startSample
                     }
+                    try await feed(chunk.samples, sampleRate: chunk.sampleRate)
+                    fedSamples = chunk.startSample + chunk.samples.count
                 } catch is CancellationError {
                     return
                 } catch {
