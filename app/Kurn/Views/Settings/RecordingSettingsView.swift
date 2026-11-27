@@ -119,6 +119,21 @@ struct RecordingSettingsView: View {
             ) {
                 Text(String(format: NSLocalizedString("settings.meeting_coach_budget", comment: "Spend warning threshold"), settings.coachBudgetUSD))
             }
+            Stepper(
+                value: Binding(get: { settings.coachCooldownSeconds }, set: { settings.coachCooldownSeconds = $0 }),
+                in: 30...600,
+                step: 30
+            ) {
+                Text(String(format: NSLocalizedString("settings.meeting_coach_cooldown", comment: "Minimum seconds between automatic cards"),
+                            Int(settings.coachCooldownSeconds)))
+            }
+            Stepper(
+                value: Binding(get: { settings.coachMaxCardsPerWindow }, set: { settings.coachMaxCardsPerWindow = $0 }),
+                in: 1...10
+            ) {
+                Text(String(format: NSLocalizedString("settings.meeting_coach_max_cards", comment: "Most automatic cards per 10 minutes"),
+                            settings.coachMaxCardsPerWindow))
+            }
         } header: {
             Text(NSLocalizedString("settings.meeting_coach", comment: "Meeting coach"))
         } footer: {

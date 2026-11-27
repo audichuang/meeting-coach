@@ -1073,3 +1073,5 @@
 "settings.meeting_coach_name" = "Your name";
 "settings.meeting_coach_budget" = "Warn when a meeting's AI spend passes US$%.0f";
 "settings.meeting_coach_footer" = "While recording, audio is sent to OpenAI for a live transcript and suggestion cards, using the OpenAI key in Providers. Without a key nothing is sent.";
+"settings.meeting_coach_cooldown" = "At least %d s between automatic cards";
+"settings.meeting_coach_max_cards" = "At most %d automatic cards per 10 minutes";

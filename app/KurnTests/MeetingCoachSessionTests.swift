@@ -80,6 +80,33 @@ struct MeetingCoachSessionTests {
         #expect(meeting.coachRecords.count == 1)
     }
 
+    @Test func throttleFollowsTheConfiguredCooldownAndLimit() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let clock = Clock()
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "志明", budgetUSD: 10, apiKey: "test",
+                                                     cooldownSeconds: 30, maxCardsPerWindow: 1),
+            llm: ScriptedCoachLLM(), elapsed: { clock.now }
+        )
+        coach.begin(recordingID: UUID())
+        clock.now = 150
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 130, end: 150, text: "志明你覺得呢", arrivedAt: 150.5)))
+        await waitUntil { coach.currentCard != nil }
+        #expect(coach.currentCard?.candidate.version.policy == "trigger-r4;throttle-30-600-1-120")
+        coach.dismissCurrentCard()
+
+        // 40 s later clears the 30 s cooldown, but the limit of one per 10 minutes holds.
+        clock.now = 190
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 170, end: 190, text: "要不要延期？", arrivedAt: 190.5)))
+        await waitUntil { coach.ledgers.count == 2 && coach.ledgers[1].events.count == 2 }
+        #expect(coach.ledgers[1].events.last?.kind == .suppressed(reason: "window_limit"))
+        await coach.finish(at: 200)
+    }
+
     @Test func discardingTheRecordingDeletesItsCoachRecord() async throws {
         let container = TestModelContainer.make()
         let context = container.mainContext

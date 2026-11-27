@@ -1073,3 +1073,5 @@
 "settings.meeting_coach_name" = "你的名字";
 "settings.meeting_coach_budget" = "单场 AI 花费超过 US$%.0f 时警告";
 "settings.meeting_coach_footer" = "录音时会把声音送到 OpenAI 产生即时逐字稿与建议卡，使用「提供者」里的 OpenAI 密钥；没有密钥就不会送出。";
+"settings.meeting_coach_cooldown" = "At least %d s between automatic cards";
+"settings.meeting_coach_max_cards" = "At most %d automatic cards per 10 minutes";

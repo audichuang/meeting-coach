@@ -22,6 +22,9 @@ struct MeetingCoachConfiguration: Sendable {
     var userName: String
     var budgetUSD: Double
     var apiKey: String
+    /// Automatic-card throttle (decisions: 90 s gap, at most 3 per 10 minutes, adjustable).
+    var cooldownSeconds: Double = 90
+    var maxCardsPerWindow = 3
 
     /// `nil` when the coach is off or no OpenAI key is stored (nothing is sent).
     @MainActor
@@ -36,14 +39,15 @@ struct MeetingCoachConfiguration: Sendable {
         #endif
         guard !key.isEmpty else { return nil }
         let name = settings.coachUserName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return MeetingCoachConfiguration(userName: name, budgetUSD: settings.coachBudgetUSD, apiKey: key)
+        return MeetingCoachConfiguration(userName: name, budgetUSD: settings.coachBudgetUSD, apiKey: key,
+                                         cooldownSeconds: settings.coachCooldownSeconds,
+                                         maxCardsPerWindow: settings.coachMaxCardsPerWindow)
     }
 }
 
 @MainActor
 @Observable
 final class MeetingCoachSession {
-    static let policyVersion = "trigger-r4;throttle-90-600-3-120"
     static let promptVersion = "spike-r4"
 
     private(set) var segments: [LiveTranscriptSegment] = []
@@ -66,7 +70,11 @@ final class MeetingCoachSession {
     @ObservationIgnored private let llm: any CoachLLM
     @ObservationIgnored private let apiKey: String
     @ObservationIgnored private var trigger: any SuggestionTriggerStrategy
-    @ObservationIgnored private let throttle = SuggestionThrottle(minimumGap: 90, window: 600, maximumInWindow: 3, openingQuiet: 120)
+    @ObservationIgnored private let throttle: SuggestionThrottle
+    /// Stamped on every automatic card, so the ledger records the throttle it ran under.
+    var policyVersion: String {
+        "trigger-r4;throttle-\(Int(throttle.minimumGap))-\(Int(throttle.window))-\(throttle.maximumInWindow)-\(Int(throttle.openingQuiet))"
+    }
     @ObservationIgnored private let meeting: Meeting
     @ObservationIgnored private let modelContext: ModelContext
     @ObservationIgnored private let elapsed: @MainActor () -> TimeInterval
@@ -93,6 +101,8 @@ final class MeetingCoachSession {
         self.userName = configuration.userName.isEmpty ? "使用者" : configuration.userName
         self.apiKey = configuration.apiKey
         self.budget = CoachBudgetGuard(threshold: configuration.budgetUSD)
+        self.throttle = SuggestionThrottle(minimumGap: max(0, configuration.cooldownSeconds), window: 600,
+                                           maximumInWindow: max(1, configuration.maxCardsPerWindow), openingQuiet: 120)
         self.llm = llm ?? CoachResponsesClient(apiKey: configuration.apiKey)
         self.trigger = trigger ?? EventSuggestionTrigger(mentionsUser: ChineseText.nameMatcher(for: configuration.userName))
         self.elapsed = elapsed
@@ -278,7 +288,7 @@ final class MeetingCoachSession {
                 logTrigger(offset: segment.arrivedAt, labels: labels, decision: "card_declined", reason: "")
                 return
             }
-            try addCandidate(args, evidence: segment, policy: Self.policyVersion, gated: true)
+            try addCandidate(args, evidence: segment, policy: policyVersion, gated: true)
         } catch {
             lastError = error.localizedDescription
             logTrigger(offset: segment.arrivedAt, labels: labels, decision: "error", reason: error.publicLogCode)
