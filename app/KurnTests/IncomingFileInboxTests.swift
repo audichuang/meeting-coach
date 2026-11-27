@@ -89,6 +89,53 @@ struct IncomingFileInboxTests {
         #expect(FileManager.default.fileExists(atPath: pending.path))
     }
 
+    @Test func audioGoesToItsOwnQueueNotThePDFSheet() throws {
+        let inboxDirectory = try makeInboxDirectory()
+        defer { try? FileManager.default.removeItem(at: inboxDirectory.deletingLastPathComponent()) }
+        let memo = try makeFile(named: "Memo.m4a", in: inboxDirectory)
+        let inbox = IncomingFileInbox(inboxDirectory: inboxDirectory)
+
+        #expect(inbox.receive(memo))
+        #expect(inbox.receive(memo))
+        #expect(inbox.receive(URL(fileURLWithPath: "/tmp/song.mp3")))
+        #expect(inbox.receive(URL(fileURLWithPath: "/tmp/take.WAV")))
+
+        #expect(inbox.pendingAudio.count == 3)
+        #expect(inbox.pendingAudio.first == memo)
+        #expect(!inbox.hasPendingFiles)
+    }
+
+    @Test func finishingAudioDeletesOnlyThatInboxCopy() throws {
+        let inboxDirectory = try makeInboxDirectory()
+        defer { try? FileManager.default.removeItem(at: inboxDirectory.deletingLastPathComponent()) }
+        let first = try makeFile(named: "a.m4a", in: inboxDirectory)
+        let second = try makeFile(named: "b.m4a", in: inboxDirectory)
+        let inbox = IncomingFileInbox(inboxDirectory: inboxDirectory)
+        inbox.receive(first)
+        inbox.receive(second)
+
+        inbox.finishAudio(first)
+
+        #expect(inbox.pendingAudio == [second])
+        #expect(!FileManager.default.fileExists(atPath: first.path))
+        #expect(FileManager.default.fileExists(atPath: second.path))
+    }
+
+    @Test func sweepKeepsPendingAudio() throws {
+        let inboxDirectory = try makeInboxDirectory()
+        defer { try? FileManager.default.removeItem(at: inboxDirectory.deletingLastPathComponent()) }
+        let pending = try makeFile(named: "pending.m4a", in: inboxDirectory)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -3 * 24 * 60 * 60)], ofItemAtPath: pending.path
+        )
+        let inbox = IncomingFileInbox(inboxDirectory: inboxDirectory)
+        inbox.receive(pending)
+
+        inbox.sweepStaleCopies()
+
+        #expect(FileManager.default.fileExists(atPath: pending.path))
+    }
+
     @Test func sweepWithoutAnInboxDirectoryIsHarmless() {
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         IncomingFileInbox(inboxDirectory: missing).sweepStaleCopies()

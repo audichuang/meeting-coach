@@ -1118,3 +1118,6 @@
 "settings.coach.speaker_model_not_installed" = "未下載";
 "settings.coach.speaker_model_download" = "下載";
 "coach.speaker.download_hint" = "到設定下載講者標記模型，即可標記「這是我」";
+
+"import_audio.button" = "匯入錄音";
+"import_audio.error.unreadable" = "無法讀取這個音訊檔。";

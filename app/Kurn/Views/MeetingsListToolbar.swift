@@ -30,7 +30,10 @@ extension MeetingsListView {
     @ToolbarContentBuilder
     var browsingToolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) { selectButton }
-        ToolbarItem(placement: .topBarTrailing) { sortMenu }
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            importAudioButton
+            sortMenu
+        }
         // Splits the shared glass background so sorting and settings read as
         // two separate controls rather than one segmented capsule.
         ToolbarSpacer(.fixed, placement: .topBarTrailing)
@@ -179,6 +182,17 @@ extension MeetingsListView {
             )
         }
         .accessibilityLabel(NSLocalizedString("meetings.sort", comment: "Sort"))
+    }
+
+    /// Imports audio from Files (Voice Memos can also share straight in).
+    var importAudioButton: some View {
+        Button { showingAudioImporter = true } label: {
+            Label(
+                NSLocalizedString("import_audio.button", comment: "Import an audio file as a new meeting"),
+                systemImage: "square.and.arrow.down"
+            )
+        }
+        .accessibilityIdentifier("meetings.importAudio")
     }
 
     var settingsButton: some View {

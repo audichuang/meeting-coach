@@ -1118,3 +1118,6 @@
 "settings.coach.speaker_model_not_installed" = "未ダウンロード";
 "settings.coach.speaker_model_download" = "ダウンロード";
 "coach.speaker.download_hint" = "設定で話者ラベルモデルをダウンロードすると「これは私」を設定できます";
+
+"import_audio.button" = "録音を読み込む";
+"import_audio.error.unreadable" = "このオーディオファイルを読み込めません。";

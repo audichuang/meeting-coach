@@ -1118,3 +1118,6 @@
 "settings.coach.speaker_model_not_installed" = "Not downloaded";
 "settings.coach.speaker_model_download" = "Download";
 "coach.speaker.download_hint" = "Download the speaker tagging model in Settings to mark \"This is me\"";
+
+"import_audio.button" = "Import Recording";
+"import_audio.error.unreadable" = "This audio file could not be read.";

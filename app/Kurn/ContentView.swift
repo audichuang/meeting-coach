@@ -21,6 +21,7 @@
 //  so it can follow a finished transcript or summary on any screen.
 //
 
+import KurnCore
 import SwiftData
 import SwiftUI
 
@@ -28,7 +29,11 @@ struct ContentView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.modelContext) private var modelContext
     @Environment(IncomingFileInbox.self) private var incomingFiles
+    @Environment(AppSettings.self) private var settings
+    @Environment(TranscriptionCoordinator.self) private var transcription
     @State private var selection: LibrarySelection = .allMeetings
+    @State private var isImportingAudio = false
+    @State private var audioImportError: AppError?
 
     var body: some View {
         Group {
@@ -56,13 +61,40 @@ struct ContentView: View {
                 incomingFiles.finish()
             }
         }
+        .onChange(of: incomingFiles.pendingAudio, initial: true) { importNextAudio() }
+        .errorAlert($audioImportError)
+    }
+
+    /// Imports queued audio one file at a time (shared from Voice Memos or
+    /// picked in the library), then starts the coach follow-up when the
+    /// import took the coach route.
+    private func importNextAudio() {
+        guard !isImportingAudio, let url = incomingFiles.pendingAudio.first else { return }
+        isImportingAudio = true
+        let importer = MeetingAudioImporter(
+            context: modelContext,
+            language: settings.defaultLanguage,
+            coachUserName: MeetingAudioImporter.coachUserName(settings: settings)
+        )
+        Task {
+            do throws(AppError) {
+                let imported = try await importer.importAudio(from: url)
+                if imported.isCoach {
+                    MeetingCoachFollowUp(transcription: transcription, settings: settings)
+                        .start(meeting: imported.meeting, recordingID: imported.recordingID)
+                }
+            } catch {
+                audioImportError = error
+            }
+            isImportingAudio = false
+            incomingFiles.finishAudio(url)
+        }
     }
 }
 
 #Preview {
     // `ContentView` renders `MeetingsListView`; only `MeetingDetailView` (reached
-    // via navigation) reads the shared `TranscriptionCoordinator` and
-    // `SummaryViewModel`, so this preview doesn't inject them.
+    // via navigation) reads `SummaryViewModel`, so this preview doesn't inject it.
     @Previewable @State var settings = AppSettings()
     let container = try? ModelContainer(
         for: Meeting.self, Recording.self, Transcript.self, Speaker.self, Summary.self,
@@ -74,6 +106,7 @@ struct ContentView: View {
             .environment(settings)
             .environment(RecordingAccessGate())
             .environment(IncomingFileInbox())
+            .environment(TranscriptionCoordinator(modelContext: container.mainContext, appSettings: settings))
             .environment(RecordingSessionController(modelContext: container.mainContext, settings: settings))
             .environment(ReviewPromptCoordinator())
             .modelContainer(container)

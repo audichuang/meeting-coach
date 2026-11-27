@@ -16,6 +16,7 @@
 import KurnCore
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MeetingsListView: View {
     /// Max number of semantic-only meetings appended to the substring matches.
@@ -42,6 +43,10 @@ struct MeetingsListView: View {
     @Query(sort: \SmartFolder.name) private var smartFolders: [SmartFolder]
 
     @State var showingSettings = false
+    /// Presents the Files picker for "Import Recording"; picks join the
+    /// shared-audio queue `ContentView` imports from.
+    @State var showingAudioImporter = false
+    @Environment(IncomingFileInbox.self) private var incomingFiles
     @State private var pendingDelete: Meeting?
     /// Pushed meeting detail (item-based so cards have no disclosure chevron).
     @State private var selectedMeeting: Meeting?
@@ -337,6 +342,9 @@ struct MeetingsListView: View {
         )
         .textInputAutocapitalization(.never)
         .toolbar { listToolbar }
+        .fileImporter(isPresented: $showingAudioImporter, allowedContentTypes: [.audio], allowsMultipleSelection: true) {
+            if case .success(let urls) = $0 { urls.forEach { incomingFiles.receive($0) } }
+        }
         .hostsRecordingMiniBar()
         .sheet(isPresented: $showingSettings) {
             NavigationStack { SettingsView() }
