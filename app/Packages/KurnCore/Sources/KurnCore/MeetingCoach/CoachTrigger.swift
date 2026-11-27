@@ -52,27 +52,58 @@ public enum CoachMessages {
 
     static func seconds(_ value: TimeInterval) -> String { String(format: "%.0f", value) }
 
-    static func line(_ s: LiveTranscriptSegment) -> String { "[\(seconds(s.start))–\(seconds(s.end))] \(s.text)" }
+    static func line(_ s: LiveTranscriptSegment, selfSpeakerLabel: String? = nil) -> String {
+        guard let label = s.speakerLabel, !label.isEmpty else {
+            return "[\(seconds(s.start))–\(seconds(s.end))] \(s.text)"
+        }
+        let speaker = label == selfSpeakerLabel ? "使用者" : label
+        return "[\(seconds(s.start))–\(seconds(s.end))] \(speaker): \(s.text)"
+    }
 
     /// Segments visible at `now` that end within the last `span` seconds.
-    public static func recentContext(_ segments: [LiveTranscriptSegment], now: TimeInterval, span: TimeInterval = 180) -> String {
-        segments.filter { $0.arrivedAt <= now && $0.end >= now - span }.map(line).joined(separator: "\n")
+    public static func recentContext(
+        _ segments: [LiveTranscriptSegment],
+        now: TimeInterval,
+        span: TimeInterval = 180,
+        selfSpeakerLabel: String? = nil
+    ) -> String {
+        segments
+            .filter { $0.arrivedAt <= now && $0.end >= now - span }
+            .map { line($0, selfSpeakerLabel: selfSpeakerLabel) }
+            .joined(separator: "\n")
     }
 
     static func previousCards(_ cards: [String]) -> String {
         cards.isEmpty ? "（尚無）" : cards.map { "- \($0)" }.joined(separator: "\n")
     }
 
-    public static func trigger(segments: [LiveTranscriptSegment], now: TimeInterval, events: [String], cards: [String]) -> String {
-        "## 最近 3 分鐘逐字稿（到第 \(seconds(now)) 秒）\n\(recentContext(segments, now: now))\n\n## 偵測到的事件\n\(events.joined(separator: "、"))\n\n## 已出過的卡\n\(previousCards(cards))"
+    public static func trigger(
+        segments: [LiveTranscriptSegment],
+        now: TimeInterval,
+        events: [String],
+        cards: [String],
+        selfSpeakerLabel: String? = nil
+    ) -> String {
+        let context = recentContext(segments, now: now, selfSpeakerLabel: selfSpeakerLabel)
+        return "## 最近 3 分鐘逐字稿（到第 \(seconds(now)) 秒）\n\(context)\n\n## 偵測到的事件\n\(events.joined(separator: "、"))\n\n## 已出過的卡\n\(previousCards(cards))"
     }
 
-    public static func ask(segments: [LiveTranscriptSegment], now: TimeInterval, cards: [String]) -> String {
-        "## 最近 3 分鐘逐字稿（到第 \(seconds(now)) 秒）\n\(recentContext(segments, now: now))\n\n## 已出過的卡\n\(previousCards(cards))\n\n\(CoachPrompts.ask)"
+    public static func ask(
+        segments: [LiveTranscriptSegment],
+        now: TimeInterval,
+        cards: [String],
+        selfSpeakerLabel: String? = nil
+    ) -> String {
+        let context = recentContext(segments, now: now, selfSpeakerLabel: selfSpeakerLabel)
+        return "## 最近 3 分鐘逐字稿（到第 \(seconds(now)) 秒）\n\(context)\n\n## 已出過的卡\n\(previousCards(cards))\n\n\(CoachPrompts.ask)"
     }
 
-    public static func wrapUp(segments: [LiveTranscriptSegment]) -> String {
-        "## 會議逐字稿（完整）\n\(segments.map(line).joined(separator: "\n"))\n\n\(CoachPrompts.wrap)"
+    public static func wrapUp(
+        segments: [LiveTranscriptSegment],
+        selfSpeakerLabel: String? = nil
+    ) -> String {
+        let transcript = segments.map { line($0, selfSpeakerLabel: selfSpeakerLabel) }.joined(separator: "\n")
+        return "## 會議逐字稿（完整）\n\(transcript)\n\n\(CoachPrompts.wrap)"
     }
 }
 

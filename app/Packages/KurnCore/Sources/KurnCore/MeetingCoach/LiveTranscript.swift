@@ -8,9 +8,21 @@ public struct LiveTranscriptSegment: Codable, Equatable, Sendable {
     public var text: String
     /// Recording offset at which the final text arrived (what a trigger could see).
     public let arrivedAt: TimeInterval
+    /// Anonymous meeting-local speaker label (e.g. "A"…"D"), or `nil` when live diarization is unavailable.
+    public var speakerLabel: String?
 
-    public init(start: TimeInterval, end: TimeInterval, text: String, arrivedAt: TimeInterval) {
-        self.start = start; self.end = end; self.text = text; self.arrivedAt = arrivedAt
+    public init(
+        start: TimeInterval,
+        end: TimeInterval,
+        text: String,
+        arrivedAt: TimeInterval,
+        speakerLabel: String? = nil
+    ) {
+        self.start = start
+        self.end = end
+        self.text = text
+        self.arrivedAt = arrivedAt
+        self.speakerLabel = speakerLabel
     }
 }
 

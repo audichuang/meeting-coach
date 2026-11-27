@@ -111,6 +111,37 @@ struct MeetingCoachTests {
         #expect(CoachMessages.wrapUp(segments: segments).hasPrefix("## 會議逐字稿（完整）\n[0–20] 第一段\n[220–240] 第二段？\n\n會議結束了"))
     }
 
+    @Test func promptRenderingMarksSelfSpeakerAsUserAcrossGateCardAskAndWrapUp() {
+        let segments = [
+            LiveTranscriptSegment(start: 0, end: 20, text: "我們先確認範圍。", arrivedAt: 20.5, speakerLabel: "A"),
+            LiveTranscriptSegment(start: 20, end: 40, text: "下週可以上線嗎？", arrivedAt: 40.5, speakerLabel: "B"),
+            LiveTranscriptSegment(start: 40, end: 60, text: "無標籤補充。", arrivedAt: 60.5, speakerLabel: nil)
+        ]
+
+        let unmarkedTrigger = CoachMessages.trigger(segments: segments, now: 61, events: ["問句"], cards: [], selfSpeakerLabel: nil)
+        #expect(unmarkedTrigger.contains("[0–20] A: 我們先確認範圍。"))
+        #expect(unmarkedTrigger.contains("[20–40] B: 下週可以上線嗎？"))
+        #expect(unmarkedTrigger.contains("[40–60] 無標籤補充。"))
+        #expect(!unmarkedTrigger.contains("使用者:"))
+
+        let markedTrigger = CoachMessages.trigger(segments: segments, now: 61, events: ["問句"], cards: [], selfSpeakerLabel: "A")
+        #expect(markedTrigger.contains("[0–20] 使用者: 我們先確認範圍。"))
+        #expect(markedTrigger.contains("[20–40] B: 下週可以上線嗎？"))
+        #expect(markedTrigger.contains("[40–60] 無標籤補充。"))
+
+        let markedAsk = CoachMessages.ask(segments: segments, now: 61, cards: [], selfSpeakerLabel: "B")
+        #expect(markedAsk.contains("[0–20] A: 我們先確認範圍。"))
+        #expect(markedAsk.contains("[20–40] 使用者: 下週可以上線嗎？"))
+
+        let markedWrapUp = CoachMessages.wrapUp(segments: segments, selfSpeakerLabel: "A")
+        #expect(markedWrapUp.contains("[0–20] 使用者: 我們先確認範圍。"))
+        #expect(markedWrapUp.contains("[20–40] B: 下週可以上線嗎？"))
+
+        #expect(CoachPrompts.card.contains("使用者"))
+        #expect(CoachPrompts.card.contains("不要重述使用者"))
+        #expect(CoachPrompts.judge.contains("使用者"))
+    }
+
     @Test func toolSchemasAreValidJSON() throws {
         for schema in [CoachPrompts.emitSuggestionSchema, CoachPrompts.emitWrapupSchema, CoachPrompts.judgeSchema] {
             #expect(try JSONSerialization.jsonObject(with: Data(schema.utf8)) is [String: Any])
