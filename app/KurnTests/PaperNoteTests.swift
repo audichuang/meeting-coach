@@ -430,13 +430,92 @@ struct PaperNoteTests {
         #expect(viewerDecodeCount == 2)
     }
 
-    // MARK: - External Storage & Off-Main Serialization
+    // MARK: - Inline Storage & Off-Main Serialization
 
-    @Test func paperNoteDrawingDataUsesExternalStorage() throws {
+    private func makeLargeDrawing(strokeCount: Int = 400) -> PKDrawing {
+        var strokes: [PKStroke] = []
+        strokes.reserveCapacity(strokeCount)
+        let creationDate = Date(timeIntervalSince1970: 1_760_000_000)
+        for index in 0..<strokeCount {
+            let baseY = CGFloat(40 + index * 12)
+            let points: [PKStrokePoint] = (0..<24).map { step in
+                let x = CGFloat(40 + step * 24)
+                let y = baseY + CGFloat(sin(Double(step)) * 4.0)
+                return PKStrokePoint(
+                    location: CGPoint(x: x, y: y),
+                    timeOffset: TimeInterval(step) * 0.02,
+                    size: CGSize(width: 4, height: 4),
+                    opacity: 1,
+                    force: 1,
+                    azimuth: 0,
+                    altitude: .pi / 2
+                )
+            }
+            let path = PKStrokePath(controlPoints: points, creationDate: creationDate)
+            strokes.append(PKStroke(ink: PKInk(.pen, color: .black), path: path))
+        }
+        return PKDrawing(strokes: strokes)
+    }
+
+    @Test func paperNoteDrawingDataStaysInlineAndSurvivesBackupRestore() throws {
         let schema = Schema([PaperNote.self])
         let entity = try #require(schema.entities.first { $0.name == "PaperNote" })
         let drawingAttribute = try #require(entity.attributes.first { $0.name == "drawingData" })
-        #expect(drawingAttribute.options.contains(.externalStorage))
+        #expect(!drawingAttribute.options.contains(.externalStorage))
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PaperNoteBackupRestore-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent(ModelStoreProtection.baseName)
+
+        let largeDrawing = makeLargeDrawing()
+        let largeData = largeDrawing.dataRepresentation()
+        try #require(largeData.count > 130_000, "Drawing payload must exceed CoreData external-storage threshold")
+        let recordingID = UUID()
+
+        do {
+            let container = try ModelContainer(
+                for: KurnModelGraph.schema,
+                migrationPlan: KurnModelGraph.migrationPlan,
+                configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+            )
+            let context = container.mainContext
+            let meeting = Meeting(title: "Backup Roundtrip")
+            context.insert(meeting)
+            let note = PaperNote(meeting: meeting, recordingID: recordingID, drawingData: largeData)
+            context.insert(note)
+            try context.save()
+        }
+
+        let manager = ModelStoreBackupManager(appSupportDirectory: directory)
+        let generation = try #require(try manager.createBackupIfLiveStoreExists())
+
+        // Delete the note in the live store (removing any external blob sidecars) before restoring.
+        do {
+            let container = try ModelContainer(
+                for: KurnModelGraph.schema,
+                migrationPlan: KurnModelGraph.migrationPlan,
+                configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+            )
+            let context = container.mainContext
+            for note in try context.fetch(FetchDescriptor<PaperNote>()) {
+                context.delete(note)
+            }
+            try context.save()
+        }
+
+        try manager.restore(generation: generation)
+
+        let restoredContainer = try ModelContainer(
+            for: KurnModelGraph.schema,
+            migrationPlan: KurnModelGraph.migrationPlan,
+            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+        )
+        let restoredNotes = try restoredContainer.mainContext.fetch(FetchDescriptor<PaperNote>())
+        let restored = try #require(restoredNotes.first)
+        #expect(restored.recordingID == recordingID)
+        #expect(restored.loadDrawing().strokes.count == largeDrawing.strokes.count)
     }
 
     private nonisolated static func isCurrentThreadMain() -> Bool {

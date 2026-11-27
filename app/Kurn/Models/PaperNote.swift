@@ -30,8 +30,10 @@ final class PaperNote {
     @Attribute(.unique) var id: UUID
     var meeting: Meeting?
     var recordingID: UUID?
-    /// `PKDrawing.dataRepresentation()` in page coordinates.
-    @Attribute(.externalStorage) var drawingData: Data = Data()
+    /// `PKDrawing.dataRepresentation()` in page coordinates. Stored inline in
+    /// the SQLite store so `ModelStoreBackupManager` backup/restore (which
+    /// copies only main/WAL/SHM files) never drops externalized blobs.
+    var drawingData: Data = Data()
     /// Logical page width in points that `drawingData` was authored against.
     var pageWidth: Double = PaperNote.defaultPageWidth
     /// JSON-encoded `[PaperStrokeAnchor]` carrying recording time offsets.
