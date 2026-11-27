@@ -1077,7 +1077,8 @@
 "coach.status.unauthorized" = "招待コードが無効です。設定を確認してください";
 "coach.error.quota" = "今月の利用枠を使い切りました。";
 "coach.error.unauthorized" = "招待コードが無効です。設定を確認してください。";
-"coach.error.accessMissing" = "This build lacks the server access token; reinstall the official build.";
+"coach.error.accessMissing" = "This build lacks the server address or access token; reinstall the official build.";
+"coach.status.accessMissing" = "AI stopped: this build lacks the server access token";
 "settings.meeting_coach_server" = "サーバーURL";
 "settings.meeting_coach_invite" = "招待コード";
 "settings.meeting_coach_usage" = "今月の利用額";

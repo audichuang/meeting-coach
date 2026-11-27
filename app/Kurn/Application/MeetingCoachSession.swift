@@ -48,6 +48,8 @@ final class MeetingCoachSession {
         case quota
         /// The Worker rejected the invite code (HTTP 401).
         case unauthorized
+        /// The build has no Worker address or Access token; nothing was sent.
+        case accessMissing
     }
 
     static let promptVersion = "spike-r4"
@@ -313,6 +315,8 @@ final class MeetingCoachSession {
             stopAI(.quota)
         } else if error.isCoachUnauthorized {
             stopAI(.unauthorized)
+        } else if error.isCoachNotConfigured {
+            stopAI(.accessMissing)
         }
     }
 

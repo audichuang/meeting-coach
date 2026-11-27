@@ -104,6 +104,7 @@ enum ProviderFactory {
         if provider.id == AIProvider.meetingCoach.id {
             // The coach's formal transcript goes wherever the coach does now (Worker or, in DEBUG, OpenAI).
             let backend = CoachBackend.current()
+            try backend?.requireReady()
             provider = backend?.provider ?? AIProvider.openAI
             key = backend?.token ?? ""
             extraHeaders = backend?.accessHeaders ?? [:]

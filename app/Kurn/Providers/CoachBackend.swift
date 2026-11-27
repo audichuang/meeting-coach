@@ -21,6 +21,22 @@ struct CoachBackend: Sendable, Equatable {
     let viaWorker: Bool
     /// Cloudflare Access headers the Worker's front door requires; empty when direct.
     var accessHeaders: [String: String] = [:]
+    /// The build lacks the Worker address or Access token: every request is refused locally.
+    var notConfigured = false
+
+    /// Stands in for the Worker when the build has none; its address is never contacted.
+    static let unconfigured = CoachBackend(
+        baseURL: URL(string: "https://unconfigured.invalid/v1")!, token: "", viaWorker: true, notConfigured: true
+    )
+
+    /// Thrown instead of sending, so a build without the Access token never shows up as a rejected invite code.
+    struct NotConfigured: LocalizedError {
+        var errorDescription: String? { NSLocalizedString("coach.error.accessMissing", comment: "Build lacks the Worker address or Access token") }
+    }
+
+    func requireReady() throws {
+        if notConfigured { throw NotConfigured() }
+    }
 
     /// The configured backend, or `nil` when the coach has nowhere to send audio.
     /// Read off the main actor too (ProviderFactory), so it reads the Keychain directly rather than `AppSettings`.
@@ -47,7 +63,8 @@ struct CoachBackend: Sendable, Equatable {
         serverOverride: String? = debugOverride("KURN_DEBUG_COACH_SERVER_URL")
     ) -> CoachBackend? {
         let token = debugOverride("KURN_DEBUG_COACH_INVITE") ?? invite
-        guard let base = serverOverride.flatMap(workerBaseURL) ?? config?.baseURL, !token.isEmpty else { return nil }
+        guard let base = serverOverride.flatMap(workerBaseURL) ?? config?.baseURL else { return .unconfigured }
+        guard !token.isEmpty else { return nil }
         let headers = config.flatMap { CoachAccess.sameOrigin($0.baseURL, base) ? $0.headers : nil } ?? [:]
         return CoachBackend(baseURL: base, token: token, viaWorker: true, accessHeaders: headers)
     }
@@ -106,6 +123,7 @@ struct CoachBackend: Sendable, Equatable {
     }
 
     func usage(session: URLSession = .shared) async throws -> Usage {
+        try requireReady()
         var request = URLRequest(url: baseURL.appending(path: "usage"))
         request.timeoutInterval = 15
         authorize(&request)
@@ -171,6 +189,9 @@ extension AIProvider {
 }
 
 extension Error {
+    /// The build has no Worker address or Access token, so nothing was sent.
+    var isCoachNotConfigured: Bool { self is CoachBackend.NotConfigured }
+
     /// The Worker's answer once this month's cap is spent.
     var isCoachQuotaExhausted: Bool {
         if case AppError.apiError(402, _)? = self as? AppError { return true }

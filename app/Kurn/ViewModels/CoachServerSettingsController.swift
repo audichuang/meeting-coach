@@ -15,6 +15,7 @@ enum CoachUsageStatus: Equatable, Sendable {
     case unknown
     case loaded(CoachBackend.Usage)
     case unauthorized
+    case notConfigured
     case failed
 
     static func load(
@@ -25,6 +26,7 @@ enum CoachUsageStatus: Equatable, Sendable {
         do {
             return .loaded(try await fetch(resolved))
         } catch {
+            if error.isCoachNotConfigured { return .notConfigured }
             return error.isCoachUnauthorized ? .unauthorized : .failed
         }
     }
@@ -36,6 +38,7 @@ enum CoachUsageStatus: Equatable, Sendable {
             return String(format: NSLocalizedString("settings.meeting_coach_usage_value", comment: "Spent of cap, USD"),
                           usage.month.usd, usage.monthlyCapUSD)
         case .unauthorized: return NSLocalizedString("settings.meeting_coach_invite_invalid", comment: "Invite code rejected")
+        case .notConfigured: return NSLocalizedString("coach.error.accessMissing", comment: "Build lacks the Worker address or Access token")
         case .failed: return NSLocalizedString("settings.meeting_coach_usage_failed", comment: "Usage could not be loaded")
         }
     }

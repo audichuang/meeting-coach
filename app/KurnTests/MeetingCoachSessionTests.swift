@@ -601,6 +601,29 @@ struct MeetingCoachSessionTests {
         #expect(try context.fetch(FetchDescriptor<CoachRecord>()).first?.segments.count == 1)
     }
 
+    @Test func missingBuildConfigurationStopsTheAIWithItsOwnReason() async throws {
+        struct NotConfiguredLLM: CoachLLM {
+            func call(model: String, instructions: String, input: String, tools: [CoachTool], force: String?) async throws -> CoachCallResult {
+                throw CoachBackend.NotConfigured()
+            }
+        }
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "我", budgetUSD: 10, backend: .test),
+            llm: NotConfiguredLLM(), elapsed: { 200 }
+        )
+        coach.begin(recordingID: UUID())
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 0, end: 20, text: "大家好", arrivedAt: 20)))
+        await waitUntil { coach.transcriptAvailable }
+        await coach.askForCard()
+        #expect(coach.stopReason == .accessMissing)
+        await coach.finish(at: 210)
+    }
+
     @Test func stopAIIgnoresLateTranscriptAndBillingEvents() async throws {
         let container = TestModelContainer.make()
         let context = container.mainContext

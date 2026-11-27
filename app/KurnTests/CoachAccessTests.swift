@@ -84,7 +84,35 @@ struct CoachAccessTests {
         #expect(elsewhere.accessHeaders.isEmpty)
 
         #expect(CoachBackend.workerBackend(invite: "", config: config, serverOverride: nil) == nil)
-        #expect(CoachBackend.workerBackend(invite: "inv", config: nil, serverOverride: nil) == nil)
+    }
+
+    @Test func missingBuildConfigurationSendsNothing() async throws {
+        // Even without an invite: the Settings row and the panel must say what is wrong.
+        let missing = try #require(CoachBackend.workerBackend(invite: "", config: nil, serverOverride: nil))
+        #expect(missing.notConfigured)
+        #expect(missing.accessHeaders.isEmpty)
+
+        MockURLProtocol.enqueue([MockURLProtocol.json([:])])
+        let session = MockURLProtocol.session()
+        await #expect(throws: CoachBackend.NotConfigured.self) { try await missing.usage(session: session) }
+        await #expect(throws: CoachBackend.NotConfigured.self) {
+            try await CoachResponsesClient(backend: missing, session: session).send([:], timeout: 5)
+        }
+        await #expect(throws: CoachBackend.NotConfigured.self) {
+            try await OpenAILiveTranscriber.mintClientSecret(backend: missing, session: session)
+        }
+        #expect(throws: CoachBackend.NotConfigured.self) { try missing.requireReady() }
+        #expect(MockURLProtocol.capturedRequests.isEmpty)
+
+        let status = await CoachUsageStatus.load(backend: { missing })
+        #expect(status == .notConfigured)
+        #expect(status.text == NSLocalizedString("coach.error.accessMissing", comment: ""))
+        #expect(CoachBackend.explained(CoachBackend.NotConfigured()).isCoachNotConfigured)
+    }
+
+    @Test func aConfiguredWorkerWithoutInviteStaysSilent() {
+        let config = CoachAccess.Config(baseURL: URL(string: "https://coach.example.test/v1")!, headers: Self.access)
+        #expect(CoachBackend.workerBackend(invite: "", config: config, serverOverride: nil) == nil)
     }
 
     @Test func directBackendSendsOnlyTheBearerKey() {

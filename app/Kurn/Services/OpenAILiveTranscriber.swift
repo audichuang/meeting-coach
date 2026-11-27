@@ -160,6 +160,7 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
     }
 
     static func mintClientSecret(backend: CoachBackend, session: URLSession) async throws -> String {
+        try backend.requireReady()
         var request = URLRequest(url: backend.baseURL.appending(path: "realtime/session"))
         request.httpMethod = "POST"
         request.timeoutInterval = 15

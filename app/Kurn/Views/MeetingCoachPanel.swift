@@ -82,6 +82,7 @@ struct MeetingCoachPanel: View {
         case .budget: return NSLocalizedString("coach.status.stopped", comment: "AI stopped (budget)")
         case .quota: return NSLocalizedString("coach.status.quota", comment: "AI stopped: this month's allowance is used up")
         case .unauthorized: return NSLocalizedString("coach.status.unauthorized", comment: "AI stopped: invite code rejected")
+        case .accessMissing: return NSLocalizedString("coach.status.accessMissing", comment: "AI stopped: the build lacks the Worker address or Access token")
         case nil: break
         }
         switch coach.connection {

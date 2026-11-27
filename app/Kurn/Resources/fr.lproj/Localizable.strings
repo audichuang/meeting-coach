@@ -1077,7 +1077,8 @@
 "coach.status.unauthorized" = "Invite code rejected; check it in Settings";
 "coach.error.quota" = "This month's allowance is used up.";
 "coach.error.unauthorized" = "Invite code rejected; check it in Settings.";
-"coach.error.accessMissing" = "This build lacks the server access token; reinstall the official build.";
+"coach.error.accessMissing" = "This build lacks the server address or access token; reinstall the official build.";
+"coach.status.accessMissing" = "AI stopped: this build lacks the server access token";
 "settings.meeting_coach_server" = "Server URL";
 "settings.meeting_coach_invite" = "Invite code";
 "settings.meeting_coach_usage" = "This month";

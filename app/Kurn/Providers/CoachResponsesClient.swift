@@ -53,6 +53,7 @@ struct CoachResponsesClient: CoachLLM {
     }
 
     func send(_ body: [String: Any], timeout: TimeInterval) async throws -> Data {
+        try backend.requireReady()
         var request = URLRequest(url: backend.baseURL.appending(path: "responses"))
         request.httpMethod = "POST"
         request.timeoutInterval = timeout

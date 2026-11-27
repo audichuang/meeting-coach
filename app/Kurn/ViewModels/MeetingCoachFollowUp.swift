@@ -75,6 +75,7 @@ final class MeetingCoachFollowUp {
         recordSpend(recording.duration / 60 * CoachPricing.transcribePerMinute)
         let resolver: ProviderFactory.LLMResolver = resolveSummaryProvider ?? { _, model in
             let backend = CoachBackend.current()
+            try backend?.requireReady()
             try LLMHTTP.requireAPIKey(backend?.token ?? "", provider: .meetingCoach)
             guard let backend else { throw AppError.invalidProviderURL }
             return CoachSummaryProvider(client: CoachResponsesClient(backend: backend), model: model) { usage in
