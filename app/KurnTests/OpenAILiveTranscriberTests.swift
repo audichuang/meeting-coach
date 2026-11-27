@@ -88,8 +88,11 @@ private actor SignalGate {
     }
 }
 
-private func waitUntil(_ condition: () -> Bool) async {
-    for _ in 0..<200 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
+/// Polls until `condition` holds; the 10 s cap only guards against a hang and fails loudly,
+/// so a slow machine cannot silently skip a step the next assertion depends on.
+private func waitUntil(sourceLocation: SourceLocation = #_sourceLocation, _ condition: () -> Bool) async {
+    for _ in 0..<1_000 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
+    if !condition() { Issue.record("waitUntil timed out", sourceLocation: sourceLocation) }
 }
 
 private func buffer(seconds: Double) -> AVAudioPCMBuffer {
@@ -204,16 +207,19 @@ struct OpenAILiveTranscriberTests {
         old.serverSends(#"{"type":"session.created","session":{"expires_at":1}}"#)
         await waitUntil { log.all.contains(.connection(.live)) }
 
-        // Window 1 commits normally on the first session.
+        // Window 1 commits normally on the first session. Wait for it to leave the outbox:
+        // two windows queued at once exceed `outboxLimit` and drop the session as stalled.
+        let commit = #"{"type":"input_audio_buffer.commit"}"#
         try await engine.appendAudio(buffer(seconds: 20))
         try await engine.processBufferedAudio()
+        await waitUntil { old.sent.contains(commit) }
         old.serverSends(#"{"type":"input_audio_buffer.committed","item_id":"i1"}"#)
 
         // 55 minutes later: window 2 still goes to the old session, then it hands over.
         clock.now = 55 * 60 + 1
         try await engine.appendAudio(buffer(seconds: 20))
         try await engine.processBufferedAudio()
-        await waitUntil { !next.sent.isEmpty }
+        await waitUntil { !next.sent.isEmpty && old.sent.filter { $0 == commit }.count == 2 }
         #expect(counter.withLock { index } == 2)
 
         // Window 3 goes only to the new session.
