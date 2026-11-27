@@ -30,12 +30,12 @@ export function responseCostUSD(model: string, usage: ResponseUsage): number {
 export const TRANSCRIBE_MODEL = "gpt-transcribe";
 /** USD per audio minute; the pricing page lists no per-token rate for it. */
 export const TRANSCRIBE_PER_MINUTE = 0.0045;
-/** Lowest bit rate the App records at (AudioQuality .low), so a size-based duration is an overestimate. */
-const MIN_APP_BITS_PER_SECOND = 32_000;
+/** Well under what the App's AAC actually averages (about 31 kbps measured at the 48 kbps setting), so a size-based duration overestimates. */
+const MIN_APP_BITS_PER_SECOND = 16_000;
 
 /**
  * Seconds to bill for one file transcription: the duration OpenAI reports in
- * `usage`, or failing that the file size read at the App's lowest bit rate.
+ * `usage`, or failing that the file size read at a bit rate below any the App produces.
  */
 export function transcribeSeconds(usage: { type?: string; seconds?: number } | undefined, fileBytes: number): number {
   if (usage?.type === "duration" && typeof usage.seconds === "number" && usage.seconds > 0) return usage.seconds;

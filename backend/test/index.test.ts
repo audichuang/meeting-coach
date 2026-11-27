@@ -122,14 +122,14 @@ describe("/v1/audio/transcriptions", () => {
     expect(usage.month.usd).toBeCloseTo((120 / 60) * 0.0045, 10);
   });
 
-  it("bills from the file size at 32 kbps when no duration is reported", async () => {
+  it("bills from the file size at 16 kbps when no duration is reported", async () => {
     const { token } = await createInvite(E, null);
     mockOpenAI({ text: "x", usage: { type: "tokens", input_tokens: 10, output_tokens: 2 } });
     expect((await upload(token, audioForm({}, 240_000))).status).toBe(200);
     vi.restoreAllMocks();
     const usage = (await (await call(token, "/v1/usage")).json()) as any;
-    // 240 kB at 32 kbps = 60 s
-    expect(usage.month.usd).toBeCloseTo(0.0045, 10);
+    // 240 kB at 16 kbps = 120 s
+    expect(usage.month.usd).toBeCloseTo(0.009, 10);
   });
 
   it("rejects other models, formats, unknown fields and oversized files without calling OpenAI", async () => {
