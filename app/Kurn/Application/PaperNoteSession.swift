@@ -43,6 +43,8 @@ final class PaperNoteSession {
     let pageWidth: Double
     /// Timestamp of the last successful SwiftData save, if any.
     private(set) var lastSavedAt: Date?
+    /// Last persistence error observed while saving, cleared on the next save.
+    private(set) var lastSaveError: AppError?
     /// True while edits have not yet been committed to SwiftData.
     private(set) var hasUnsavedChanges = false
     /// Recording-relative time anchors for stroke batches.
@@ -56,16 +58,20 @@ final class PaperNoteSession {
     @ObservationIgnored private let now: @MainActor () -> Date
     @ObservationIgnored private let debounceInterval: Duration
     @ObservationIgnored private let maxWaitInterval: Duration
+    @ObservationIgnored private let retryBaseInterval: Duration
+    @ObservationIgnored private let maxAutomaticRetries: Int
     @ObservationIgnored private let sleepClock: any SleepClock
     @ObservationIgnored private let persist: @MainActor (ModelContext) -> AppError?
     @ObservationIgnored private let serialize: DrawingSerializer
     @ObservationIgnored private var note: PaperNote?
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
     @ObservationIgnored private var maxWaitTask: Task<Void, Never>?
+    @ObservationIgnored private var retryTask: Task<Void, Never>?
     @ObservationIgnored private var serializationTask: Task<Void, Never>?
     @ObservationIgnored private var drawingGeneration: UInt64 = 0
     @ObservationIgnored private var persistedGeneration: UInt64 = 0
     @ObservationIgnored private var inFlightGeneration: UInt64 = 0
+    @ObservationIgnored private var consecutiveSaveFailures = 0
     @ObservationIgnored private var needsFollowUpFlush = false
     @ObservationIgnored private var pendingBatchOffset: TimeInterval?
     @ObservationIgnored private var inFlightBatch: (strokeCount: Int, offset: TimeInterval)?
@@ -86,6 +92,8 @@ final class PaperNoteSession {
         pageWidth: Double = PaperNote.defaultPageWidth,
         debounceInterval: Duration = .milliseconds(500),
         maxWaitInterval: Duration = .seconds(5),
+        retryBaseInterval: Duration = .seconds(1),
+        maxAutomaticRetries: Int = 3,
         sleepClock: any SleepClock = SystemClock(),
         elapsed: @escaping @MainActor () -> TimeInterval,
         now: @escaping @MainActor () -> Date = { Date() },
@@ -97,6 +105,8 @@ final class PaperNoteSession {
         self.pageWidth = pageWidth
         self.debounceInterval = debounceInterval
         self.maxWaitInterval = maxWaitInterval
+        self.retryBaseInterval = retryBaseInterval
+        self.maxAutomaticRetries = max(0, maxAutomaticRetries)
         self.sleepClock = sleepClock
         self.elapsed = elapsed
         self.now = now
@@ -124,6 +134,9 @@ final class PaperNoteSession {
         drawing = newDrawing
         drawingGeneration &+= 1
         hasUnsavedChanges = true
+        consecutiveSaveFailures = 0
+        retryTask?.cancel()
+        retryTask = nil
         if pendingBatchOffset == nil {
             pendingBatchOffset = max(0, elapsed())
         }
@@ -133,14 +146,25 @@ final class PaperNoteSession {
     /// Requests an immediate off-main-actor serialization and save, coalescing
     /// with any serialization already in flight so at most one runs at a time.
     func requestFlush() {
+        consecutiveSaveFailures = 0
         startCoalescedBackgroundFlush()
     }
 
     /// Requests an off-main-actor flush and waits until the in-flight
     /// serialization (and any coalesced follow-up) completes.
-    func flush() async {
+    /// Returns `true` when all pending changes were persisted (or nothing was
+    /// pending), and `false` when cancelled, unattached, or persistence failed.
+    @discardableResult
+    func flush() async -> Bool {
+        guard !isCancelled else { return false }
+        if !hasUnsavedChanges, serializationTask == nil {
+            return true
+        }
+        guard recordingID != nil else { return false }
+        consecutiveSaveFailures = 0
         startCoalescedBackgroundFlush()
         await waitForInFlightFlush()
+        return !isCancelled && !hasUnsavedChanges && lastSaveError == nil
     }
 
     /// Waits for any serialization already in flight (and any coalesced
@@ -153,9 +177,12 @@ final class PaperNoteSession {
 
     /// Flushes unsaved strokes when the app moves to the background, requesting
     /// brief background execution time so serialization and save complete
-    /// before iOS suspends the process.
-    func flushForBackground() {
-        guard !isCancelled, hasUnsavedChanges, recordingID != nil else { return }
+    /// before iOS suspends the process. Returns the background flush task
+    /// reporting `true` on success and `false` on failure, or `nil` when
+    /// nothing needed flushing.
+    @discardableResult
+    func flushForBackground() -> Task<Bool, Never>? {
+        guard !isCancelled, hasUnsavedChanges, recordingID != nil else { return nil }
         #if canImport(UIKit)
         let application = UIApplication.shared
         var backgroundTaskID = UIBackgroundTaskIdentifier.invalid
@@ -165,15 +192,18 @@ final class PaperNoteSession {
                 backgroundTaskID = .invalid
             }
         }
-        Task { @MainActor [weak self] in
-            await self?.flush()
+        return Task { @MainActor [weak self] in
+            let succeeded = await self?.flush() ?? false
             if backgroundTaskID != .invalid {
                 application.endBackgroundTask(backgroundTaskID)
                 backgroundTaskID = .invalid
             }
+            return succeeded
         }
         #else
-        requestFlush()
+        return Task { @MainActor [weak self] in
+            await self?.flush() ?? false
+        }
         #endif
     }
 
@@ -185,6 +215,8 @@ final class PaperNoteSession {
         debounceTask = nil
         maxWaitTask?.cancel()
         maxWaitTask = nil
+        retryTask?.cancel()
+        retryTask = nil
         serializationTask?.cancel()
         serializationTask = nil
         inFlightGeneration = 0
@@ -239,13 +271,17 @@ final class PaperNoteSession {
         debounceTask = nil
         maxWaitTask?.cancel()
         maxWaitTask = nil
+        retryTask?.cancel()
+        retryTask = nil
         serializationTask?.cancel()
         serializationTask = nil
         inFlightGeneration = 0
+        consecutiveSaveFailures = 0
         needsFollowUpFlush = false
         note = nil
         recordingID = nil
         hasUnsavedChanges = false
+        lastSaveError = nil
         pendingBatchOffset = nil
         inFlightBatch = nil
     }
@@ -291,9 +327,41 @@ final class PaperNoteSession {
         return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
     }
 
+    private func scheduleBoundedRetryIfAllowed() {
+        retryTask?.cancel()
+        retryTask = nil
+        maxWaitTask?.cancel()
+        maxWaitTask = nil
+        guard !isCancelled, hasUnsavedChanges, recordingID != nil else { return }
+        guard consecutiveSaveFailures <= maxAutomaticRetries else {
+            AppLog.persistence.atError.error(
+                "PaperNoteSession: retry budget exhausted after \(self.consecutiveSaveFailures, privacy: .public) failures"
+            )
+            return
+        }
+        let baseSeconds = Self.seconds(from: retryBaseInterval)
+        let maxWaitSeconds = Self.seconds(from: maxWaitInterval)
+        let shift = min(max(0, consecutiveSaveFailures - 1), 6)
+        let delay = min(maxWaitSeconds, baseSeconds * Double(1 << shift))
+        let clock = sleepClock
+        retryTask = Task { [weak self] in
+            do {
+                try await clock.sleep(seconds: delay)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            self.retryTask = nil
+            self.startCoalescedBackgroundFlush()
+        }
+    }
+
     private func startCoalescedBackgroundFlush() {
         debounceTask?.cancel()
         debounceTask = nil
+        retryTask?.cancel()
+        retryTask = nil
         guard !isCancelled, hasUnsavedChanges, recordingID != nil else { return }
 
         if serializationTask != nil {
@@ -358,6 +426,9 @@ final class PaperNoteSession {
         )
         guard saved else {
             needsFollowUpFlush = false
+            hasUnsavedChanges = true
+            consecutiveSaveFailures += 1
+            scheduleBoundedRetryIfAllowed()
             return
         }
 
@@ -428,15 +499,20 @@ final class PaperNoteSession {
 
         if let failure = persist(modelContext) {
             AppLog.persistence.atError.error("PaperNoteSession: save failed code=\(failure.logCode, privacy: .public)")
+            lastSaveError = failure
             if appendedAnchorCount > 0 {
                 anchors.removeLast(appendedAnchorCount)
             }
-            if pendingBatchOffset == nil {
-                pendingBatchOffset = precedingBatch?.offset ?? batchOffset
+            if let failedOffset = precedingBatch?.offset ?? batchOffset {
+                pendingBatchOffset = pendingBatchOffset.map { min($0, failedOffset) } ?? failedOffset
             }
             return false
         }
 
+        lastSaveError = nil
+        consecutiveSaveFailures = 0
+        retryTask?.cancel()
+        retryTask = nil
         persistedGeneration = generation
         lastSavedAt = timestamp
         return true

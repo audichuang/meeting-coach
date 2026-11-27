@@ -537,51 +537,6 @@ struct PaperNoteTests {
         Thread.isMainThread
     }
 
-    private final class GatedDrawingSerializer: @unchecked Sendable {
-        private let lock = NSLock()
-        private var active = 0
-        private var maxActive = 0
-        private var calls = 0
-        private var waiters: [CheckedContinuation<Void, Never>] = []
-        private var observedMainThread: [Bool] = []
-
-        var maxConcurrent: Int { lock.withLock { maxActive } }
-        var callCount: Int { lock.withLock { calls } }
-        var ranOffMainThread: Bool { lock.withLock { !observedMainThread.isEmpty && observedMainThread.allSatisfy { !$0 } } }
-
-        func serialize(_ snapshot: PaperDrawingSnapshot) async -> Data {
-            await withCheckedContinuation { continuation in
-                lock.withLock {
-                    calls += 1
-                    active += 1
-                    maxActive = max(maxActive, active)
-                    waiters.append(continuation)
-                }
-            }
-            let data = await PaperNoteSession.serializeOffMain(snapshot) { snap in
-                let onMain = PaperNoteTests.isCurrentThreadMain()
-                self.lock.withLock { self.observedMainThread.append(onMain) }
-                return snap.drawing.dataRepresentation()
-            }
-            lock.withLock {
-                active -= 1
-            }
-            return data
-        }
-
-        func releaseNext() {
-            let next: CheckedContinuation<Void, Never>? = lock.withLock {
-                guard !waiters.isEmpty else { return nil }
-                return waiters.removeFirst()
-            }
-            next?.resume()
-        }
-
-        var hasWaitingCall: Bool {
-            lock.withLock { !waiters.isEmpty }
-        }
-    }
-
     @Test func defaultSerializerRunsOffMainActorAndCoalescesInFlightWrites() async throws {
         // Verify production default serializer (`serializeOffMain`) runs off the main thread.
         let sample = makeSampleDrawing()
