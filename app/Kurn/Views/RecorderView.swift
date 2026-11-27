@@ -34,8 +34,8 @@ struct RecorderView: View {
                 ProgressView()
             }
         }
-        // Lock to portrait only for the non-coach iPhone recorder; both the
-        // iPad paper screen and the iPhone coach layout adapt to both orientations.
+        // Lock to portrait only for the legacy non-coach recorder; the paper
+        // screen and the coach layout adapt to both orientations.
         .onAppear {
             if !usesPaperScreen && session.viewModel?.coach == nil {
                 AppOrientationLock.shared.lockToPortrait()

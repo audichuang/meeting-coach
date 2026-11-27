@@ -2,9 +2,9 @@
 //  RecorderDeviceLayoutTests.swift
 //  KurnTests
 //
-//  Verifies that the paper recording screen is restricted to iPad, while
-//  iPhone keeps the legacy dark recording screen (with `MeetingCoachPanel`
-//  when the meeting coach is active) and never mounts a PencilKit paper canvas.
+//  Verifies that iPad and iPhone both mount the PencilKit paper recording
+//  screen, and that the Release drawing policy lets a finger write on iPhone
+//  while iPad stays Pencil-first.
 //
 
 import Foundation
@@ -61,7 +61,7 @@ struct RecorderDeviceLayoutTests {
         return (container, session)
     }
 
-    @Test func iPhoneWithCoachDoesNotUsePaperCanvas() async throws {
+    @Test func iPhoneWithCoachUsesPaperCanvas() async throws {
         let (container, session) = try makeCoachedSession()
         defer {
             session.discard()
@@ -84,8 +84,8 @@ struct RecorderDeviceLayoutTests {
             hosting.view.layoutIfNeeded()
 
             #expect(
-                findSubview(of: PKCanvasView.self, in: hosting.view) == nil,
-                "iPhone with meeting coach must keep the legacy recording screen and never mount PKCanvasView"
+                findSubview(of: PKCanvasView.self, in: hosting.view) != nil,
+                "iPhone must mount the PencilKit paper recording screen"
             )
         }
         session.discard()
@@ -121,10 +121,17 @@ struct RecorderDeviceLayoutTests {
         await Task.yield()
     }
 
-    @Test func usesPaperScreenPolicyRestrictsPaperToIPad() {
+    @Test func usesPaperScreenOnIPadAndIPhone() {
         #expect(PaperCanvasMetrics.usesPaperScreen(for: .pad))
-        #expect(!PaperCanvasMetrics.usesPaperScreen(for: .phone))
+        #expect(PaperCanvasMetrics.usesPaperScreen(for: .phone))
         #expect(!PaperCanvasMetrics.usesPaperScreen(for: .mac))
         #expect(!PaperCanvasMetrics.usesPaperScreen(for: .unspecified))
+    }
+
+    /// The Release policy, not the DEBUG simulator override (`.anyInput`
+    /// everywhere): iPad keeps Pencil-first, iPhone lets a finger write.
+    @Test func releaseDrawingPolicyAllowsFingerOnlyWithoutPencil() {
+        #expect(PaperCanvasMetrics.releaseDrawingPolicy(for: .pad) == .default)
+        #expect(PaperCanvasMetrics.releaseDrawingPolicy(for: .phone) == .anyInput)
     }
 }

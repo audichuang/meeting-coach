@@ -52,17 +52,18 @@ struct PaperCanvasView: UIViewRepresentable {
     var onDrawingChange: ((PKDrawing) -> Void)?
 
     /// On the simulator there is no Apple Pencil, so DEBUG simulator/UI-test
-    /// builds enable `.anyInput`. Release builds always stay `.default`
-    /// (Pencil-first: finger scrolls/selects as PencilKit default).
+    /// builds enable `.anyInput`. Release builds follow
+    /// `PaperCanvasMetrics.releaseDrawingPolicy(for:)`.
     static var defaultDrawingPolicy: PKCanvasViewDrawingPolicy {
+        let release = PaperCanvasMetrics.releaseDrawingPolicy(for: UIDevice.current.userInterfaceIdiom)
         #if DEBUG
         #if targetEnvironment(simulator)
         return .anyInput
         #else
-        return ProcessInfo.processInfo.arguments.contains("UI-Testing-AllowAnyCanvasInput") ? .anyInput : .default
+        return ProcessInfo.processInfo.arguments.contains("UI-Testing-AllowAnyCanvasInput") ? .anyInput : release
         #endif
         #else
-        return .default
+        return release
         #endif
     }
 

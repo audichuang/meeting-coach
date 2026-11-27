@@ -9,6 +9,7 @@
 
 import CoreGraphics
 import Foundation
+import PencilKit
 import UIKit
 
 enum PaperCanvasMetrics {
@@ -60,10 +61,16 @@ enum PaperCanvasMetrics {
         return paperArea / totalArea
     }
 
-    /// Paper recording screen is iPad-only because Release PencilKit
-    /// `.default` drawing policy accepts only Apple Pencil; iPhone keeps
-    /// the legacy dark recording screen (with the coach panel when active).
+    /// The paper recording screen is used on iPad and iPhone; other idioms
+    /// keep the legacy dark recording screen.
     static func usesPaperScreen(for idiom: UIUserInterfaceIdiom) -> Bool {
-        idiom == .pad
+        idiom == .pad || idiom == .phone
+    }
+
+    /// Release drawing policy for an editable canvas. iPad stays Pencil-first
+    /// (`.default`: Pencil writes, a finger scrolls); an iPhone has no Pencil,
+    /// so a finger must write there (scrolling takes two fingers).
+    static func releaseDrawingPolicy(for idiom: UIUserInterfaceIdiom) -> PKCanvasViewDrawingPolicy {
+        idiom == .pad ? .default : .anyInput
     }
 }

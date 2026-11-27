@@ -92,7 +92,7 @@ private struct RecordingSessionPresenter: ViewModifier {
     /// text field (the chat composer, search) and the keyboard.
     @State private var placement = RecordingMiniBarPlacement()
 
-    private var isPad: Bool {
+    private var usesPaperScreen: Bool {
         PaperCanvasMetrics.usesPaperScreen(for: UIDevice.current.userInterfaceIdiom)
     }
 
@@ -111,10 +111,10 @@ private struct RecordingSessionPresenter: ViewModifier {
             .environment(placement)
             .kurnAnimation(.spring(duration: 0.35), value: session.isExpanded)
 
-        // On iPad the paper recording screen fills the entire viewport (and
+        // The paper recording screen (iPad and iPhone) fills the entire viewport (and
         // avoids sheet pull-to-dismiss gestures fighting PencilKit strokes).
         let presented = Group {
-            if isPad {
+            if usesPaperScreen {
                 base.fullScreenCover(isPresented: presentedBinding) {
                     RecorderView(session: session)
                 }

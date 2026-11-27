@@ -222,6 +222,54 @@ final class PaperRecordingLayoutUITests: XCTestCase {
         try saveScreenshot(named: "portrait-paper-collapsed-stopped", to: shotDir)
     }
 
+    /// iPhone gets the same paper screen: paper fills portrait with the coach
+    /// collapsed to one line, a stroke enables undo, and landscape puts the
+    /// coach beside the paper.
+    func testPaperShowsOnIPhoneWithCollapsedCoach() throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            throw XCTSkip("Paper iPhone layout test runs on iPhone simulators")
+        }
+        let shotDir = ProcessInfo.processInfo.environment["MC_SHOT_DIR"]
+
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "UI-Testing-Screenshots",
+            "UI-Testing-DisableAnimations",
+            "-AppleLanguages", "(zh-Hant)",
+            "-AppleLocale", "zh_TW"
+        ]
+        app.launchEnvironment["KURN_DEBUG_COACH_PREVIEW"] = "1"
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+
+        let recordButton = app.buttons["meetings.record"].firstMatch
+        XCTAssertTrue(recordButton.waitForExistence(timeout: 15), "Record button should be reachable")
+        recordButton.tap()
+
+        let canvas = app.scrollViews["paper.canvas"].firstMatch
+        XCTAssertTrue(canvas.waitForExistence(timeout: 15), "iPhone should show the paper canvas")
+        let collapsedBar = app.buttons["coach.portrait.bar"].firstMatch
+        XCTAssertTrue(collapsedBar.waitForExistence(timeout: 15), "Portrait coach should collapse to a single-line bar")
+
+        let windowFrame = app.windows.firstMatch.frame
+        let areaRatio = (canvas.frame.width * canvas.frame.height) / max(1, windowFrame.width * windowFrame.height)
+        XCTAssertGreaterThan(areaRatio, 0.6, "Paper should dominate the iPhone portrait screen (got \(areaRatio))")
+        XCTAssertLessThan(collapsedBar.frame.height / max(1, windowFrame.height), 0.1, "Collapsed bar must stay small")
+
+        drawStroke(on: canvas, from: CGVector(dx: 0.16, dy: 0.30), to: CGVector(dx: 0.72, dy: 0.32))
+        drawStroke(on: canvas, from: CGVector(dx: 0.18, dy: 0.38), to: CGVector(dx: 0.60, dy: 0.40))
+        let undoButton = app.buttons["paper.tool.undo"].firstMatch
+        XCTAssertTrue(undoButton.exists && undoButton.isEnabled, "Undo should be enabled after drawing on iPhone")
+        Thread.sleep(forTimeInterval: 1.0)
+        try saveScreenshot(named: "iphone-portrait-paper-collapsed", to: shotDir)
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let coachColumn = app.otherElements["coach.landscape.column"].firstMatch
+        XCTAssertTrue(coachColumn.waitForExistence(timeout: 10), "Coach column should sit beside paper in landscape")
+        Thread.sleep(forTimeInterval: 1.0)
+        try saveScreenshot(named: "iphone-landscape-paper-coach", to: shotDir)
+    }
+
     private func drawStroke(on element: XCUIElement, from start: CGVector, to end: CGVector) {
         let startCoord = element.coordinate(withNormalizedOffset: start)
         let endCoord = element.coordinate(withNormalizedOffset: end)
