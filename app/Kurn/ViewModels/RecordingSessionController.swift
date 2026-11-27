@@ -178,10 +178,6 @@ final class RecordingSessionController {
             modelContext: modelContext,
             elapsed: { [weak recorder] in recorder?.elapsed ?? 0 }
         )
-        #else
-        let recorder = AudioRecorderService()
-        let debugPreview: (session: MeetingCoachSession, liveTranscription: LiveTranscriptionService)? = nil
-        #endif
         return RecorderViewModel(
             meeting: meeting,
             modelContext: modelContext,
@@ -199,8 +195,28 @@ final class RecordingSessionController {
             ),
             recorder: recorder,
             liveTranscription: debugPreview?.liveTranscription,
+            liveDiarizer: debugPreview?.liveDiarizer,
             coachSession: debugPreview?.session,
             onRecordingSaved: { [weak settings] in settings?.recordRecordingCompleted() }
         )
+        #else
+        return RecorderViewModel(
+            meeting: meeting,
+            modelContext: modelContext,
+            defaultMode: settings.transcriptionEngine.storageMode,
+            options: RecorderOptions(
+                micPickup: settings.micPickup,
+                audioQuality: settings.audioQuality,
+                alwaysUseBuiltInMic: settings.alwaysUseBuiltInMic,
+                liveTranscriptionEnabled: settings.liveTranscriptionEnabled,
+                liveTranscriptionModelsConsented: settings.selectedFluidAudioLiveModelsConsented,
+                largeTransferPolicy: settings.largeTransferPolicy,
+                hideLiveActivityMeetingTitle: settings.hideLiveActivityMeetingTitle,
+                liveTranscriptionModel: settings.fluidAudioLiveModel,
+                coach: MeetingCoachConfiguration.resolve(settings: settings)
+            ),
+            onRecordingSaved: { [weak settings] in settings?.recordRecordingCompleted() }
+        )
+        #endif
     }
 }

@@ -93,7 +93,20 @@ private actor DebugPreviewStreamingEngine: StreamingAsrManager {
 }
 
 @MainActor
+struct DebugCoachPreviewBundle {
+    let session: MeetingCoachSession
+    let liveTranscription: LiveTranscriptionService
+    let liveDiarizer: LiveSpeakerDiarizationService?
+}
+
+@MainActor
 enum DebugCoachPreview {
+    private struct SeedTurn {
+        let start: TimeInterval
+        let end: TimeInterval
+        let text: String
+    }
+
     static var isEnabled: Bool {
         ProcessInfo.processInfo.environment["KURN_DEBUG_COACH_PREVIEW"] == "1"
     }
@@ -102,24 +115,41 @@ enum DebugCoachPreview {
         meeting: Meeting,
         modelContext: ModelContext,
         elapsed: @escaping @MainActor () -> TimeInterval
-    ) -> (session: MeetingCoachSession, liveTranscription: LiveTranscriptionService)? {
+    ) -> DebugCoachPreviewBundle? {
         guard isEnabled, let baseURL = URL(string: "https://localhost.invalid/v1") else { return nil }
+        let env = ProcessInfo.processInfo.environment
         let configuration = MeetingCoachConfiguration(
             userName: "測試者",
             budgetUSD: 10,
             backend: CoachBackend(baseURL: baseURL, token: "preview", viaWorker: true)
         )
-        let stopMode = ProcessInfo.processInfo.environment["KURN_DEBUG_COACH_PREVIEW_STOP"]
+        let stopMode = env["KURN_DEBUG_COACH_PREVIEW_STOP"]
         let stopStatusCode: Int? = switch stopMode {
         case "quota": 402
         case "unauthorized": 401
         default: nil
+        }
+        let useLiveDiarizer = env["KURN_DEBUG_COACH_PREVIEW_LIVE_DIARIZER"] == "1"
+        let simulateUninstalled = env["KURN_DEBUG_COACH_PREVIEW_UNINSTALLED"] == "1"
+        let liveDiarizer: LiveSpeakerDiarizationService? = useLiveDiarizer ? LiveSpeakerDiarizationService() : nil
+        let speakerLookup: (@Sendable (TimeInterval, TimeInterval) -> String?)?
+        if let diarizer = liveDiarizer {
+            speakerLookup = { [weak diarizer] start, end in
+                diarizer?.dominantSpeaker(from: start, to: end)
+            }
+        } else {
+            speakerLookup = nil
         }
         let session = MeetingCoachSession(
             meeting: meeting,
             modelContext: modelContext,
             configuration: configuration,
             llm: DebugPreviewCoachLLM(stopStatusCode: stopStatusCode),
+            speakerLookup: speakerLookup,
+            isSpeakerModelInstalled: {
+                if simulateUninstalled { return false }
+                return useLiveDiarizer ? FluidAudioModelAvailability.isStreamingDiarizationInstalled : true
+            },
             elapsed: elapsed
         )
         let live = LiveTranscriptionService(engineFactory: { [weak session] _, _ in
@@ -128,32 +158,37 @@ enum DebugCoachPreview {
                     guard let session else { return }
                     session.eventSink.yield(.connection(.live))
                     session.eventSink.yield(.billedSeconds(35))
+                    if useLiveDiarizer {
+                        await emitLiveDiarizedTurns(into: session, elapsed: elapsed)
+                        return
+                    }
+                    let labelA: String? = simulateUninstalled ? nil : "A"
+                    let labelB: String? = simulateUninstalled ? nil : "B"
                     session.eventSink.yield(.final(LiveTranscriptSegment(
                         start: 4,
                         end: 14,
                         text: "這週我們先把核心流程收斂，再決定下週的驗收項目。",
                         arrivedAt: 14,
-                        speakerLabel: "A"
+                        speakerLabel: labelA
                     )))
                     session.eventSink.yield(.final(LiveTranscriptSegment(
                         start: 15,
                         end: 28,
                         text: "如果測試窗口只剩兩天，介面調整可能要拆到下一個版本。",
                         arrivedAt: 28,
-                        speakerLabel: "B"
+                        speakerLabel: labelB
                     )))
                     session.eventSink.yield(.final(LiveTranscriptSegment(
                         start: 29,
                         end: 40,
                         text: "那我們今天就先確認最小可交付範圍。",
                         arrivedAt: 40,
-                        speakerLabel: "A"
+                        speakerLabel: labelA
                     )))
                     for _ in 0..<20 where session.segments.count < 3 {
                         try? await Task.sleep(for: .milliseconds(25))
                     }
-                    if let presetSelf = ProcessInfo.processInfo.environment["KURN_DEBUG_COACH_PREVIEW_SELF"],
-                       !presetSelf.isEmpty {
+                    if let presetSelf = env["KURN_DEBUG_COACH_PREVIEW_SELF"], !presetSelf.isEmpty {
                         session.markSelfSpeaker(presetSelf)
                     }
                     await session.askForCard()
@@ -165,7 +200,32 @@ enum DebugCoachPreview {
             try await engine.loadModels()
             return engine
         })
-        return (session, live)
+        return DebugCoachPreviewBundle(session: session, liveTranscription: live, liveDiarizer: liveDiarizer)
+    }
+
+    private static func emitLiveDiarizedTurns(
+        into session: MeetingCoachSession,
+        elapsed: @escaping @MainActor () -> TimeInterval
+    ) async {
+        let turns: [SeedTurn] = [
+            SeedTurn(start: 0, end: 6, text: "這週我們先把核心流程收斂，再決定下週的驗收項目。"),
+            SeedTurn(start: 6, end: 12, text: "如果測試窗口只剩兩天，介面調整可能要拆到下一個版本。"),
+            SeedTurn(start: 12, end: 18, text: "那我們今天就先確認最小可交付範圍，避免後面返工。"),
+            SeedTurn(start: 18, end: 24, text: "同意，我下午把驗收清單整理好同步給大家。")
+        ]
+        for turn in turns {
+            while elapsed() < turn.end + 1.5 {
+                try? await Task.sleep(for: .milliseconds(250))
+                if session.isCancelled { return }
+            }
+            session.eventSink.yield(.final(LiveTranscriptSegment(
+                start: turn.start,
+                end: turn.end,
+                text: turn.text,
+                arrivedAt: turn.end + 0.5,
+                speakerLabel: nil
+            )))
+        }
     }
 }
 #endif
