@@ -383,6 +383,7 @@ struct PaperNoteTests {
         #expect(canvas.drawing.strokes.count == 2)
         #expect(canvas.contentSize.height >= 20_000 * max(0.25, canvas.zoomScale))
 
+        window.rootViewController = nil
         window.isHidden = true
     }
 

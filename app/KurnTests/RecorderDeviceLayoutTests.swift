@@ -63,44 +63,62 @@ struct RecorderDeviceLayoutTests {
 
     @Test func iPhoneWithCoachDoesNotUsePaperCanvas() async throws {
         let (container, session) = try makeCoachedSession()
-        _ = container
-        defer { session.discard() }
+        defer {
+            session.discard()
+            _ = container
+        }
 
         #expect(session.viewModel?.coach != nil)
 
-        let hosting = UIHostingController(rootView: NavigationStack { RecorderView(session: session, idiom: .phone) })
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
-        window.rootViewController = hosting
-        window.makeKeyAndVisible()
-        hosting.view.layoutIfNeeded()
-        try await Task.sleep(for: .milliseconds(50))
-        hosting.view.layoutIfNeeded()
+        do {
+            let hosting = UIHostingController(rootView: NavigationStack { RecorderView(session: session, idiom: .phone) })
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+            defer {
+                window.rootViewController = nil
+                window.isHidden = true
+            }
+            window.rootViewController = hosting
+            window.makeKeyAndVisible()
+            hosting.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(50))
+            hosting.view.layoutIfNeeded()
 
-        #expect(
-            findSubview(of: PKCanvasView.self, in: hosting.view) == nil,
-            "iPhone with meeting coach must keep the legacy recording screen and never mount PKCanvasView"
-        )
-        window.isHidden = true
+            #expect(
+                findSubview(of: PKCanvasView.self, in: hosting.view) == nil,
+                "iPhone with meeting coach must keep the legacy recording screen and never mount PKCanvasView"
+            )
+        }
+        session.discard()
+        await Task.yield()
     }
 
     @Test func iPadWithCoachUsesPaperCanvas() async throws {
         let (container, session) = try makeCoachedSession()
-        _ = container
-        defer { session.discard() }
+        defer {
+            session.discard()
+            _ = container
+        }
 
-        let hosting = UIHostingController(rootView: RecorderView(session: session, idiom: .pad))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 744, height: 1_133))
-        window.rootViewController = hosting
-        window.makeKeyAndVisible()
-        hosting.view.layoutIfNeeded()
-        try await Task.sleep(for: .milliseconds(50))
-        hosting.view.layoutIfNeeded()
+        do {
+            let hosting = UIHostingController(rootView: RecorderView(session: session, idiom: .pad))
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 744, height: 1_133))
+            defer {
+                window.rootViewController = nil
+                window.isHidden = true
+            }
+            window.rootViewController = hosting
+            window.makeKeyAndVisible()
+            hosting.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(50))
+            hosting.view.layoutIfNeeded()
 
-        #expect(
-            findSubview(of: PKCanvasView.self, in: hosting.view) != nil,
-            "iPad must mount the PencilKit paper recording screen"
-        )
-        window.isHidden = true
+            #expect(
+                findSubview(of: PKCanvasView.self, in: hosting.view) != nil,
+                "iPad must mount the PencilKit paper recording screen"
+            )
+        }
+        session.discard()
+        await Task.yield()
     }
 
     @Test func usesPaperScreenPolicyRestrictsPaperToIPad() {
