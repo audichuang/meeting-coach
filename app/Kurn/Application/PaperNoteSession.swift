@@ -3,9 +3,10 @@
 //  Kurn
 //
 //  Owns handwritten-note persistence for one live recording session.
-//  Completely off the audio path: writing strokes only schedules a debounced
-//  SwiftData save on the main actor and reads the recorder's current elapsed
-//  time as an optional export anchor. Failures are logged and never interrupt
+//  Completely off the audio path: writing strokes schedules a debounced
+//  background serialization of a `PKDrawing` value snapshot (at most one
+//  serialization in flight, coalescing rapid edits) and applies the bytes to
+//  SwiftData on the main actor. Failures are logged and never interrupt
 //  recording.
 //
 
@@ -15,9 +16,24 @@ import Observation
 import PencilKit
 import SwiftData
 
+/// Value snapshot of a `PKDrawing` sent off the main actor for encoding.
+/// `PKDrawing` is a copy-on-write value type whose `dataRepresentation()`
+/// only reads its immutable stroke data.
+struct PaperDrawingSnapshot: @unchecked Sendable {
+    let drawing: PKDrawing
+    let strokeCount: Int
+
+    init(_ drawing: PKDrawing) {
+        self.drawing = drawing
+        self.strokeCount = drawing.strokes.count
+    }
+}
+
 @MainActor
 @Observable
 final class PaperNoteSession {
+    typealias DrawingSerializer = @Sendable (PaperDrawingSnapshot) async -> Data
+
     /// Current drawing in logical page coordinates.
     private(set) var drawing: PKDrawing
     /// Logical page width in points that strokes are authored against.
@@ -37,10 +53,25 @@ final class PaperNoteSession {
     @ObservationIgnored private let now: @MainActor () -> Date
     @ObservationIgnored private let debounceInterval: Duration
     @ObservationIgnored private let persist: @MainActor (ModelContext) -> AppError?
+    @ObservationIgnored private let serialize: DrawingSerializer
     @ObservationIgnored private var note: PaperNote?
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
+    @ObservationIgnored private var serializationTask: Task<Void, Never>?
+    @ObservationIgnored private var drawingGeneration: UInt64 = 0
+    @ObservationIgnored private var persistedGeneration: UInt64 = 0
+    @ObservationIgnored private var needsFollowUpFlush = false
     @ObservationIgnored private var pendingBatchOffset: TimeInterval?
+    @ObservationIgnored private var inFlightBatchOffset: TimeInterval?
     @ObservationIgnored private var isCancelled = false
+
+    nonisolated static func serializeOffMain(
+        _ snapshot: PaperDrawingSnapshot,
+        encode: @escaping @Sendable (PaperDrawingSnapshot) -> Data = { $0.drawing.dataRepresentation() }
+    ) async -> Data {
+        await Task.detached(priority: .utility) {
+            encode(snapshot)
+        }.value
+    }
 
     init(
         meeting: Meeting,
@@ -49,7 +80,8 @@ final class PaperNoteSession {
         debounceInterval: Duration = .milliseconds(500),
         elapsed: @escaping @MainActor () -> TimeInterval,
         now: @escaping @MainActor () -> Date = { Date() },
-        persist: @escaping @MainActor (ModelContext) -> AppError? = { $0.saveOrError() }
+        persist: @escaping @MainActor (ModelContext) -> AppError? = { $0.saveOrError() },
+        serialize: @escaping DrawingSerializer = { await PaperNoteSession.serializeOffMain($0) }
     ) {
         self.meeting = meeting
         self.modelContext = modelContext
@@ -58,6 +90,7 @@ final class PaperNoteSession {
         self.elapsed = elapsed
         self.now = now
         self.persist = persist
+        self.serialize = serialize
         self.drawing = PKDrawing()
     }
 
@@ -74,10 +107,11 @@ final class PaperNoteSession {
 
     /// Called by the PencilKit canvas delegate after strokes change.
     /// Stores the latest drawing in page coordinates and schedules a debounced
-    /// save without doing synchronous disk work on every stroke.
+    /// background serialization without doing synchronous disk work on every stroke.
     func drawingDidChange(_ newDrawing: PKDrawing) {
         guard !isCancelled else { return }
         drawing = newDrawing
+        drawingGeneration &+= 1
         hasUnsavedChanges = true
         if pendingBatchOffset == nil {
             pendingBatchOffset = max(0, elapsed())
@@ -85,29 +119,192 @@ final class PaperNoteSession {
         scheduleDebouncedSave()
     }
 
-    /// Immediately commits any pending drawing changes to SwiftData.
-    /// Safe to call repeatedly; a no-op when nothing changed or no recording
-    /// owns this session yet.
+    /// Requests an immediate off-main-actor serialization and save, coalescing
+    /// with any serialization already in flight so at most one runs at a time.
+    func requestFlush() {
+        startCoalescedBackgroundFlush()
+    }
+
+    /// Requests an off-main-actor flush and waits until the in-flight
+    /// serialization (and any coalesced follow-up) completes.
+    func flush() async {
+        startCoalescedBackgroundFlush()
+        while let task = serializationTask {
+            await task.value
+        }
+    }
+
+    /// Immediately commits any pending drawing changes to SwiftData synchronously.
+    /// Used by synchronous recording teardown (`finish()` / `stopAndSave()`);
+    /// safe to call repeatedly and a no-op when nothing changed.
     func flushNow() {
         debounceTask?.cancel()
         debounceTask = nil
+        serializationTask?.cancel()
+        serializationTask = nil
+        needsFollowUpFlush = false
+        if let inFlight = inFlightBatchOffset {
+            pendingBatchOffset = inFlight
+            inFlightBatchOffset = nil
+        }
+
         guard !isCancelled, hasUnsavedChanges, let recordingID else { return }
 
-        let strokeCount = drawing.strokes.count
-        if note == nil, strokeCount == 0 {
+        let snapshot = PaperDrawingSnapshot(drawing)
+        if note == nil, snapshot.strokeCount == 0 {
             hasUnsavedChanges = false
             pendingBatchOffset = nil
+            persistedGeneration = drawingGeneration
             return
         }
 
+        let batchOffset = pendingBatchOffset
+        pendingBatchOffset = nil
+        let data = snapshot.drawing.dataRepresentation()
+        if applySerializedDrawing(
+            data: data,
+            strokeCount: snapshot.strokeCount,
+            recordingID: recordingID,
+            generation: drawingGeneration,
+            batchOffset: batchOffset
+        ) {
+            hasUnsavedChanges = false
+        }
+    }
+
+    /// Flushes any pending strokes before recording finalization completes.
+    func finish() {
+        flushNow()
+    }
+
+    /// Cancels any pending debounced or in-flight write and detaches from SwiftData.
+    /// Callers deleting the `Recording` remove any persisted `PaperNote` row
+    /// through `MeetingLibrary.deleteRecordingRows`.
+    func cancel() {
+        isCancelled = true
+        debounceTask?.cancel()
+        debounceTask = nil
+        serializationTask?.cancel()
+        serializationTask = nil
+        needsFollowUpFlush = false
+        note = nil
+        recordingID = nil
+        hasUnsavedChanges = false
+        pendingBatchOffset = nil
+        inFlightBatchOffset = nil
+    }
+
+    private func scheduleDebouncedSave() {
+        debounceTask?.cancel()
+        guard recordingID != nil else { return }
+        let interval = debounceInterval
+        debounceTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: interval)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self?.startCoalescedBackgroundFlush()
+        }
+    }
+
+    private func startCoalescedBackgroundFlush() {
+        debounceTask?.cancel()
+        debounceTask = nil
+        guard !isCancelled, hasUnsavedChanges, recordingID != nil else { return }
+
+        if serializationTask != nil {
+            needsFollowUpFlush = true
+            return
+        }
+
+        let snapshot = PaperDrawingSnapshot(drawing)
+        if note == nil, snapshot.strokeCount == 0 {
+            hasUnsavedChanges = false
+            pendingBatchOffset = nil
+            persistedGeneration = drawingGeneration
+            return
+        }
+
+        let generation = drawingGeneration
+        let batchOffset = pendingBatchOffset
+        pendingBatchOffset = nil
+        inFlightBatchOffset = batchOffset
+        let serialize = self.serialize
+
+        serializationTask = Task { [weak self] in
+            let data = await serialize(snapshot)
+            guard !Task.isCancelled else { return }
+            self?.completeBackgroundFlush(
+                data: data,
+                strokeCount: snapshot.strokeCount,
+                generation: generation,
+                batchOffset: batchOffset
+            )
+        }
+    }
+
+    private func completeBackgroundFlush(
+        data: Data,
+        strokeCount: Int,
+        generation: UInt64,
+        batchOffset: TimeInterval?
+    ) {
+        serializationTask = nil
+        inFlightBatchOffset = nil
+
+        guard !isCancelled, let recordingID else { return }
+        guard generation > persistedGeneration else {
+            if hasUnsavedChanges, needsFollowUpFlush {
+                needsFollowUpFlush = false
+                startCoalescedBackgroundFlush()
+            }
+            return
+        }
+
+        let saved = applySerializedDrawing(
+            data: data,
+            strokeCount: strokeCount,
+            recordingID: recordingID,
+            generation: generation,
+            batchOffset: batchOffset
+        )
+        guard saved else {
+            needsFollowUpFlush = false
+            return
+        }
+
+        if drawingGeneration == persistedGeneration {
+            hasUnsavedChanges = false
+            needsFollowUpFlush = false
+        } else {
+            hasUnsavedChanges = true
+            if needsFollowUpFlush {
+                needsFollowUpFlush = false
+                startCoalescedBackgroundFlush()
+            } else if debounceTask == nil {
+                scheduleDebouncedSave()
+            }
+        }
+    }
+
+    private func applySerializedDrawing(
+        data: Data,
+        strokeCount: Int,
+        recordingID: UUID,
+        generation: UInt64,
+        batchOffset: TimeInterval?
+    ) -> Bool {
         let timestamp = now()
-        if let batchOffset = pendingBatchOffset, strokeCount > 0 {
+        var appendedAnchor = false
+        if let batchOffset, strokeCount > 0 {
             anchors.append(PaperStrokeAnchor(
                 strokeCount: strokeCount,
                 recordingOffset: batchOffset,
                 recordedAt: timestamp
             ))
-            pendingBatchOffset = nil
+            appendedAnchor = true
         }
 
         let target: PaperNote
@@ -126,48 +323,23 @@ final class PaperNoteSession {
             target = created
         }
 
-        target.drawingData = drawing.dataRepresentation()
+        target.drawingData = data
         target.anchors = anchors
         target.updatedAt = timestamp
 
         if let failure = persist(modelContext) {
             AppLog.persistence.atError.error("PaperNoteSession: save failed code=\(failure.logCode, privacy: .public)")
-            return
-        }
-        lastSavedAt = timestamp
-        hasUnsavedChanges = false
-    }
-
-    /// Flushes any pending strokes before recording finalization completes.
-    func finish() {
-        flushNow()
-    }
-
-    /// Cancels any pending debounced write and detaches from SwiftData.
-    /// Callers deleting the `Recording` remove any persisted `PaperNote` row
-    /// through `MeetingLibrary.deleteRecordingRows`.
-    func cancel() {
-        isCancelled = true
-        debounceTask?.cancel()
-        debounceTask = nil
-        note = nil
-        recordingID = nil
-        hasUnsavedChanges = false
-        pendingBatchOffset = nil
-    }
-
-    private func scheduleDebouncedSave() {
-        debounceTask?.cancel()
-        guard recordingID != nil else { return }
-        let interval = debounceInterval
-        debounceTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: interval)
-            } catch {
-                return
+            if appendedAnchor {
+                anchors.removeLast()
             }
-            guard !Task.isCancelled else { return }
-            self?.flushNow()
+            if pendingBatchOffset == nil {
+                pendingBatchOffset = batchOffset
+            }
+            return false
         }
+
+        persistedGeneration = generation
+        lastSavedAt = timestamp
+        return true
     }
 }

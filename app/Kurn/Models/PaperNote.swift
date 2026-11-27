@@ -31,7 +31,7 @@ final class PaperNote {
     var meeting: Meeting?
     var recordingID: UUID?
     /// `PKDrawing.dataRepresentation()` in page coordinates.
-    var drawingData: Data = Data()
+    @Attribute(.externalStorage) var drawingData: Data = Data()
     /// Logical page width in points that `drawingData` was authored against.
     var pageWidth: Double = PaperNote.defaultPageWidth
     /// JSON-encoded `[PaperStrokeAnchor]` carrying recording time offsets.

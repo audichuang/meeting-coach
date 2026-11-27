@@ -429,4 +429,192 @@ struct PaperNoteTests {
         }
         #expect(viewerDecodeCount == 2)
     }
+
+    // MARK: - External Storage & Off-Main Serialization
+
+    @Test func paperNoteDrawingDataUsesExternalStorage() throws {
+        let schema = Schema([PaperNote.self])
+        let entity = try #require(schema.entities.first { $0.name == "PaperNote" })
+        let drawingAttribute = try #require(entity.attributes.first { $0.name == "drawingData" })
+        #expect(drawingAttribute.options.contains(.externalStorage))
+    }
+
+    private nonisolated static func isCurrentThreadMain() -> Bool {
+        Thread.isMainThread
+    }
+
+    private final class GatedDrawingSerializer: @unchecked Sendable {
+        private let lock = NSLock()
+        private var active = 0
+        private var maxActive = 0
+        private var calls = 0
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var observedMainThread: [Bool] = []
+
+        var maxConcurrent: Int { lock.withLock { maxActive } }
+        var callCount: Int { lock.withLock { calls } }
+        var ranOffMainThread: Bool { lock.withLock { !observedMainThread.isEmpty && observedMainThread.allSatisfy { !$0 } } }
+
+        func serialize(_ snapshot: PaperDrawingSnapshot) async -> Data {
+            await withCheckedContinuation { continuation in
+                lock.withLock {
+                    calls += 1
+                    active += 1
+                    maxActive = max(maxActive, active)
+                    waiters.append(continuation)
+                }
+            }
+            let data = await PaperNoteSession.serializeOffMain(snapshot) { snap in
+                let onMain = PaperNoteTests.isCurrentThreadMain()
+                self.lock.withLock { self.observedMainThread.append(onMain) }
+                return snap.drawing.dataRepresentation()
+            }
+            lock.withLock {
+                active -= 1
+            }
+            return data
+        }
+
+        func releaseNext() {
+            let next: CheckedContinuation<Void, Never>? = lock.withLock {
+                guard !waiters.isEmpty else { return nil }
+                return waiters.removeFirst()
+            }
+            next?.resume()
+        }
+
+        var hasWaitingCall: Bool {
+            lock.withLock { !waiters.isEmpty }
+        }
+    }
+
+    @Test func defaultSerializerRunsOffMainActorAndCoalescesInFlightWrites() async throws {
+        // Verify production default serializer (`serializeOffMain`) runs off the main thread.
+        let sample = makeSampleDrawing()
+        let offMainLock = NSLock()
+        nonisolated(unsafe) var serializedOnMain: Bool?
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Off-Main")
+        context.insert(meeting)
+        try context.save()
+
+        let offMainSession = PaperNoteSession(
+            meeting: meeting,
+            modelContext: context,
+            debounceInterval: .milliseconds(20),
+            elapsed: { 12 },
+            serialize: { snapshot in
+                await PaperNoteSession.serializeOffMain(snapshot) { snap in
+                    let onMain = PaperNoteTests.isCurrentThreadMain()
+                    offMainLock.withLock { serializedOnMain = onMain }
+                    return snap.drawing.dataRepresentation()
+                }
+            }
+        )
+        offMainSession.begin(recordingID: UUID())
+        offMainSession.drawingDidChange(sample)
+        await offMainSession.flush()
+        #expect(offMainLock.withLock { serializedOnMain } == false)
+        #expect(!offMainSession.hasUnsavedChanges)
+
+        // Verify rapid edits while one serialization is in flight coalesce into at most one in-flight task.
+        let gate = GatedDrawingSerializer()
+        let coalescedSession = PaperNoteSession(
+            meeting: meeting,
+            modelContext: context,
+            debounceInterval: .milliseconds(10),
+            elapsed: { 25 },
+            serialize: { snapshot in await gate.serialize(snapshot) }
+        )
+        let recordingID = UUID()
+        coalescedSession.begin(recordingID: recordingID)
+
+        let stroke1 = makeSampleDrawing(offsetY: 120)
+        let stroke2 = PKDrawing(strokes: stroke1.strokes + makeSampleDrawing(offsetY: 220).strokes)
+        let stroke3 = PKDrawing(strokes: stroke2.strokes + makeSampleDrawing(offsetY: 320).strokes)
+
+        coalescedSession.drawingDidChange(stroke1)
+        coalescedSession.requestFlush()
+        for _ in 0..<50 where !gate.hasWaitingCall {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(gate.callCount == 1)
+        #expect(gate.maxConcurrent == 1)
+
+        // Multiple edits + flush triggers while #1 is in flight must never spawn a 2nd concurrent serialization.
+        coalescedSession.drawingDidChange(stroke2)
+        coalescedSession.requestFlush()
+        coalescedSession.drawingDidChange(stroke3)
+        coalescedSession.requestFlush()
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(gate.callCount == 1)
+        #expect(gate.maxConcurrent == 1)
+
+        // Releasing #1 triggers one coalesced follow-up serialization for stroke3.
+        gate.releaseNext()
+        for _ in 0..<50 where !gate.hasWaitingCall {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(gate.callCount == 2)
+        #expect(gate.maxConcurrent == 1)
+
+        gate.releaseNext()
+        for _ in 0..<50 where coalescedSession.hasUnsavedChanges {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        #expect(!coalescedSession.hasUnsavedChanges)
+        #expect(gate.callCount == 2)
+        #expect(gate.maxConcurrent == 1)
+        #expect(gate.ranOffMainThread)
+
+        let notes = try context.fetch(FetchDescriptor<PaperNote>(predicate: #Predicate { $0.recordingID == recordingID }))
+        #expect(notes.count == 1)
+        #expect(notes.first?.loadDrawing().strokes.count == 3)
+    }
+
+    @Test func failedSaveKeepsPendingStateAndRetriesWithoutDuplicateAnchors() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Retry")
+        context.insert(meeting)
+        try context.save()
+
+        var shouldFail = true
+        let clock = Date(timeIntervalSince1970: 1_760_000_100)
+        let session = PaperNoteSession(
+            meeting: meeting,
+            modelContext: context,
+            debounceInterval: .milliseconds(20),
+            elapsed: { 33 },
+            now: { clock },
+            persist: { ctx in
+                if shouldFail {
+                    return .persistenceFailed("simulated disk error")
+                }
+                return ctx.saveOrError()
+            }
+        )
+        let recordingID = UUID()
+        session.begin(recordingID: recordingID)
+        session.drawingDidChange(makeSampleDrawing())
+        await session.flush()
+
+        #expect(session.hasUnsavedChanges)
+        #expect(session.lastSavedAt == nil)
+        #expect(session.anchors.isEmpty)
+
+        shouldFail = false
+        await session.flush()
+
+        #expect(!session.hasUnsavedChanges)
+        #expect(session.lastSavedAt == clock)
+        #expect(session.anchors.count == 1)
+        #expect(session.anchors.first?.recordingOffset == 33)
+        let saved = try #require(
+            try context.fetch(FetchDescriptor<PaperNote>(predicate: #Predicate { $0.recordingID == recordingID })).first
+        )
+        #expect(saved.loadDrawing().strokes.count == 1)
+    }
 }
