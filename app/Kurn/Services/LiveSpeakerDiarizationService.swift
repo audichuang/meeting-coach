@@ -59,11 +59,6 @@ private final class LiveSpeakerTimelineBox: Sendable {
         }
     }
 
-    /// The session has ended, so whatever spans exist are final.
-    func markComplete() {
-        mutex.withLock { $0.finalizedThrough = .infinity }
-    }
-
     /// `nil` until every frame up to `end` is final, so a label is never decided on tentative audio.
     func dominantSpeaker(from start: TimeInterval, to end: TimeInterval) -> String? {
         mutex.withLock { end <= $0.finalizedThrough ? $0.timeline.dominantSpeaker(from: start, to: end) : nil }
@@ -184,7 +179,6 @@ final class LiveSpeakerDiarizationService {
                     "LiveSpeakerDiarizationService: finish failed code=\(error.publicLogCode, privacy: .public)"
                 )
             }
-            timelineBox.markComplete()
             onUpdate?()
         }
         await activeEngine.cleanup()

@@ -47,12 +47,14 @@ private final class RecordingCoachLLM: CoachLLM, @unchecked Sendable {
 private actor StubLiveDiarizerEngine: LiveSpeakerDiarizerEngine {
     private var updates: [LiveDiarizerUpdate]
     private var finishUpdate: LiveDiarizerUpdate?
+    private let finishError: (any Error)?
     private(set) var processedSampleCounts: [Int] = []
     private(set) var didCleanup = false
 
-    init(updates: [LiveDiarizerUpdate], finishUpdate: LiveDiarizerUpdate? = nil) {
+    init(updates: [LiveDiarizerUpdate], finishUpdate: LiveDiarizerUpdate? = nil, finishError: (any Error)? = nil) {
         self.updates = updates
         self.finishUpdate = finishUpdate
+        self.finishError = finishError
     }
 
     func process(samples: [Float], sampleRate: Double) async throws -> LiveDiarizerUpdate? {
@@ -62,6 +64,7 @@ private actor StubLiveDiarizerEngine: LiveSpeakerDiarizerEngine {
     }
 
     func finish() async throws -> LiveDiarizerUpdate? {
+        if let finishError { throw finishError }
         let next = finishUpdate
         finishUpdate = nil
         return next
@@ -219,7 +222,8 @@ struct MeetingCoachSelfMarkTests {
             ],
             finishUpdate: LiveDiarizerUpdate(
                 finalized: [LiveSpeakerSpan(speakerSlot: 0, start: 18, end: 25)],
-                tentative: []
+                tentative: [],
+                finalizedThrough: 25
             )
         )
         let service = LiveSpeakerDiarizationService(
@@ -242,6 +246,38 @@ struct MeetingCoachSelfMarkTests {
         #expect(finishUpdates == 1)
         #expect(service.dominantSpeaker(from: 18, to: 25) == "A")
         #expect(await stub.didCleanup)
+    }
+
+    @Test func stopKeepsOnlyCoverageTheEngineFinalized() async throws {
+        struct FinishFailure: Error {}
+        let partial = LiveDiarizerUpdate(
+            finalized: [LiveSpeakerSpan(speakerSlot: 0, start: 0, end: 8)],
+            tentative: [LiveSpeakerSpan(speakerSlot: 0, start: 8, end: 20)],
+            finalizedThrough: 8
+        )
+        for finish in [
+            StubLiveDiarizerEngine(updates: [partial], finishError: FinishFailure()),
+            // Backlog dropped at stop: finish() only finalizes what the engine was fed.
+            StubLiveDiarizerEngine(
+                updates: [partial],
+                finishUpdate: LiveDiarizerUpdate(
+                    finalized: [LiveSpeakerSpan(speakerSlot: 0, start: 8, end: 12)],
+                    tentative: [],
+                    finalizedThrough: 12
+                )
+            )
+        ] {
+            let service = LiveSpeakerDiarizationService(isInstalled: { true }, engineFactory: { finish })
+            var updates = 0
+            await service.start(onUpdate: { updates += 1 })
+            service.append(try makeBuffer())
+            await waitUntil { updates >= 1 }
+
+            await service.stop(discarding: false)
+
+            #expect(service.dominantSpeaker(from: 0, to: 8) == "A")
+            #expect(service.dominantSpeaker(from: 0, to: 20) == nil)
+        }
     }
 
     @Test func liveDiarizerReturnsNilWhenModelIsNotInstalled() async throws {
