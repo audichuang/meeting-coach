@@ -152,6 +152,93 @@ private final class RetryingJudgeCoachLLM: CoachLLM, @unchecked Sendable {
     }
 }
 
+/// Holds an ask (`emit_suggestion`) or wrap-up (`emit_wrapup`) call until
+/// released (optionally cancelling on task cancellation to model retry backoff
+/// in `LLMHTTP.sendValidated`, or returning a late response even if cancelled).
+/// Judge calls return HTTP 402 so a test can trigger `stopAI(.quota)` while
+/// ask or wrap-up is in flight.
+private final class GatedActionCoachLLM: CoachLLM, @unchecked Sendable {
+    private let lock = NSLock()
+    private let targetTool: String
+    private let cancelDuringWait: Bool
+    private var recordedCalls: [String] = []
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var waiting = false
+    private var released = false
+
+    init(targetTool: String, cancelDuringWait: Bool) {
+        self.targetTool = targetTool
+        self.cancelDuringWait = cancelDuringWait
+    }
+
+    var calls: [String] { lock.withLock { recordedCalls } }
+    var isWaiting: Bool { lock.withLock { waiting } }
+
+    func release() {
+        let current = lock.withLock { () -> CheckedContinuation<Void, Error>? in
+            released = true
+            let cont = continuation
+            continuation = nil
+            return cont
+        }
+        current?.resume()
+    }
+
+    func call(model: String, instructions: String, input: String, tools: [CoachTool], force: String?) async throws -> CoachCallResult {
+        let name = tools[0].name
+        if name == "judge" {
+            lock.withLock { recordedCalls.append("judge") }
+            throw AppError.apiError(statusCode: 402, message: "quota")
+        }
+        guard name == targetTool else {
+            lock.withLock { recordedCalls.append(name) }
+            return CoachCallResult(calls: [], usage: CoachTokenUsage(input: 100, cached: 0, output: 10))
+        }
+        lock.withLock { recordedCalls.append("\(name)#1") }
+        if cancelDuringWait {
+            try await withTaskCancellationHandler {
+                try await waitUntilReleased(checkTaskCancellation: true)
+            } onCancel: {
+                let current = self.lock.withLock { () -> CheckedContinuation<Void, Error>? in
+                    let cont = self.continuation
+                    self.continuation = nil
+                    return cont
+                }
+                current?.resume(throwing: CancellationError())
+            }
+            try Task.checkCancellation()
+            lock.withLock { recordedCalls.append("\(name)#2") }
+        } else {
+            try await waitUntilReleased(checkTaskCancellation: false)
+        }
+        let args: String = name == "emit_wrapup"
+            ? #"{"common_goal":"g","disagreements":"d","open_questions":"o","next_steps":"n","spoken_text":"收尾"}"#
+            : #"{"short_text":"先對齊目標？","reason":"目標不同","evidence_start":0,"evidence_end":1,"category":"clarify"}"#
+        return CoachCallResult(
+            calls: [CoachToolCall(name: name, arguments: Data(args.utf8))],
+            usage: CoachTokenUsage(input: 1_000, cached: 0, output: 100)
+        )
+    }
+
+    private func waitUntilReleased(checkTaskCancellation: Bool) async throws {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            enum Action { case wait, resume, cancel }
+            let action: Action = lock.withLock {
+                waiting = true
+                if checkTaskCancellation && Task.isCancelled { return .cancel }
+                if released { return .resume }
+                continuation = cont
+                return .wait
+            }
+            switch action {
+            case .wait: break
+            case .resume: cont.resume()
+            case .cancel: cont.resume(throwing: CancellationError())
+            }
+        }
+    }
+}
+
 extension CoachBackend {
     static let test = CoachBackend(baseURL: URL(string: "https://worker.test/v1")!, token: "mc_test", viaWorker: true)
 }
@@ -349,6 +436,144 @@ struct MeetingCoachSessionTests {
         }
 
         #expect(llm.calls == ["judge#1", "emit_suggestion"])
+        await coach.finish(at: 180)
+    }
+
+    @Test func stopAICancelsInFlightAskRetryWithoutSendingAnotherAttempt() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let llm = GatedActionCoachLLM(targetTool: "emit_suggestion", cancelDuringWait: true)
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "志明", budgetUSD: 10, backend: .test),
+            llm: llm, elapsed: { 150 }
+        )
+        coach.begin(recordingID: UUID())
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 0, end: 20, text: "大家好", arrivedAt: 20)))
+        await waitUntil { coach.transcriptAvailable }
+
+        let ask = Task { await coach.askForCard() }
+        await waitUntil { llm.isWaiting }
+
+        // A triggered judge hits HTTP 402 -> stopAI(.quota) while ask is in retry backoff.
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 130, end: 150, text: "志明你覺得呢", arrivedAt: 150)))
+        await waitUntil { coach.stopReason == .quota }
+
+        llm.release()
+        await ask.value
+
+        let record = try #require(try context.fetch(FetchDescriptor<CoachRecord>()).first)
+        #expect(!llm.calls.contains("emit_suggestion#2"))
+        #expect(coach.ledgers.isEmpty)
+        #expect(coach.currentCard == nil)
+        #expect(coach.cost.totalUSD == 0)
+        #expect(record.ledgers.isEmpty)
+        #expect(record.costUSD == 0)
+        #expect(!coach.isAsking)
+        await coach.finish(at: 180)
+    }
+
+    @Test func stopAIBlocksLateAskResponseFromMutatingStateOrSaving() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let llm = GatedActionCoachLLM(targetTool: "emit_suggestion", cancelDuringWait: false)
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "志明", budgetUSD: 10, backend: .test),
+            llm: llm, elapsed: { 150 }
+        )
+        coach.begin(recordingID: UUID())
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 0, end: 20, text: "大家好", arrivedAt: 20)))
+        await waitUntil { coach.transcriptAvailable }
+
+        let ask = Task { await coach.askForCard() }
+        await waitUntil { llm.isWaiting }
+
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 130, end: 150, text: "志明你覺得呢", arrivedAt: 150)))
+        await waitUntil { coach.stopReason == .quota }
+
+        // Late HTTP response arrives after stopAI.
+        llm.release()
+        await ask.value
+
+        let record = try #require(try context.fetch(FetchDescriptor<CoachRecord>()).first)
+        #expect(coach.ledgers.isEmpty)
+        #expect(coach.currentCard == nil)
+        #expect(coach.cost.totalUSD == 0)
+        #expect(record.ledgers.isEmpty)
+        #expect(record.costUSD == 0)
+        #expect(!coach.isAsking)
+        await coach.finish(at: 180)
+    }
+
+    @Test func stopAICancelsInFlightWrapUpRetryWithoutSendingAnotherAttempt() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let llm = GatedActionCoachLLM(targetTool: "emit_wrapup", cancelDuringWait: true)
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "志明", budgetUSD: 10, backend: .test),
+            llm: llm, elapsed: { 150 }
+        )
+        coach.begin(recordingID: UUID())
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 0, end: 20, text: "大家好", arrivedAt: 20)))
+        await waitUntil { coach.transcriptAvailable }
+
+        let wrapUp = Task { await coach.requestWrapUp() }
+        await waitUntil { llm.isWaiting }
+
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 130, end: 150, text: "志明你覺得呢", arrivedAt: 150)))
+        await waitUntil { coach.stopReason == .quota }
+
+        llm.release()
+        await wrapUp.value
+
+        let record = try #require(try context.fetch(FetchDescriptor<CoachRecord>()).first)
+        #expect(!llm.calls.contains("emit_wrapup#2"))
+        #expect(coach.wrapUp == nil)
+        #expect(record.wrapUp == nil)
+        #expect(coach.cost.totalUSD == 0)
+        #expect(record.costUSD == 0)
+        #expect(!coach.isWrappingUp)
+        await coach.finish(at: 180)
+    }
+
+    @Test func stopAIBlocksLateWrapUpResponseFromMutatingStateOrSaving() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let llm = GatedActionCoachLLM(targetTool: "emit_wrapup", cancelDuringWait: false)
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "志明", budgetUSD: 10, backend: .test),
+            llm: llm, elapsed: { 150 }
+        )
+        coach.begin(recordingID: UUID())
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 0, end: 20, text: "大家好", arrivedAt: 20)))
+        await waitUntil { coach.transcriptAvailable }
+
+        let wrapUp = Task { await coach.requestWrapUp() }
+        await waitUntil { llm.isWaiting }
+
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 130, end: 150, text: "志明你覺得呢", arrivedAt: 150)))
+        await waitUntil { coach.stopReason == .quota }
+
+        llm.release()
+        await wrapUp.value
+
+        let record = try #require(try context.fetch(FetchDescriptor<CoachRecord>()).first)
+        #expect(coach.wrapUp == nil)
+        #expect(record.wrapUp == nil)
+        #expect(coach.cost.totalUSD == 0)
+        #expect(record.costUSD == 0)
+        #expect(!coach.isWrappingUp)
         await coach.finish(at: 180)
     }
 

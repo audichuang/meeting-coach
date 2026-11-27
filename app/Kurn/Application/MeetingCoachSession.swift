@@ -177,13 +177,7 @@ final class MeetingCoachSession {
         eventSink.finish()
         eventTask?.cancel()
         eventTask = nil
-        cancelPipeline()
-        askTask?.cancel()
-        askTask = nil
-        wrapUpTask?.cancel()
-        wrapUpTask = nil
-        budgetTimer?.cancel()
-        budgetTimer = nil
+        cancelInFlightAIWork()
     }
 
     /// The transcriber has stopped; close open gaps and persist the final state.
@@ -291,12 +285,22 @@ final class MeetingCoachSession {
     }
 
     private func stopAI(_ reason: StopReason) {
-        guard !isAIStopped else { return }
+        guard !isCancelled, !isAIStopped else { return }
         stopReason = reason
         aiStoppedAt = elapsed()
-        cancelPipeline()
+        cancelInFlightAIWork()
         onStopAI?()
         AppLog.generation.atNotice.notice("MeetingCoachSession: AI processing stopped reason=\(String(describing: reason), privacy: .public)")
+    }
+
+    private func cancelInFlightAIWork() {
+        cancelPipeline()
+        askTask?.cancel()
+        askTask = nil
+        wrapUpTask?.cancel()
+        wrapUpTask = nil
+        budgetTimer?.cancel()
+        budgetTimer = nil
     }
 
     /// A Worker refusal no retry can fix stops the AI (recording continues); anything else is left to the caller.
@@ -352,14 +356,14 @@ final class MeetingCoachSession {
             let judged = try await llm.call(model: CoachPricing.judgeModel,
                                             instructions: CoachMessages.instructions(CoachPrompts.judge, user: userName),
                                             input: input, tools: [judgeTool], force: "judge")
-            guard !Task.isCancelled, !isCancelled else { return }
+            guard !Task.isCancelled, !isCancelled, !isAIStopped else { return }
             account(model: CoachPricing.judgeModel, judged.usage)
             let verdict = judged.calls.first.flatMap { try? JSONDecoder().decode(CoachJudgeArguments.self, from: $0.arguments) }
             logTrigger(offset: segment.arrivedAt, labels: labels, decision: verdict?.decision ?? "error", reason: verdict?.reason ?? "")
             guard verdict?.decision == "emit", !Task.isCancelled, !isCancelled, !isAIStopped else { return }
             let carded = try await llm.call(model: CoachPricing.cardModel, instructions: cardInstructions,
                                             input: input, tools: [cardTool], force: nil)
-            guard !Task.isCancelled, !isCancelled else { return }
+            guard !Task.isCancelled, !isCancelled, !isAIStopped else { return }
             account(model: CoachPricing.cardModel, carded.usage)
             guard let args = Self.card(from: carded) else {
                 logTrigger(offset: segment.arrivedAt, labels: labels, decision: "card_declined", reason: "")
@@ -367,7 +371,7 @@ final class MeetingCoachSession {
             }
             try addCandidate(args, evidence: segment, policy: policyVersion, gated: true)
         } catch {
-            guard !Task.isCancelled, !isCancelled else { return }
+            guard !Task.isCancelled, !isCancelled, !isAIStopped else { return }
             lastError = error.localizedDescription
             handleServiceError(error)
             logTrigger(offset: segment.arrivedAt, labels: labels, decision: "error", reason: error.publicLogCode)
@@ -384,19 +388,23 @@ final class MeetingCoachSession {
         let instructions = cardInstructions
         let tool = cardTool
         let llm = self.llm
+        let task = Task {
+            try await llm.call(model: CoachPricing.cardModel, instructions: instructions,
+                               input: input, tools: [tool], force: "emit_suggestion")
+        }
+        askTask = task
         do {
-            let task = Task {
-                try await llm.call(model: CoachPricing.cardModel, instructions: instructions,
-                                   input: input, tools: [tool], force: "emit_suggestion")
+            let result = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
             }
-            askTask = task
-            let result = try await task.value
-            guard !Task.isCancelled, !isCancelled else { return }
+            guard !Task.isCancelled, !task.isCancelled, !isCancelled, !isAIStopped else { return }
             account(model: CoachPricing.cardModel, result.usage)
             guard let args = Self.card(from: result) else { return }
             try addCandidate(args, evidence: last, policy: "ask", gated: false)
         } catch {
-            guard !Task.isCancelled, !isCancelled else { return }
+            guard !Task.isCancelled, !task.isCancelled, !isCancelled, !isAIStopped else { return }
             lastError = error.localizedDescription
             handleServiceError(error)
             AppLog.generation.atError.error("MeetingCoachSession: ask failed code=\(error.publicLogCode, privacy: .public)")
@@ -411,20 +419,24 @@ final class MeetingCoachSession {
         let instructions = cardInstructions
         let input = CoachMessages.wrapUp(segments: segments)
         let llm = self.llm
+        let task = Task {
+            try await llm.call(model: CoachPricing.cardModel, instructions: instructions,
+                               input: input, tools: [tool], force: "emit_wrapup")
+        }
+        wrapUpTask = task
         do {
-            let task = Task {
-                try await llm.call(model: CoachPricing.cardModel, instructions: instructions,
-                                   input: input, tools: [tool], force: "emit_wrapup")
+            let result = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
             }
-            wrapUpTask = task
-            let result = try await task.value
-            guard !Task.isCancelled, !isCancelled else { return }
+            guard !Task.isCancelled, !task.isCancelled, !isCancelled, !isAIStopped else { return }
             account(model: CoachPricing.cardModel, result.usage)
             wrapUp = result.calls.first.flatMap { try? JSONDecoder().decode(CoachWrapUpArguments.self, from: $0.arguments) }
             record?.wrapUp = wrapUp
             save()
         } catch {
-            guard !Task.isCancelled, !isCancelled else { return }
+            guard !Task.isCancelled, !task.isCancelled, !isCancelled, !isAIStopped else { return }
             lastError = error.localizedDescription
             handleServiceError(error)
             AppLog.generation.atError.error("MeetingCoachSession: wrap-up failed code=\(error.publicLogCode, privacy: .public)")
