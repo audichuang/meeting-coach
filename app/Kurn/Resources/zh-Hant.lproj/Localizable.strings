@@ -1090,3 +1090,23 @@
 "settings.meeting_coach_max_cards" = "每 10 分鐘最多 %d 張自動建議卡";
 "template.meeting_coach.name" = "會議教練會後摘要";
 "template.meeting_coach.desc" = "以繁體中文整理共識、分歧、待辦與未解問題。";
+
+/* Paper recording screen */
+"paper.tool.pen" = "原子筆";
+"paper.tool.highlighter" = "螢光筆";
+"paper.tool.eraser" = "橡皮擦";
+"paper.tool.lasso" = "套索";
+"paper.tool.undo" = "還原";
+"paper.tool.redo" = "重做";
+"paper.color.charcoal" = "炭黑";
+"paper.color.blue" = "藍色";
+"paper.color.crimson" = "紅色";
+"paper.color.forest" = "綠色";
+"paper.canvas.accessibility" = "手寫紙面";
+"paper.title.edit" = "編輯會議標題";
+"paper.notes.section" = "手寫筆記";
+"paper.notes.title" = "手寫筆記";
+"paper.notes.open_hint" = "開啟全頁手寫筆記";
+"paper.notes.updated" = "更新於 %@";
+"coach.portrait.expand" = "展開會議教練";
+"coach.portrait.collapse" = "收合會議教練";

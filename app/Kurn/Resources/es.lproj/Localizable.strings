@@ -1090,3 +1090,23 @@
 "settings.meeting_coach_max_cards" = "At most %d automatic cards per 10 minutes";
 "template.meeting_coach.name" = "Meeting Coach Recap";
 "template.meeting_coach.desc" = "Agreements, disagreements, action items and open questions, in Traditional Chinese.";
+
+/* Paper recording screen */
+"paper.tool.pen" = "Pen";
+"paper.tool.highlighter" = "Highlighter";
+"paper.tool.eraser" = "Eraser";
+"paper.tool.lasso" = "Lasso";
+"paper.tool.undo" = "Undo";
+"paper.tool.redo" = "Redo";
+"paper.color.charcoal" = "Charcoal";
+"paper.color.blue" = "Blue";
+"paper.color.crimson" = "Red";
+"paper.color.forest" = "Green";
+"paper.canvas.accessibility" = "Handwriting paper";
+"paper.title.edit" = "Edit meeting title";
+"paper.notes.section" = "Handwritten Notes";
+"paper.notes.title" = "Notes";
+"paper.notes.open_hint" = "Opens full-page handwritten notes";
+"paper.notes.updated" = "Updated %@";
+"coach.portrait.expand" = "Expand meeting coach";
+"coach.portrait.collapse" = "Collapse meeting coach";

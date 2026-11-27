@@ -13,6 +13,7 @@ import Combine
 import os
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct RecorderView: View {
     /// The live session; this view only presents it. Capture outlives the
@@ -20,21 +21,21 @@ struct RecorderView: View {
     /// bar (`RecordingSessionPresenter`) rather than abandoning it.
     let session: RecordingSessionController
 
+    private var usesPaperScreen: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad || session.viewModel?.coach != nil
+    }
+
     var body: some View {
         Group {
             if let vm = session.viewModel {
-                RecorderContent(vm: vm, session: session)
+                RecorderContent(vm: vm, session: session, usesPaperScreen: usesPaperScreen)
             } else {
                 ProgressView()
             }
         }
-        // Locked for the whole screen, not just the photo sheet: this is a
-        // fixed immersive layout with no landscape variant, and rotating
-        // mid-recording only invited the photo sheet's camera preview to
-        // come up sideways. See `AppOrientationLock`'s header.
-        // The meeting coach is used on an iPad propped up in either
-        // orientation, so its layout adapts instead of locking.
-        .onAppear { if session.viewModel?.coach == nil { AppOrientationLock.shared.lockToPortrait() } }
+        // Locked for the legacy iPhone-only recorder, not the iPad paper
+        // recording screen or coach mode, which adapt to both orientations.
+        .onAppear { if !usesPaperScreen { AppOrientationLock.shared.lockToPortrait() } }
         .onDisappear { AppOrientationLock.shared.unlock() }
     }
 }
@@ -42,6 +43,7 @@ struct RecorderView: View {
 private struct RecorderContent: View {
     @Bindable var vm: RecorderViewModel
     let session: RecordingSessionController
+    let usesPaperScreen: Bool
 
     @State private var levels: [Float] = Array(repeating: 0, count: 40)
     @State private var showingPhotoCapture = false
@@ -53,86 +55,12 @@ private struct RecorderContent: View {
     @ScaledMetric(relativeTo: .largeTitle) private var timerFontSize: CGFloat = 64
 
     var body: some View {
-        ZStack {
-            // Immersive black backdrop with a soft red glow, per the design mock.
-            Color.black.ignoresSafeArea()
-            RadialGradient(
-                colors: [Theme.accent.opacity(0.12), .clear],
-                center: .center, startRadius: 0, endRadius: 260
-            )
-            .ignoresSafeArea()
-            .opacity(vm.state == .recording ? 1 : 0.4)
-
-            if let coach = vm.coach {
-                coachLayout(coach)
+        Group {
+            if usesPaperScreen {
+                PaperRecorderView(vm: vm, session: session, showingPhotoCapture: $showingPhotoCapture)
             } else {
-                VStack(spacing: 0) {
-                    Spacer()
-                    statusBadge
-                    startingIndicator
-                    timer
-                        .padding(.top, 22)
-                    waveform
-                        .padding(.top, 26)
-                    titleField
-                        .padding(.top, 28)
-                    liveTranscriptArea
-                    routeMessage
-                    Spacer()
-                    controls
-                }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 40)
+                legacyRecorderBody
             }
-        }
-        // This screen is a fixed, immersive layout (58pt transport buttons,
-        // a hand-tuned timer size) rather than a scrolling list of text, so —
-        // unlike the rest of the app — it caps how far Dynamic Type can grow
-        // instead of scaling without bound.
-        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
-        .navigationTitle(NSLocalizedString("recorder.title", comment: "Record"))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                // `cancel()` deletes the in-progress recording once one
-                // exists, so the label and role must say so — a plain
-                // "Cancel" here would misrepresent a destructive action as a
-                // no-op dismiss, unlike every other exit affordance in the app.
-                let hasRecordingInProgress = vm.state != .idle || vm.isStarting
-                Button(
-                    hasRecordingInProgress
-                        ? NSLocalizedString("recorder.discard", comment: "Discard the in-progress recording")
-                        : NSLocalizedString("common.cancel", comment: "Cancel"),
-                    role: hasRecordingInProgress ? .destructive : .cancel
-                ) {
-                    session.discard()
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                // Collapses the recorder into the floating mini bar so the
-                // rest of the app stays usable while capture continues.
-                Button {
-                    session.minimize()
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .accessibilityLabel(NSLocalizedString("recorder.minimize", comment: "Minimize the recorder"))
-                }
-                .disabled(!session.canMinimize)
-                .accessibilityIdentifier("recorder.minimize")
-            }
-        }
-        // The backdrop is a fixed immersive black, so pin the whole screen —
-        // including the glass navigation bar — to the dark appearance rather
-        // than letting it render light chrome over black in light mode.
-        .preferredColorScheme(.dark)
-        // Scroll on a fixed clock rather than on level *changes*: the
-        // change-driven path proved able to stall after a background/lock
-        // round-trip (frozen bars) even while capture continued. A clocked
-        // pull of the current level can't freeze while the view is on screen.
-        .onReceive(waveformClock) { _ in
-            guard vm.state == .recording else { return }
-            levels.removeFirst()
-            levels.append(vm.level)
         }
         .confirmationDialog(
             NSLocalizedString("recorder.choose_mic.title", comment: "Choose microphone"),
@@ -181,52 +109,68 @@ private struct RecorderContent: View {
         }
     }
 
-    // MARK: - Meeting coach layout
+    // MARK: - Legacy compact recorder layout
 
-    /// Landscape: recorder column beside the coach panel. Portrait: a compact
-    /// recorder header above it.
-    private func coachLayout(_ coach: MeetingCoachSession) -> some View {
-        GeometryReader { proxy in
-            let panel = MeetingCoachPanel(coach: coach, partialText: vm.livePartialText)
-            if proxy.size.width > proxy.size.height {
-                HStack(spacing: 24) {
-                    VStack(spacing: 0) {
-                        Spacer()
-                        statusBadge
-                        startingIndicator
-                        timer.padding(.top, 16)
-                        waveform.padding(.top, 20)
-                        titleField.padding(.top, 20)
-                        routeMessage
-                        Spacer()
-                        controls
-                    }
-                    .frame(width: 300)
-                    panel
-                }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
-            } else {
-                VStack(spacing: 12) {
-                    HStack(alignment: .center, spacing: 16) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            statusBadge
-                            Text(vm.elapsed.clockDisplay)
-                                .font(.system(size: 40, weight: .ultraLight))
-                                .monospacedDigit()
-                                .foregroundStyle(.white)
-                        }
-                        waveform
-                    }
-                    titleField
-                    startingIndicator
-                    routeMessage
-                    panel
-                    controls
-                }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
+    private var legacyRecorderBody: some View {
+        ZStack {
+            // Immersive black backdrop with a soft red glow, per the design mock.
+            Color.black.ignoresSafeArea()
+            RadialGradient(
+                colors: [Theme.accent.opacity(0.12), .clear],
+                center: .center, startRadius: 0, endRadius: 260
+            )
+            .ignoresSafeArea()
+            .opacity(vm.state == .recording ? 1 : 0.4)
+
+            VStack(spacing: 0) {
+                Spacer()
+                statusBadge
+                startingIndicator
+                timer
+                    .padding(.top, 22)
+                waveform
+                    .padding(.top, 26)
+                titleField
+                    .padding(.top, 28)
+                liveTranscriptArea
+                routeMessage
+                Spacer()
+                controls
             }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 40)
+        }
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+        .navigationTitle(NSLocalizedString("recorder.title", comment: "Record"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                let hasRecordingInProgress = vm.state != .idle || vm.isStarting
+                Button(
+                    hasRecordingInProgress
+                        ? NSLocalizedString("recorder.discard", comment: "Discard the in-progress recording")
+                        : NSLocalizedString("common.cancel", comment: "Cancel"),
+                    role: hasRecordingInProgress ? .destructive : .cancel
+                ) {
+                    session.discard()
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    session.minimize()
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .accessibilityLabel(NSLocalizedString("recorder.minimize", comment: "Minimize the recorder"))
+                }
+                .disabled(!session.canMinimize)
+                .accessibilityIdentifier("recorder.minimize")
+            }
+        }
+        .preferredColorScheme(.dark)
+        .onReceive(waveformClock) { _ in
+            guard vm.state == .recording else { return }
+            levels.removeFirst()
+            levels.append(vm.level)
         }
     }
 

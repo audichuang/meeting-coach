@@ -92,25 +92,45 @@ private struct RecordingSessionPresenter: ViewModifier {
     /// text field (the chat composer, search) and the keyboard.
     @State private var placement = RecordingMiniBarPlacement()
 
+    private var isPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+
+    private var presentedBinding: Binding<Bool> {
+        Binding(
+            get: { session.isExpanded },
+            set: { session.setPresented($0) }
+        )
+    }
+
     func body(content: Content) -> some View {
-        content
+        let base = content
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if placement.hostCount == 0 { MiniBarSlot() }
             }
             .environment(placement)
             .kurnAnimation(.spring(duration: 0.35), value: session.isExpanded)
-            .sheet(isPresented: Binding(
-                get: { session.isExpanded },
-                set: { session.setPresented($0) }
-            )) {
-                // The meeting coach needs room for its transcript and card.
-                if session.viewModel?.coach != nil {
-                    NavigationStack { RecorderView(session: session) }
-                        .presentationSizing(.page)
-                } else {
-                    NavigationStack { RecorderView(session: session) }
+
+        // On iPad the paper recording screen fills the entire viewport (and
+        // avoids sheet pull-to-dismiss gestures fighting PencilKit strokes).
+        let presented = Group {
+            if isPad {
+                base.fullScreenCover(isPresented: presentedBinding) {
+                    RecorderView(session: session)
+                }
+            } else {
+                base.sheet(isPresented: presentedBinding) {
+                    if session.viewModel?.coach != nil {
+                        RecorderView(session: session)
+                            .presentationSizing(.page)
+                    } else {
+                        NavigationStack { RecorderView(session: session) }
+                    }
                 }
             }
+        }
+
+        return presented
             // Every way of stopping — the recorder, the mini bar, the Live
             // Activity, the Watch — lands on `didSaveRecording`, and only this
             // modifier is guaranteed to be on screen when it flips.

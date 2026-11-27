@@ -7,98 +7,159 @@
 //  transcript with its untranscribed gaps. All state lives in
 //  `MeetingCoachSession`; this view only renders and forwards taps.
 //
+//  Supports both the landscape side-column / legacy dark panel and the
+//  portrait single-line collapsed bar (`MeetingCoachPortraitDock`) that expands
+//  on tap without occupying writing space while collapsed.
+//
 
 import KurnCore
 import SwiftUI
+
+enum MeetingCoachPanelStyle {
+    /// Legacy dark-only recorder panel.
+    case dark
+    /// Adaptive opaque surface for the paper recording screen (sidebar or drawer).
+    case adaptive
+}
 
 struct MeetingCoachPanel: View {
     let coach: MeetingCoachSession
     /// The in-progress (not yet final) text from the live transcriber.
     let partialText: String
+    var style: MeetingCoachPanelStyle = .dark
+    /// Set to `false` when an outer host (like `MeetingCoachPortraitDock`)
+    /// attaches the budget alert and wrap-up sheet so they still present while
+    /// the panel itself is collapsed.
+    var embedsModals: Bool = true
+    /// Optional collapse button shown in the adaptive header (used when
+    /// expanded from the portrait dock).
+    var onCollapse: (() -> Void)?
+
+    private var primaryText: Color { style == .dark ? .white : Theme.textPrimary }
+    private var secondaryText: Color { style == .dark ? .white.opacity(0.7) : Theme.textSecondary }
+    private var mutedText: Color { style == .dark ? .white.opacity(0.45) : Theme.textTertiary }
+    private var bodyText: Color { style == .dark ? .white.opacity(0.9) : Theme.textPrimary }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let content = VStack(alignment: .leading, spacing: 12) {
             header
             if let card = coach.currentCard {
-                MeetingCoachCardView(coach: coach, card: card)
+                MeetingCoachCardView(coach: coach, card: card, style: style)
                     .id(card.candidate.id)
                     .transition(.opacity)
             }
             transcript
         }
-        .padding(16)
-        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
+        .padding(14)
+        .background(panelBackground)
         .kurnAnimation(.easeOut(duration: 0.25), value: coach.currentCardID)
-        .alert(
-            String(format: NSLocalizedString("coach.budget.title", comment: "Spend warning title with amount"), coach.budget.nextWarningAt),
-            isPresented: Binding(get: { coach.isBudgetWarning }, set: { _ in })
-        ) {
-            Button(NSLocalizedString("coach.budget.continue", comment: "Keep the AI running")) {
-                coach.continueAfterBudgetWarning()
-            }
-        } message: {
-            Text(NSLocalizedString("coach.budget.message", comment: "AI stops in 5 minutes unless continued; recording continues"))
-        }
-        .sheet(isPresented: Binding(get: { coach.wrapUp != nil }, set: { if !$0 { coach.dismissWrapUp() } })) {
-            if let wrapUp = coach.wrapUp { WrapUpSheet(wrapUp: wrapUp) }
+
+        if embedsModals {
+            content.meetingCoachModals(coach: coach)
+        } else {
+            content
         }
     }
 
+    @ViewBuilder
+    private var panelBackground: some View {
+        if style == .dark {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(.white.opacity(0.06))
+        } else {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Theme.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(Theme.separator, lineWidth: 0.75)
+                )
+        }
+    }
+
+    @ViewBuilder
     private var header: some View {
-        HStack(spacing: 10) {
-            Label(statusText, systemImage: statusIcon)
+        if style == .adaptive {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    statusLabel
+                    Spacer(minLength: 6)
+                    costText
+                    if let onCollapse {
+                        Button(action: onCollapse) {
+                            Image(systemName: "chevron.down")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(Theme.textSecondary)
+                                .accessibilityHidden(true)
+                                .frame(width: 30, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(NSLocalizedString("coach.portrait.collapse", comment: "Collapse meeting coach"))
+                        .accessibilityIdentifier("coach.portrait.collapse")
+                    }
+                }
+                HStack(spacing: 8) {
+                    askButton
+                    wrapUpButton
+                    if coach.isAsking || coach.isWrappingUp {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+            }
+        } else {
+            HStack(spacing: 10) {
+                statusLabel
+                costText
+                Spacer()
+                askButton
+                wrapUpButton
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if coach.isAsking || coach.isWrappingUp {
+                    ProgressView().tint(.white).offset(y: 24)
+                }
+            }
+        }
+    }
+
+    private var statusLabel: some View {
+        let presentation = MeetingCoachStatusPresentation(coach: coach)
+        return Label(presentation.text, systemImage: presentation.icon)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(presentation.color)
+            .lineLimit(1)
+    }
+
+    private var costText: some View {
+        Text(String(format: "US$%.2f", coach.cost.totalUSD))
+            .font(.footnote.monospacedDigit())
+            .foregroundStyle(secondaryText)
+            .accessibilityLabel(String(format: NSLocalizedString("coach.cost.accessibility", comment: "Spend so far"), coach.cost.totalUSD))
+    }
+
+    private var askButton: some View {
+        Button {
+            Task { await coach.askForCard() }
+        } label: {
+            Label(NSLocalizedString("coach.ask", comment: "What should I say"), systemImage: "lightbulb")
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(statusColor)
-            Text(String(format: "US$%.2f", coach.cost.totalUSD))
-                .font(.footnote.monospacedDigit())
-                .foregroundStyle(.white.opacity(0.7))
-                .accessibilityLabel(String(format: NSLocalizedString("coach.cost.accessibility", comment: "Spend so far"), coach.cost.totalUSD))
-            Spacer()
-            Button {
-                Task { await coach.askForCard() }
-            } label: {
-                Label(NSLocalizedString("coach.ask", comment: "What should I say"), systemImage: "lightbulb")
-            }
-            .buttonStyle(.glassProminent)
-            .tint(Theme.accent)
-            .disabled(coach.isAsking || coach.isAIStopped || !coach.transcriptAvailable)
-            Button {
-                Task { await coach.requestWrapUp() }
-            } label: {
-                Label(NSLocalizedString("coach.wrapup", comment: "Wrap up"), systemImage: "text.badge.checkmark")
-            }
-            .buttonStyle(.glass)
-            .disabled(coach.isWrappingUp || coach.isAIStopped || !coach.transcriptAvailable)
+                .lineLimit(1)
         }
-        .overlay(alignment: .bottomTrailing) {
-            if coach.isAsking || coach.isWrappingUp {
-                ProgressView().tint(.white).offset(y: 24)
-            }
-        }
+        .buttonStyle(.glassProminent)
+        .tint(Theme.accent)
+        .disabled(coach.isAsking || coach.isAIStopped || !coach.transcriptAvailable)
     }
 
-    private var statusText: String {
-        switch coach.stopReason {
-        case .budget: return NSLocalizedString("coach.status.stopped", comment: "AI stopped (budget)")
-        case .quota: return NSLocalizedString("coach.status.quota", comment: "AI stopped: this month's allowance is used up")
-        case .unauthorized: return NSLocalizedString("coach.status.unauthorized", comment: "AI stopped: invite code rejected")
-        case .accessMissing: return NSLocalizedString("coach.status.accessMissing", comment: "AI stopped: the build lacks the Worker address or Access token")
-        case nil: break
+    private var wrapUpButton: some View {
+        Button {
+            Task { await coach.requestWrapUp() }
+        } label: {
+            Label(NSLocalizedString("coach.wrapup", comment: "Wrap up"), systemImage: "text.badge.checkmark")
+                .font(.footnote.weight(.semibold))
+                .lineLimit(1)
         }
-        switch coach.connection {
-        case .live: return NSLocalizedString("coach.status.live", comment: "Live")
-        case .connecting: return NSLocalizedString("coach.status.connecting", comment: "Connecting")
-        case .reconnecting: return NSLocalizedString("coach.status.paused", comment: "Transcript paused, reconnecting")
-        case .stopped: return NSLocalizedString("coach.status.ended", comment: "Ended")
-        }
-    }
-
-    private var statusIcon: String {
-        coach.isAIStopped || coach.connection == .reconnecting ? "pause.circle.fill" : "waveform"
-    }
-
-    private var statusColor: Color {
-        coach.isAIStopped || coach.connection == .reconnecting ? Theme.warning : .green
+        .buttonStyle(.glass)
+        .disabled(coach.isWrappingUp || coach.isAIStopped || !coach.transcriptAvailable)
     }
 
     private enum Row: Identifiable {
@@ -130,13 +191,13 @@ struct MeetingCoachPanel: View {
                     ForEach(rows) { row in
                         switch row {
                         case .segment(let segment):
-                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text(segment.start.clockDisplay)
                                     .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.white.opacity(0.45))
+                                    .foregroundStyle(mutedText)
                                 Text(segment.text)
-                                    .font(Theme.body)
-                                    .foregroundStyle(.white.opacity(0.9))
+                                    .font(Theme.subheadline)
+                                    .foregroundStyle(bodyText)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         case .gap(let gap):
@@ -150,12 +211,12 @@ struct MeetingCoachPanel: View {
                     }
                     if !partialText.isEmpty {
                         Text(ChineseText.traditional(partialText))
-                            .font(Theme.body)
-                            .foregroundStyle(.white.opacity(0.5))
+                            .font(Theme.subheadline)
+                            .foregroundStyle(secondaryText)
                     } else if coach.segments.isEmpty {
                         Text(NSLocalizedString("recorder.live_listening", comment: "Listening…"))
-                            .font(Theme.body)
-                            .foregroundStyle(.white.opacity(0.4))
+                            .font(Theme.subheadline)
+                            .foregroundStyle(mutedText)
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
@@ -167,24 +228,181 @@ struct MeetingCoachPanel: View {
     }
 }
 
+/// Portrait-mode coach host: collapses to a single-line Liquid Glass bar at the
+/// bottom edge (showing the active card headline or live status) and expands
+/// into an opaque drawer on tap without disturbing the paper or recording.
+struct MeetingCoachPortraitDock: View {
+    let coach: MeetingCoachSession
+    let partialText: String
+    @Binding var isExpanded: Bool
+    let maxExpandedHeight: CGFloat
+
+    private var status: MeetingCoachStatusPresentation {
+        MeetingCoachStatusPresentation(coach: coach)
+    }
+
+    var body: some View {
+        Group {
+            if isExpanded {
+                MeetingCoachPanel(
+                    coach: coach,
+                    partialText: partialText,
+                    style: .adaptive,
+                    embedsModals: false,
+                    onCollapse: {
+                        withAnimation(.easeInOut(duration: 0.2)) { isExpanded = false }
+                    }
+                )
+                .frame(maxHeight: max(220, maxExpandedHeight))
+                .shadow(color: .black.opacity(0.14), radius: 18, y: 6)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("coach.portrait.drawer")
+            } else {
+                collapsedBar
+            }
+        }
+        .meetingCoachModals(coach: coach)
+    }
+
+    private var collapsedBar: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) { isExpanded = true }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: coach.currentCard != nil ? "lightbulb.fill" : status.icon)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(coach.currentCard != nil ? Theme.accent : status.color)
+                    .accessibilityHidden(true)
+
+                if let card = coach.currentCard {
+                    Text(card.candidate.shortText)
+                        .font(Theme.subheadlineEmphasized)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .accessibilityIdentifier("coach.card.text")
+                } else {
+                    Text(collapsedStatusSummary)
+                        .font(Theme.subheadline)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                Spacer(minLength: 8)
+
+                Text(String(format: "US$%.2f", coach.cost.totalUSD))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(Theme.textSecondary)
+
+                Image(systemName: "chevron.up")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 46)
+            .frame(maxWidth: .infinity)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .accessibilityLabel(collapsedAccessibilityLabel)
+        .accessibilityHint(NSLocalizedString("coach.portrait.expand", comment: "Expand meeting coach"))
+        .accessibilityIdentifier("coach.portrait.bar")
+    }
+
+    private var collapsedStatusSummary: String {
+        if let latest = coach.segments.last?.text, !latest.isEmpty {
+            return "\(status.text) · \(latest)"
+        }
+        if !partialText.isEmpty {
+            return "\(status.text) · \(ChineseText.traditional(partialText))"
+        }
+        return status.text
+    }
+
+    private var collapsedAccessibilityLabel: String {
+        if let card = coach.currentCard {
+            return "\(status.text): \(card.candidate.shortText)"
+        }
+        return collapsedStatusSummary
+    }
+}
+
+private struct MeetingCoachStatusPresentation {
+    let text: String
+    let icon: String
+    let color: Color
+
+    @MainActor
+    init(coach: MeetingCoachSession) {
+        if let stopReason = coach.stopReason {
+            switch stopReason {
+            case .budget: text = NSLocalizedString("coach.status.stopped", comment: "AI stopped (budget)")
+            case .quota: text = NSLocalizedString("coach.status.quota", comment: "AI stopped: this month's allowance is used up")
+            case .unauthorized: text = NSLocalizedString("coach.status.unauthorized", comment: "AI stopped: invite code rejected")
+            case .accessMissing: text = NSLocalizedString("coach.status.accessMissing", comment: "AI stopped: the build lacks the Worker address or Access token")
+            }
+        } else {
+            switch coach.connection {
+            case .live: text = NSLocalizedString("coach.status.live", comment: "Live")
+            case .connecting: text = NSLocalizedString("coach.status.connecting", comment: "Connecting")
+            case .reconnecting: text = NSLocalizedString("coach.status.paused", comment: "Transcript paused, reconnecting")
+            case .stopped: text = NSLocalizedString("coach.status.ended", comment: "Ended")
+            }
+        }
+        let degraded = coach.isAIStopped || coach.connection == .reconnecting
+        icon = degraded ? "pause.circle.fill" : "waveform"
+        color = degraded ? Theme.warning : Theme.success
+    }
+}
+
+private extension View {
+    func meetingCoachModals(coach: MeetingCoachSession) -> some View {
+        self
+            .alert(
+                String(format: NSLocalizedString("coach.budget.title", comment: "Spend warning title with amount"), coach.budget.nextWarningAt),
+                isPresented: Binding(get: { coach.isBudgetWarning }, set: { _ in })
+            ) {
+                Button(NSLocalizedString("coach.budget.continue", comment: "Keep the AI running")) {
+                    coach.continueAfterBudgetWarning()
+                }
+            } message: {
+                Text(NSLocalizedString("coach.budget.message", comment: "AI stops in 5 minutes unless continued; recording continues"))
+            }
+            .sheet(isPresented: Binding(get: { coach.wrapUp != nil }, set: { if !$0 { coach.dismissWrapUp() } })) {
+                if let wrapUp = coach.wrapUp { WrapUpSheet(wrapUp: wrapUp) }
+            }
+    }
+}
+
 private struct MeetingCoachCardView: View {
     let coach: MeetingCoachSession
     let card: CoachLedgerRecord
+    let style: MeetingCoachPanelStyle
     @State private var expanded = false
     @State private var offset: CGFloat = 0
     @State private var feedback: String?
+
+    private var titleColor: Color { style == .dark ? .white : Theme.textPrimary }
+    private var reasonColor: Color { style == .dark ? .white.opacity(0.8) : Theme.textSecondary }
+    private var evidenceColor: Color { style == .dark ? .white.opacity(0.65) : Theme.textSecondary }
+    private var cardFill: Color {
+        style == .dark ? Theme.accent.opacity(0.22) : Theme.accent.opacity(0.11)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(card.candidate.shortText)
                 .accessibilityIdentifier("coach.card.text")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.white)
+                .font(.headline)
+                .foregroundStyle(titleColor)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if expanded {
                 Text(card.candidate.reason)
                     .font(Theme.subheadline)
-                    .foregroundStyle(.white.opacity(0.8))
+                    .foregroundStyle(reasonColor)
                 ForEach(Array(card.candidate.evidence.enumerated()), id: \.offset) { _, evidence in
                     VStack(alignment: .leading, spacing: 4) {
                         Text("\(evidence.start.clockDisplay)–\(evidence.end.clockDisplay)")
@@ -192,7 +410,7 @@ private struct MeetingCoachCardView: View {
                             .foregroundStyle(Theme.warning)
                         Text(evidence.context)
                             .font(.caption)
-                            .foregroundStyle(.white.opacity(0.65))
+                            .foregroundStyle(evidenceColor)
                             .lineLimit(4)
                     }
                 }
@@ -203,7 +421,11 @@ private struct MeetingCoachCardView: View {
             }
         }
         .padding(14)
-        .background(Theme.accent.opacity(0.22), in: RoundedRectangle(cornerRadius: 16))
+        .background(cardFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Theme.accent.opacity(style == .dark ? 0.25 : 0.22), lineWidth: 1)
+        )
         .offset(x: offset)
         .opacity(1 - min(0.6, abs(offset) / 300))
         .contentShape(Rectangle())

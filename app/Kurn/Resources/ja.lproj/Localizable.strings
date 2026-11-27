@@ -1090,3 +1090,23 @@
 "settings.meeting_coach_max_cards" = "自動カードは10分間に最大%d枚";
 "template.meeting_coach.name" = "会議コーチの振り返り";
 "template.meeting_coach.desc" = "合意事項、意見の相違、アクションアイテム、未解決の質問を、繁体字中国語でまとめます。";
+
+/* Paper recording screen */
+"paper.tool.pen" = "ペン";
+"paper.tool.highlighter" = "マーカー";
+"paper.tool.eraser" = "消しゴム";
+"paper.tool.lasso" = "投げ縄";
+"paper.tool.undo" = "取り消す";
+"paper.tool.redo" = "やり直す";
+"paper.color.charcoal" = "チャコール";
+"paper.color.blue" = "ブルー";
+"paper.color.crimson" = "レッド";
+"paper.color.forest" = "グリーン";
+"paper.canvas.accessibility" = "手書きノート";
+"paper.title.edit" = "会議タイトルを編集";
+"paper.notes.section" = "手書きノート";
+"paper.notes.title" = "ノート";
+"paper.notes.open_hint" = "手書きノートを全画面で開く";
+"paper.notes.updated" = "更新 %@";
+"coach.portrait.expand" = "会議コーチを展開";
+"coach.portrait.collapse" = "会議コーチを折りたたむ";
