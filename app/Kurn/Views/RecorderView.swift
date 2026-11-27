@@ -1,0 +1,514 @@
+//
+//  RecorderView.swift
+//  Kurn
+//
+//  Full-screen recorder: pulsing record control, live waveform meter, elapsed
+//  timer, pause/resume, and stop-and-save. Recording is offline-first; the file
+//  is written to Documents as it records. The session behind it is app-wide
+//  (`RecordingSessionController`), so the screen can be minimized into the
+//  floating mini bar and expanded again without touching the capture.
+//
+
+import Combine
+import os
+import SwiftData
+import SwiftUI
+
+struct RecorderView: View {
+    /// The live session; this view only presents it. Capture outlives the
+    /// view, so dismissing the screen minimizes the recording into the mini
+    /// bar (`RecordingSessionPresenter`) rather than abandoning it.
+    let session: RecordingSessionController
+
+    var body: some View {
+        Group {
+            if let vm = session.viewModel {
+                RecorderContent(vm: vm, session: session)
+            } else {
+                ProgressView()
+            }
+        }
+        // Locked for the whole screen, not just the photo sheet: this is a
+        // fixed immersive layout with no landscape variant, and rotating
+        // mid-recording only invited the photo sheet's camera preview to
+        // come up sideways. See `AppOrientationLock`'s header.
+        // The meeting coach is used on an iPad propped up in either
+        // orientation, so its layout adapts instead of locking.
+        .onAppear { if session.viewModel?.coach == nil { AppOrientationLock.shared.lockToPortrait() } }
+        .onDisappear { AppOrientationLock.shared.unlock() }
+    }
+}
+
+private struct RecorderContent: View {
+    @Bindable var vm: RecorderViewModel
+    let session: RecordingSessionController
+
+    @State private var levels: [Float] = Array(repeating: 0, count: 40)
+    @State private var showingPhotoCapture = false
+    /// Fixed 20 Hz drive for the waveform scroll — the same cadence as the
+    /// recorder's metering tick.
+    private let waveformClock = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    /// The timer digits have no standard `TextStyle` at this size, so they scale
+    /// from their own base rather than a semantic `Theme` font.
+    @ScaledMetric(relativeTo: .largeTitle) private var timerFontSize: CGFloat = 64
+
+    var body: some View {
+        ZStack {
+            // Immersive black backdrop with a soft red glow, per the design mock.
+            Color.black.ignoresSafeArea()
+            RadialGradient(
+                colors: [Theme.accent.opacity(0.12), .clear],
+                center: .center, startRadius: 0, endRadius: 260
+            )
+            .ignoresSafeArea()
+            .opacity(vm.state == .recording ? 1 : 0.4)
+
+            if let coach = vm.coach {
+                coachLayout(coach)
+            } else {
+                VStack(spacing: 0) {
+                    Spacer()
+                    statusBadge
+                    startingIndicator
+                    timer
+                        .padding(.top, 22)
+                    waveform
+                        .padding(.top, 26)
+                    titleField
+                        .padding(.top, 28)
+                    liveTranscriptArea
+                    routeMessage
+                    Spacer()
+                    controls
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 40)
+            }
+        }
+        // This screen is a fixed, immersive layout (58pt transport buttons,
+        // a hand-tuned timer size) rather than a scrolling list of text, so —
+        // unlike the rest of the app — it caps how far Dynamic Type can grow
+        // instead of scaling without bound.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+        .navigationTitle(NSLocalizedString("recorder.title", comment: "Record"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                // `cancel()` deletes the in-progress recording once one
+                // exists, so the label and role must say so — a plain
+                // "Cancel" here would misrepresent a destructive action as a
+                // no-op dismiss, unlike every other exit affordance in the app.
+                let hasRecordingInProgress = vm.state != .idle || vm.isStarting
+                Button(
+                    hasRecordingInProgress
+                        ? NSLocalizedString("recorder.discard", comment: "Discard the in-progress recording")
+                        : NSLocalizedString("common.cancel", comment: "Cancel"),
+                    role: hasRecordingInProgress ? .destructive : .cancel
+                ) {
+                    session.discard()
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                // Collapses the recorder into the floating mini bar so the
+                // rest of the app stays usable while capture continues.
+                Button {
+                    session.minimize()
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .accessibilityLabel(NSLocalizedString("recorder.minimize", comment: "Minimize the recorder"))
+                }
+                .disabled(!session.canMinimize)
+                .accessibilityIdentifier("recorder.minimize")
+            }
+        }
+        // The backdrop is a fixed immersive black, so pin the whole screen —
+        // including the glass navigation bar — to the dark appearance rather
+        // than letting it render light chrome over black in light mode.
+        .preferredColorScheme(.dark)
+        // Scroll on a fixed clock rather than on level *changes*: the
+        // change-driven path proved able to stall after a background/lock
+        // round-trip (frozen bars) even while capture continued. A clocked
+        // pull of the current level can't freeze while the view is on screen.
+        .onReceive(waveformClock) { _ in
+            guard vm.state == .recording else { return }
+            levels.removeFirst()
+            levels.append(vm.level)
+        }
+        .confirmationDialog(
+            NSLocalizedString("recorder.choose_mic.title", comment: "Choose microphone"),
+            isPresented: Binding(
+                get: { !vm.micChoices.isEmpty },
+                set: { isPresented in
+                    if !isPresented { vm.chooseMic(uid: nil) }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            ForEach(vm.micChoices) { option in
+                Button(option.name) { vm.chooseMic(uid: option.id) }
+            }
+            Button(NSLocalizedString("common.cancel", comment: "Cancel"), role: .cancel) {
+                vm.chooseMic(uid: nil)
+            }
+        }
+        .kurnDialog(
+            isPresented: $vm.permissionDenied,
+            iconSystemName: "mic.slash.fill",
+            iconTint: Theme.warning,
+            title: NSLocalizedString("recorder.permission.title", comment: "Mic permission"),
+            message: NSLocalizedString("recorder.permission.message", comment: ""),
+            primaryTitle: NSLocalizedString("common.ok", comment: "OK"),
+            primaryAction: { session.discard() }
+        )
+        .errorAlert(Binding(
+            get: { vm.error },
+            set: { newValue in
+                if let newValue {
+                    vm.error = newValue
+                } else {
+                    vm.dismissError()
+                }
+            }
+        ))
+        // Swiping the sheet down minimizes a running recording (the
+        // presentation binding routes it to `session.setPresented`); until
+        // capture is running there is nothing to minimize into.
+        .interactiveDismissDisabled(!session.canMinimize)
+        .fullScreenCover(isPresented: $showingPhotoCapture) {
+            PhotoCaptureView { data in
+                vm.capturePhoto(jpegData: data)
+            }
+        }
+    }
+
+    // MARK: - Meeting coach layout
+
+    /// Landscape: recorder column beside the coach panel. Portrait: a compact
+    /// recorder header above it.
+    private func coachLayout(_ coach: MeetingCoachSession) -> some View {
+        GeometryReader { proxy in
+            let panel = MeetingCoachPanel(coach: coach, partialText: vm.livePartialText)
+            if proxy.size.width > proxy.size.height {
+                HStack(spacing: 24) {
+                    VStack(spacing: 0) {
+                        Spacer()
+                        statusBadge
+                        startingIndicator
+                        timer.padding(.top, 16)
+                        waveform.padding(.top, 20)
+                        titleField.padding(.top, 20)
+                        routeMessage
+                        Spacer()
+                        controls
+                    }
+                    .frame(width: 300)
+                    panel
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+            } else {
+                VStack(spacing: 12) {
+                    HStack(alignment: .center, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            statusBadge
+                            Text(vm.elapsed.clockDisplay)
+                                .font(.system(size: 40, weight: .ultraLight))
+                                .monospacedDigit()
+                                .foregroundStyle(.white)
+                        }
+                        waveform
+                    }
+                    titleField
+                    startingIndicator
+                    routeMessage
+                    panel
+                    controls
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+            }
+        }
+    }
+
+    // MARK: - Subviews
+
+    @ViewBuilder
+    private var statusBadge: some View {
+        HStack(spacing: 8) {
+            if vm.state == .recording {
+                PulsingDot(color: Theme.accent)
+                    .accessibilityHidden(true)
+            } else {
+                Circle()
+                    .fill(vm.state == .paused ? Theme.warning : Theme.accent)
+                    .frame(width: 10, height: 10)
+                    .accessibilityHidden(true)
+            }
+            Text(vm.state == .paused
+                 ? NSLocalizedString("recorder.paused", comment: "Paused")
+                 : "REC")
+                .font(.system(.footnote, design: .default, weight: .bold))
+                .tracking(2.5)
+                .foregroundStyle(vm.state == .paused ? Theme.warning : Theme.accent)
+        }
+    }
+
+    @ViewBuilder
+    private var startingIndicator: some View {
+        if vm.isStarting {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .tint(.white)
+                Text(NSLocalizedString("recorder.connecting", comment: "Setting up the microphone before recording starts"))
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            .padding(.top, 10)
+        }
+    }
+
+    @ViewBuilder
+    private var timer: some View {
+        let content = VStack(spacing: 4) {
+            Text(vm.elapsed.clockDisplay)
+                .font(.system(size: timerFontSize, weight: .ultraLight, design: .default))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .contentTransition(.numericText())
+            if vm.highlightCount > 0 {
+                Label("\(vm.highlightCount)", systemImage: "bookmark.fill")
+                    .font(Theme.footnoteEmphasized)
+                    .foregroundStyle(Theme.warning)
+                    .contentTransition(.numericText())
+            }
+        }
+        // Elapsed time and highlight count used to be two separate VoiceOver
+        // stops; combined into one composed phrase (e.g. "12:34, 2
+        // highlights") instead of leaving them as unrelated elements.
+        if vm.highlightCount > 0 {
+            content
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(timerAccessibilityLabel)
+        } else {
+            content
+        }
+    }
+
+    private var timerAccessibilityLabel: String {
+        String(
+            format: NSLocalizedString(
+                "recorder.accessibility.timer_with_highlights",
+                comment: "Elapsed time, highlight count"
+            ),
+            vm.elapsed.clockDisplay,
+            vm.highlightCount
+        )
+    }
+
+    private var titleField: some View {
+        VStack(spacing: 8) {
+            TextField(
+                NSLocalizedString("recorder.add_title", comment: "Add title…"),
+                text: $vm.meetingTitle
+            )
+            .multilineTextAlignment(.center)
+            .font(Theme.body)
+            .foregroundStyle(.white)
+            .tint(Theme.accent)
+            // Explicit, persistent label — VoiceOver stops reading the
+            // placeholder as soon as the field has a value, unlike a label.
+            .accessibilityLabel(NSLocalizedString(
+                "recorder.title_field.accessibility_label",
+                comment: "Meeting title text field (VoiceOver)"
+            ))
+            Rectangle()
+                .fill(.white.opacity(0.1))
+                .frame(height: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var liveTranscriptArea: some View {
+        if vm.isLiveTranscriptionRequested {
+            ScrollView {
+                Text(liveTranscriptText)
+                    .font(Theme.subheadline)
+                    .foregroundStyle(liveTranscriptColor)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+            }
+            .frame(maxHeight: 90)
+            .padding(.top, 16)
+        }
+    }
+
+    private var liveTranscriptText: String {
+        if vm.isLiveTranscriptionUnavailable {
+            return NSLocalizedString("recorder.live_unavailable", comment: "Live transcription unavailable")
+        }
+        if vm.isLiveTranscriptionLoading {
+            return NSLocalizedString("recorder.live_loading", comment: "Preparing live transcription")
+        }
+        if !vm.livePartialText.isEmpty {
+            return vm.livePartialText
+        }
+        return NSLocalizedString("recorder.live_listening", comment: "Listening…")
+    }
+
+    private var liveTranscriptColor: Color {
+        if vm.isLiveTranscriptionUnavailable { return Theme.warning }
+        return vm.livePartialText.isEmpty ? .white.opacity(0.4) : .white.opacity(0.85)
+    }
+
+    @ViewBuilder
+    private var routeMessage: some View {
+        if let message = vm.routeMessage {
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .font(.footnote)
+                .foregroundStyle(Theme.warning)
+                .multilineTextAlignment(.center)
+                .padding(.top, 16)
+        }
+    }
+
+    private var waveform: some View {
+        HStack(alignment: .center, spacing: 3.5) {
+            ForEach(levels.indices, id: \.self) { i in
+                Capsule()
+                    .fill(barColor.opacity(i.isMultiple(of: 3) ? 0.7 : 1))
+                    .frame(width: 3, height: max(4, CGFloat(levels[i]) * 56))
+            }
+        }
+        .frame(height: 56)
+        .kurnAnimation(.linear(duration: 0.06), value: levels)
+        // Purely decorative: the recording state and elapsed time are already
+        // announced as text above, and a live level readout at 20 Hz would be
+        // noise, not signal, to VoiceOver.
+        .accessibilityHidden(true)
+    }
+
+    // Two rows rather than one four-wide HStack: pause/stop are the primary,
+    // full-width pills, and squeezing highlight+photo into the same row left
+    // "Pausar"/"Parar" too narrow to lay out on one line at larger Dynamic
+    // Type sizes. Highlight and photo are secondary actions, so a smaller
+    // centered row below reads fine.
+    private var controls: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 14) {
+                // Pause / resume.
+                Button {
+                    AppLog.recorderUI.atInfo.info("UI: pause/resume tapped, state=\(String(describing: vm.state), privacy: .public)")
+                    vm.togglePause()
+                } label: {
+                    pillLabel(
+                        systemImage: vm.state == .paused ? "play.fill" : "pause.fill",
+                        title: vm.state == .paused
+                            ? NSLocalizedString("recorder.resume", comment: "Resume")
+                            : NSLocalizedString("recorder.pause", comment: "Pause")
+                    )
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.capsule)
+                .disabled(vm.state == .idle)
+
+                // Stop & save.
+                Button {
+                    AppLog.recorderUI.atInfo.info("UI: stop tapped, state=\(String(describing: vm.state), privacy: .public)")
+                    vm.stopAndSave()
+                } label: {
+                    pillLabel(
+                        systemImage: "stop.fill",
+                        title: NSLocalizedString("recorder.stop", comment: "Stop")
+                    )
+                }
+                .buttonStyle(.glassProminent)
+                .buttonBorderShape(.capsule)
+                .tint(Theme.accent)
+                .disabled(vm.state == .idle)
+            }
+
+            HStack(spacing: 14) {
+                // Highlight. Fixed-size circle rather than a full-width pill,
+                // since marking is a secondary action relative to pause/stop.
+                Button {
+                    AppLog.recorderUI.atInfo.info("UI: highlight tapped, state=\(String(describing: vm.state), privacy: .public)")
+                    vm.markHighlight()
+                } label: {
+                    Image(systemName: "bookmark.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .frame(width: 52, height: 52)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .tint(Theme.warning)
+                // Stricter than pause/stop: marking during a pause has no
+                // "current instant" to capture (mirrors `markHighlight()`'s guard).
+                .disabled(vm.state != .recording)
+                .sensoryFeedback(.success, trigger: vm.highlightCount)
+                .accessibilityLabel(NSLocalizedString("recorder.highlight", comment: "Highlight"))
+
+                // Photo. Same fixed-circle treatment and the same "recording
+                // only" guard as highlight — a photo needs an active
+                // recording to attach its timestamp to (see
+                // `AudioRecorderService.registerPhoto`).
+                Button {
+                    AppLog.recorderUI.atInfo.info("UI: photo tapped, state=\(String(describing: vm.state), privacy: .public)")
+                    showingPhotoCapture = true
+                } label: {
+                    Image(systemName: "camera.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .frame(width: 52, height: 52)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .disabled(vm.state != .recording)
+                .accessibilityLabel(NSLocalizedString("recorder.photo", comment: "Photo"))
+            }
+        }
+        .opacity(vm.state == .idle ? 0.5 : 1)
+    }
+
+    /// The transport controls stay full-width, thumb-sized content buttons
+    /// rather than toolbar items — they're the primary target mid-recording —
+    /// but take their surface from the glass button styles above.
+    private func pillLabel(systemImage: String, title: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .accessibilityHidden(true)
+            Text(title).font(Theme.calloutEmphasized)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 58)
+    }
+
+    private var barColor: Color {
+        switch vm.state {
+        case .recording: return Theme.accent
+        case .paused: return Theme.warning
+        case .idle: return .white.opacity(0.3)
+        }
+    }
+}
+
+/// A self-contained pulsing dot. Isolating the `repeatForever` animation here
+/// keeps it from interacting with the recorder's 20 Hz metering re-renders.
+/// Shared with the mini bar (`RecordingMiniBar`).
+struct PulsingDot: View {
+    let color: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var dim = false
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 10, height: 10)
+            .opacity(dim ? 0.25 : 1)
+            .onAppear {
+                // Reduce Motion: never start the infinite pulse, just render solid.
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+                    dim = true
+                }
+            }
+    }
+}

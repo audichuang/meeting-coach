@@ -1,0 +1,62 @@
+# Fastlane snapshot configuration for App Store screenshots.
+#
+# Captures against the dedicated KurnUITests scheme (not the app's default
+# `Kurn` scheme) so a screenshot run never also re-executes the KurnTests
+# unit test suite. See fastlane/Fastfile's `screenshots` lane and
+# Kurn/DebugSupport/ScreenshotSeedData.swift for how the app seeds mock data
+# for these runs.
+
+scheme("KurnUITests")
+
+# Restricts capture to the screenshot-producing test class only. Without
+# this, snapshot runs the whole KurnUITests scheme; a runaway launch test
+# on one device once looped for ~6h with nothing to bound it (see the
+# timeout-minutes note in .github/workflows/screenshots.yml).
+only_testing(["KurnUITests/ScreenshotUITests"])
+
+devices([
+  "iPhone 17 Pro Max",
+  "iPad Pro 13-inch (M5)"
+])
+
+# Every UI language. Navigation is driven by `.accessibilityIdentifier` only,
+# and the seeded meetings follow the launch language
+# (Kurn/DebugSupport/ScreenshotSeedText.swift), so each store language gets
+# its own app UI rather than English under translated captions. CI captures
+# one language per job (`fastlane screenshots languages:<code>` from the
+# matrix in .github/workflows/screenshots.yml) because all seven in one job
+# would far exceed its time limit; a local run without the option captures
+# them all. Codes are App Store locales (fastlane/metadata/<locale>/), not
+# .lproj names.
+languages([
+  "en-US",
+  "pt-BR",
+  "es-ES",
+  "fr-FR",
+  "it",
+  "de-DE",
+  "zh-Hans"
+])
+
+output_directory("./fastlane/screenshots")
+clear_previous_screenshots(true)
+override_status_bar(true)
+concurrent_simulators(false)
+
+# Raised from snapshot's default of 1. These runs lose whole screenshots to
+# simulator flakiness rather than to test bugs: in run #9 of screenshots.yml,
+# `testMeetingDetailSummary` failed on iPhone with "Simulator device failed
+# to launch ai.kurn.app.KurnUITests.xctrunner" — a runner launch failure, not
+# an assertion — and the single retry hit it again, so that App Store
+# screenshot was simply missing from the upload while the lane still reported
+# success. The same test passed on iPad in that run and on iPhone in the two
+# runs before it. Note a retry re-runs the whole device, not just the failed
+# test, so this multiplies worst-case capture time — screenshots.yml's
+# timeout-minutes was widened to match.
+number_of_retries(3)
+
+# On CI, start every attempt from a clean simulator. The launch flake the
+# retries above exist for ("Simulator device failed to launch ...xctrunner")
+# otherwise recurs on the same, already-degraded simulator. Local runs keep
+# their simulators untouched.
+erase_simulator(true) if ENV["CI"]

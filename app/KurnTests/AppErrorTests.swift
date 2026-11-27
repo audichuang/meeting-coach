@@ -1,0 +1,79 @@
+//
+//  AppErrorTests.swift
+//  KurnTests
+//
+
+import Foundation
+import KurnCore
+import Testing
+@testable import Kurn
+
+struct AppErrorTests {
+
+    @Test func idIsDerivedFromErrorDescription() {
+        let error = AppError.audioError("disk full")
+        #expect(error.id == error.errorDescription)
+    }
+
+    @Test func noAPIKeyMessageIncludesProviderName() {
+        let error = AppError.noAPIKey(provider: "Anthropic")
+        #expect(error.errorDescription?.contains("Anthropic") == true)
+    }
+
+    @Test func apiErrorMessageIncludesStatusCodeAndMessage() {
+        let error = AppError.apiError(statusCode: 429, message: "rate limited")
+        let description = error.errorDescription ?? ""
+        #expect(description.contains("429"))
+        #expect(description.contains("rate limited"))
+    }
+
+    @Test func everyCaseProducesNonEmptyDescription() {
+        let cases: [AppError] = [
+            .noAPIKey(provider: "OpenAI"),
+            .networkError(URLError(.notConnectedToInternet)),
+            .apiError(statusCode: 500, message: "boom"),
+            .invalidProviderURL,
+            .providerResponseTooLarge,
+            .ambiguousProviderResult,
+            .networkPolicyRestricted,
+            .transcriptionFailed("bad audio"),
+            .audioError("mic busy"),
+            .decodingError("bad json"),
+            .permissionDenied("speech"),
+            .persistenceFailed("disk full"),
+            .protectedStorageUnavailable("attribute rejected"),
+            .modelDownloadRequired("diarization"),
+            .modelDownloadFailed("network unavailable"),
+            .resourceUnavailable("low memory"),
+            .generationTruncated,
+            .logExportFailed("no logs available")
+        ]
+        for error in cases {
+            #expect(!(error.errorDescription ?? "").isEmpty)
+        }
+    }
+
+    @Test func attachmentImportFailedMessageIncludesTheReason() {
+        let error = AppError.attachmentImportFailed("password protected")
+        #expect(error.errorDescription?.contains("password protected") == true)
+        #expect(error.logCode == "attachment_import")
+        #expect(error.category == .storage)
+    }
+
+    @Test func resourceUnavailableMessageIncludesDetail() {
+        let error = AppError.resourceUnavailable("free storage")
+        #expect(error.errorDescription?.contains("free storage") == true)
+    }
+
+    @Test func logCodeClassifiesErrorsWithoutIncludingDetails() {
+        let error = AppError.apiError(statusCode: 400, message: "sensitive provider response")
+        #expect(error.logCode == "provider_api")
+        #expect(!error.logCode.contains("sensitive"))
+        #expect(AppError.invalidProviderURL.logCode == "provider_configuration")
+        #expect(AppError.providerResponseTooLarge.logCode == "provider_response_too_large")
+        #expect(AppError.ambiguousProviderResult.logCode == "provider_result_ambiguous")
+        #expect(AppError.networkPolicyRestricted.logCode == "network_policy_restricted")
+        #expect(AppError.generationTruncated.logCode == "generation_truncated")
+        #expect(AppError.documentGenerationFailed("private detail").logCode == "document_generation")
+    }
+}

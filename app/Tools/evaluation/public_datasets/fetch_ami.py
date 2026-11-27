@@ -1,0 +1,530 @@
+#!/usr/bin/env python3
+"""Fetch a small AMI Meeting Corpus subset -- the only meeting-shaped material here.
+
+Every other corpus in `manifest.json` is one speaker reading or answering into a
+microphone. AMI is four people around a table, which is what the app actually
+records, so this is the corpus whose numbers describe real use.
+
+Speaker turns come from `pyannote/AMI-diarization-setup` (MIT-licensed), which
+ships ready-made RTTM derived from AMI's manual "only_words" segmentation, keyed
+by meeting ID. Meeting IDs are discovered from its `test` partition via the
+GitHub API rather than hardcoded, which would drift if the repo's contents
+change.
+
+Audio comes from the University of Edinburgh's AMI mirror
+(`groups.inf.ed.ac.uk`) -- the Mix-Headset file (summed close-talk mics) every
+AMI ASR/diarization recipe uses. Meetings run 30-60 minutes; the audio, its
+RTTM and its transcript are all clipped to the first `--clip-seconds` so the
+fetch and the eval run stay bounded. Requires `ffmpeg` on PATH.
+
+The lexical transcript comes from AMI's own manual annotation zip, off the same
+Edinburgh host as the audio. Only `words/*.words.xml` is read, and only for the
+words themselves: each `<w>` carries its own `starttime`, so a time-ordered
+reference needs no speaker mapping and none of the `segments`/`dialogue-acts`
+cross-referencing that made the NXT format not worth parsing blind. That makes
+AMI the one corpus scored on **both** WER and DER -- the only place the
+pipeline's real output, text attributed to a speaker, is measured end to end.
+
+The transcript is strictly optional. Any failure -- host down, zip layout
+changed, parse producing something implausible -- logs and leaves the meeting
+DER-only, which is exactly what it was before and a shape
+`PublicEvaluationDataset` already understands. A missing WER reference costs one
+metric; a silently wrong one would be worse than none.
+
+Can be imported as a module (`fetch(...)`) or run as a script.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
+import zipfile
+from pathlib import Path
+
+GITHUB_API = "https://api.github.com/repos/pyannote/AMI-diarization-setup/contents/only_words/rttms/test"
+RAW_BASE = "https://raw.githubusercontent.com/pyannote/AMI-diarization-setup/main/only_words/rttms/test"
+AUDIO_BASE = "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus"
+ANNOTATIONS_URL = "https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip"
+
+# `words/<meeting>.<agent>.words.xml`, one file per speaker slot in a meeting.
+WORDS_MEMBER = re.compile(r"(?:^|/)words/(?P<meeting>[^/.]+)\.(?P<agent>[^/.]+)\.words\.xml$")
+
+# A transcript this far outside a plausible speaking rate did not parse correctly.
+# Conversational English runs ~2-3 words/second of speech; the bounds are wide
+# enough that only a structural mistake trips them.
+MIN_WORDS_PER_SPEECH_SECOND = 0.3
+MAX_WORDS_PER_SPEECH_SECOND = 8.0
+MIN_WORDS = 20
+
+# The AMI test partition as published by pyannote/AMI-diarization-setup, verified
+# against the repository. Used only when the API listing is unavailable.
+FALLBACK_MEETING_IDS = (
+    "EN2002a", "EN2002b", "EN2002c", "EN2002d",
+    "ES2004a", "ES2004b", "ES2004c", "ES2004d",
+    "IS1009a", "IS1009b", "IS1009c", "IS1009d",
+    "TS3003a", "TS3003b", "TS3003c", "TS3003d",
+)
+
+# `EN2002a` -> `EN2002`: the sessions of one meeting series share a room and,
+# more to the point, the same four people.
+SERIES = re.compile(r"^(?P<series>.+?)(?P<session>[a-z])$")
+
+
+# The Edinburgh mirror throttles GitHub-hosted runners: on 2026-11-01, five
+# dispatches started together got HTTP 403 on most files and one transfer cut
+# off at 17 MB of 68 MB, while the same URLs had served every run before. So a
+# download is retried with backoff and resumed from where it stopped, rather
+# than one refusal costing the meeting.
+DOWNLOAD_ATTEMPTS = 4
+DOWNLOAD_BACKOFF_SECONDS = (10, 30, 90)
+RETRYABLE_HTTP_STATUSES = {403, 408, 429, 500, 502, 503, 504}
+USER_AGENT = "kurn-eval-fetch (+https://github.com/carlosmazzei/Kurn)"
+
+
+def download(url: str, destination: Path, *, attempts: int = DOWNLOAD_ATTEMPTS,
+             backoff: tuple[float, ...] = DOWNLOAD_BACKOFF_SECONDS,
+             opener=urllib.request.urlopen, sleep=time.sleep, timeout: int = 120) -> None:
+    """Download `url` to `destination`, resuming a partial file between attempts.
+
+    A transfer is complete only when the bytes on disk reach the length the
+    server announced; anything shorter is resumed with a `Range` request on the
+    next attempt instead of being restarted. Raises the last error when every
+    attempt fails, and leaves no partial file behind in that case.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(destination.name + ".part")
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        if attempt:
+            delay = backoff[min(attempt - 1, len(backoff) - 1)] if backoff else 0
+            print(f"[fetch] ami: retrying {url} in {delay:.0f}s ({last_error})", file=sys.stderr, flush=True)
+            sleep(delay)
+        offset = partial.stat().st_size if partial.exists() else 0
+        headers = {"User-Agent": USER_AGENT}
+        if offset:
+            headers["Range"] = f"bytes={offset}-"
+        try:
+            with opener(urllib.request.Request(url, headers=headers), timeout=timeout) as response:
+                status = getattr(response, "status", 200)
+                if offset and status != 206:
+                    # The server ignored the range: start over rather than append.
+                    offset = 0
+                announced = response.headers.get("Content-Length")
+                expected = offset + int(announced) if announced is not None else None
+                with open(partial, "ab" if offset else "wb") as handle:
+                    while chunk := response.read(1 << 20):
+                        handle.write(chunk)
+            received = partial.stat().st_size
+            if expected is not None and received < expected:
+                raise OSError(f"retrieval incomplete: got only {received} out of {expected} bytes")
+            partial.replace(destination)
+            return
+        except urllib.error.HTTPError as error:
+            last_error = error
+            if error.code == 416 and partial.exists():
+                # Range past the end: what is on disk is already the whole file.
+                partial.replace(destination)
+                return
+            if error.code not in RETRYABLE_HTTP_STATUSES:
+                break
+        except OSError as error:  # URLError, timeouts, truncated bodies
+            last_error = error
+    partial.unlink(missing_ok=True)
+    assert last_error is not None
+    raise last_error
+
+
+def fetch_json(url: str, timeout: int = 60):
+    headers = {"User-Agent": "kurn-eval-fetch"}
+    # Unauthenticated GitHub API calls are capped at 60/hour *per IP*, and
+    # GitHub-hosted runners share IPs -- so that budget is routinely already
+    # spent by somebody else and the listing 403s. A token, which the workflow
+    # passes as `github.token`, raises it to 1000/hour for the repository.
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read())
+
+
+def fetch_text(url: str, timeout: int = 60) -> str:
+    request = urllib.request.Request(url, headers={"User-Agent": "kurn-eval-fetch"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read().decode("utf-8")
+
+
+def clip_rttm(text: str, clip_seconds: float) -> str:
+    """Keep only turns that start before `clip_seconds`, truncated to it."""
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) < 8 or fields[0] != "SPEAKER":
+            continue
+        start, duration = float(fields[3]), float(fields[4])
+        if start >= clip_seconds:
+            continue
+        end = min(start + duration, clip_seconds)
+        fields[3] = f"{start:.3f}"
+        fields[4] = f"{end - start:.3f}"
+        rows.append(" ".join(fields))
+    return "\n".join(rows) + ("\n" if rows else "")
+
+
+def select_meetings(meeting_ids: list[str], count: int) -> list[str]:
+    """Pick `count` meetings, spreading across series before taking a second
+    session from any of them.
+
+    Plain `sorted(...)[:4]` returns `EN2002a`-`EN2002d`: four sessions of a
+    single meeting series, which is the same four people in the same room four
+    times over. Rotating through series instead yields four different groups --
+    roughly sixteen distinct speakers for the same audio budget, which is the
+    entire reason this corpus carries the weight it does.
+    """
+    by_series: dict[str, list[str]] = {}
+    for meeting_id in sorted(meeting_ids):
+        match = SERIES.match(meeting_id)
+        by_series.setdefault(match["series"] if match else meeting_id, []).append(meeting_id)
+
+    selected: list[str] = []
+    depth = 0
+    while len(selected) < count:
+        row = [sessions[depth] for sessions in by_series.values() if depth < len(sessions)]
+        if not row:
+            break
+        selected.extend(row)
+        depth += 1
+    return selected[:count]
+
+
+def speech_seconds(rttm_text: str) -> float:
+    """Total annotated speech in an RTTM, overlap counted once per turn."""
+    total = 0.0
+    for line in rttm_text.splitlines():
+        fields = line.split()
+        if len(fields) >= 8 and fields[0] == "SPEAKER":
+            total += float(fields[4])
+    return total
+
+
+def words_from_xml(data: bytes) -> list[tuple[float, str]]:
+    """`(starttime, word)` for every timed, non-punctuation `<w>` in one file."""
+    return [(start, text) for start, _end, text in timed_words_from_xml(data)]
+
+
+def timed_words_from_xml(data: bytes) -> list[tuple[float, float, str]]:
+    """`(starttime, endtime, word)` for every timed, non-punctuation `<w>`.
+
+    Everything else in the file -- `<vocalsound>`, `<gap>`, `<disfmarker>` --
+    is not lexical content and is skipped by only ever looking at `w` tags.
+    Untimed words exist (a handful per meeting) and are dropped rather than
+    guessed at: without a time they cannot be ordered against other speakers.
+    """
+    words: list[tuple[float, float, str]] = []
+    root = ET.fromstring(data)
+    for element in root.iter():
+        if element.tag.rsplit("}", 1)[-1] != "w":
+            continue
+        if element.get("punc") == "true":
+            continue
+        start = element.get("starttime")
+        text = (element.text or "").strip()
+        if start is None or not text:
+            continue
+        try:
+            begin = float(start)
+            end = float(element.get("endtime", start))
+        except ValueError:
+            continue
+        words.append((begin, max(begin, end), text))
+    return words
+
+
+def download_annotations(destination: Path) -> zipfile.ZipFile | None:
+    """AMI's manual annotation zip, or `None` if it cannot be had.
+
+    Downloaded once per fetch rather than per meeting -- it carries every
+    meeting's words, and it is the same host the audio comes from.
+    """
+    print(f"[fetch] ami: downloading manual annotations {ANNOTATIONS_URL}", flush=True)
+    try:
+        download(ANNOTATIONS_URL, destination)
+        return zipfile.ZipFile(destination)
+    except Exception as error:  # noqa: BLE001 - any failure means "no transcript"
+        print(
+            f"[fetch] ami: could not download/open the manual annotations ({error}); "
+            "meetings will be scored on DER only",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+
+
+def index_words_members(archive: zipfile.ZipFile) -> dict[str, list[str]]:
+    """meeting id -> its `words/*.words.xml` members."""
+    index: dict[str, list[str]] = {}
+    for name in archive.namelist():
+        match = WORDS_MEMBER.search(name)
+        if match:
+            index.setdefault(match["meeting"], []).append(name)
+    return index
+
+
+def transcript_for(
+    archive: zipfile.ZipFile,
+    members: list[str],
+    meeting_id: str,
+    clip_seconds: float,
+    rttm_speech: float,
+) -> str | None:
+    """Time-ordered words of one meeting's clip window, or `None` if implausible.
+
+    Merging every speaker's words into one time-ordered stream is exactly what a
+    WER reference needs: `WordErrorRate` scores the text the pipeline produced,
+    not who said it, so no speaker mapping is involved and none can go wrong.
+    """
+    words: list[tuple[float, str]] = []
+    for member in members:
+        try:
+            words.extend(words_from_xml(archive.read(member)))
+        except (ET.ParseError, KeyError) as error:
+            print(f"[fetch] ami: {meeting_id}: could not parse {member} ({error})", file=sys.stderr, flush=True)
+            return None
+
+    words = sorted((start, text) for start, text in words if start < clip_seconds)
+    if len(words) < MIN_WORDS:
+        print(
+            f"[fetch] ami: {meeting_id}: only {len(words)} word(s) in the first "
+            f"{clip_seconds}s, leaving it DER-only",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+
+    rate = len(words) / rttm_speech if rttm_speech > 0 else 0.0
+    if not MIN_WORDS_PER_SPEECH_SECOND <= rate <= MAX_WORDS_PER_SPEECH_SECOND:
+        print(
+            f"[fetch] ami: {meeting_id}: {len(words)} words over {rttm_speech:.1f}s of annotated "
+            f"speech is {rate:.2f} words/s, outside the plausible range -- the annotation layout "
+            "has probably changed. Leaving it DER-only rather than scoring against a bad reference.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+
+    return " ".join(text for _, text in words) + "\n"
+
+
+def speaker_attributed_reference(
+    archive: zipfile.ZipFile,
+    members: list[str],
+    meeting_id: str,
+    clip_seconds: float,
+) -> list[dict]:
+    """The clip's words as SegLST, one entry per word, labelled by AMI agent.
+
+    SegLST is `meeteval`'s native format, and what its speaker-attributed
+    metrics (cpWER, tcpWER -- the CHiME and NOTSOFAR meeting-transcription
+    measures) read. Speaker labels are AMI's agent slots (`A`-`E`), which is
+    fine: those metrics score under the best speaker permutation, like DER.
+    Called only once `transcript_for` accepted the same words, so it needs no
+    plausibility check of its own.
+    """
+    entries: list[dict] = []
+    for member in members:
+        agent = WORDS_MEMBER.search(member)["agent"]
+        for start, end, text in timed_words_from_xml(archive.read(member)):
+            if start >= clip_seconds:
+                continue
+            entries.append({
+                "session_id": meeting_id,
+                "speaker": agent,
+                "start_time": round(start, 3),
+                "end_time": round(min(end, clip_seconds), 3),
+                "words": text,
+            })
+    entries.sort(key=lambda entry: (entry["start_time"], entry["speaker"]))
+    return entries
+
+
+def is_cached(out_dir: Path, meeting_id: str) -> bool:
+    """Whether a previous fetch left a usable clip and reference for `meeting_id`."""
+    audio = out_dir / f"{meeting_id}.audio.wav"
+    rttm = out_dir / f"{meeting_id}.reference.rttm"
+    return audio.is_file() and audio.stat().st_size > 0 and rttm.is_file() and rttm.stat().st_size > 0
+
+
+def write_transcript(archive: zipfile.ZipFile, words_index: dict[str, list[str]], out_dir: Path,
+                     meeting_id: str, clip_seconds: float, clipped_rttm: str) -> int:
+    """Write the WER references for one meeting; 1 if written, 0 if left DER-only."""
+    if meeting_id not in words_index:
+        print(
+            f"[fetch] ami: {meeting_id}: no words/*.words.xml in the annotation zip, leaving it DER-only",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 0
+    transcript = transcript_for(
+        archive,
+        words_index[meeting_id],
+        meeting_id,
+        clip_seconds,
+        speech_seconds(clipped_rttm),
+    )
+    if not transcript:
+        return 0
+    (out_dir / f"{meeting_id}.reference.txt").write_text(transcript, encoding="utf-8")
+    seglst = speaker_attributed_reference(archive, words_index[meeting_id], meeting_id, clip_seconds)
+    (out_dir / f"{meeting_id}.reference.seglst.json").write_text(
+        json.dumps(seglst, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return 1
+
+
+def fetch(entry: dict, out_dir: Path) -> None:
+    """Fetch one AMI corpus entry into `out_dir`."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    meeting_count = int(entry.get("meeting_count", 2))
+    clip_seconds = float(entry.get("clip_seconds", 300))
+    language = entry["language"]
+    license_text = entry.get("license", "")
+    corpus_name = entry.get("corpus_name", "AMI Meeting Corpus (Mix-Headset)")
+
+    print(f"[fetch] ami: listing {GITHUB_API}", flush=True)
+    try:
+        entries = fetch_json(GITHUB_API)
+        meeting_ids = sorted(
+            entry["name"][: -len(".rttm")] for entry in entries if entry["name"].endswith(".rttm")
+        )
+        if not meeting_ids:
+            raise ValueError("no .rttm files under only_words/rttms/test")
+    except Exception as error:  # noqa: BLE001 - listing is a convenience, not the corpus
+        # Discovering the IDs is preferred because a hardcoded list goes stale
+        # if the upstream partition changes. But losing the whole corpus to a
+        # shared-IP rate limit is far worse than one drifted ID: AMI is the only
+        # meeting-shaped material here, so degrade instead of failing.
+        print(
+            f"[fetch] ami: could not list the test RTTMs ({error}); "
+            f"falling back to the known AMI test-set meeting IDs. "
+            "Set GITHUB_TOKEN to use the authenticated API instead.",
+            file=sys.stderr,
+            flush=True,
+        )
+        meeting_ids = list(FALLBACK_MEETING_IDS)
+
+    meeting_ids = select_meetings(meeting_ids, meeting_count)
+    print(f"[fetch] ami: selected {', '.join(meeting_ids)}", flush=True)
+
+    # A meeting the dataset cache already holds is not fetched again: every
+    # request avoided is one the mirror cannot refuse.
+    cached = {meeting_id for meeting_id in meeting_ids if is_cached(out_dir, meeting_id)}
+    needs_annotations = any(
+        not (out_dir / f"{meeting_id}.reference.txt").exists() for meeting_id in meeting_ids
+    )
+    annotations_path = Path(tempfile.gettempdir()) / "ami_public_manual.zip"
+    archive = download_annotations(annotations_path) if needs_annotations else None
+    words_index = index_words_members(archive) if archive else {}
+
+    written: list[str] = []
+    scored_wer = 0
+    for meeting_id in meeting_ids:
+        print(f"[fetch] ami: {meeting_id}", flush=True)
+        if meeting_id in cached:
+            if not (out_dir / f"{meeting_id}.reference.txt").exists() and archive is not None:
+                clipped_rttm = (out_dir / f"{meeting_id}.reference.rttm").read_text(encoding="utf-8")
+                scored_wer += write_transcript(archive, words_index, out_dir, meeting_id, clip_seconds, clipped_rttm)
+            elif (out_dir / f"{meeting_id}.reference.txt").exists():
+                scored_wer += 1
+            print(f"[fetch] ami: {meeting_id}: reusing the cached clip", flush=True)
+            written.append(meeting_id)
+            continue
+        try:
+            rttm = fetch_text(f"{RAW_BASE}/{meeting_id}.rttm")
+        except Exception as error:
+            print(f"[fetch] ami: {meeting_id}: could not download RTTM ({error}), skipping", file=sys.stderr, flush=True)
+            continue
+
+        clipped_rttm = clip_rttm(rttm, clip_seconds)
+        if not clipped_rttm.strip():
+            print(f"[fetch] ami: {meeting_id} has no speech in the first {clip_seconds}s, skipping", file=sys.stderr, flush=True)
+            continue
+
+        audio_url = f"{AUDIO_BASE}/{meeting_id}/audio/{meeting_id}.Mix-Headset.wav"
+        raw_path = out_dir / f"{meeting_id}.full.wav"
+        try:
+            download(audio_url, raw_path)
+        except Exception as error:
+            print(f"[fetch] ami: {meeting_id}: could not download {audio_url} ({error}), skipping", file=sys.stderr, flush=True)
+            continue
+
+        clipped_path = out_dir / f"{meeting_id}.audio.wav"
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(raw_path), "-t", str(clip_seconds), str(clipped_path)],
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as error:
+            print(f"[fetch] ami: {meeting_id}: ffmpeg failed ({error}), skipping", file=sys.stderr, flush=True)
+            raw_path.unlink(missing_ok=True)
+            continue
+        finally:
+            if raw_path.exists():
+                raw_path.unlink(missing_ok=True)
+
+        (out_dir / f"{meeting_id}.reference.rttm").write_text(clipped_rttm, encoding="utf-8")
+        if archive is not None:
+            scored_wer += write_transcript(archive, words_index, out_dir, meeting_id, clip_seconds, clipped_rttm)
+
+        written.append(meeting_id)
+
+    if archive is not None:
+        archive.close()
+        annotations_path.unlink(missing_ok=True)
+
+    if not written:
+        raise SystemExit("ami: 0 meetings fetched successfully.")
+
+    (out_dir / "dataset.json").write_text(
+        json.dumps({"language": language, "corpus": corpus_name, "license": license_text}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    scoring = f"{scored_wer} with WER+DER, {len(written) - scored_wer} DER-only"
+    print(f"[fetch] ami: wrote {len(written)} meeting(s) to {out_dir} ({scoring})", flush=True)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--meeting-count", type=int, default=2)
+    parser.add_argument("--clip-seconds", type=float, default=300)
+    parser.add_argument("--language", default="english")
+    parser.add_argument("--license", default="CC BY 4.0 (AMI Corpus); MIT (RTTM setup)")
+    parser.add_argument("--corpus-name", default="AMI Meeting Corpus (Mix-Headset)")
+    args = parser.parse_args()
+
+    entry = {
+        "language": args.language,
+        "license": args.license,
+        "corpus_name": args.corpus_name,
+        "meeting_count": args.meeting_count,
+        "clip_seconds": args.clip_seconds,
+    }
+    fetch(entry, args.out)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

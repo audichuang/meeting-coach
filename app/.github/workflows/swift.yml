@@ -1,0 +1,549 @@
+name: iOS CI
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*.*.*" ]
+  pull_request:
+    branches: [ "main" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ startsWith(github.ref, 'refs/tags/v') && 'release' || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast, no-simulator signal: SwiftLint, the two config-file validators, and
+  # localization key-set parity. None of this needs a booted simulator, so it
+  # used to pay for one (inside the old single `build-and-test` job) purely
+  # to sit ahead of the build step — splitting it out (H10 PR 24, "split pure/
+  # unit, simulator integration, and UI/accessibility signals") reports a
+  # lint/config failure in the time SwiftLint itself takes, not after a
+  # multi-minute simulator-runtime download.
+  lint-and-validate:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install SwiftLint
+        run: |
+          if ! command -v swiftlint >/dev/null 2>&1; then
+            brew install swiftlint
+          fi
+
+      - name: Lint
+        run: swiftlint lint --config .swiftlint.yml --reporter github-actions-logging
+
+      # The github-actions-logging reporter above doesn't include file/line in
+      # its console output, and SwiftLint lints in parallel, so "Linting 'X'"
+      # progress lines and violation reports interleave in whatever order
+      # workers finish — adjacency in the log does NOT indicate which file a
+      # violation belongs to. This step re-lints (read-only, `|| true` so it
+      # never itself fails the job) with the `json` reporter, which does
+      # carry exact file/line, and uploads it so violations can be attributed
+      # without a local Xcode/swiftlint install.
+      - name: Generate lint report (file/line diagnostics)
+        if: always()
+        run: swiftlint lint --config .swiftlint.yml --reporter json > swiftlint-report.json || true
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: swiftlint-report
+          path: swiftlint-report.json
+          retention-days: 14
+
+      # SwiftLint does not read .strings, and Xcode compiles them into a binary
+      # plist that silently collapses duplicate keys — so a duplicate is
+      # invisible to both the linter and the test suite. Check the sources.
+      - name: Check localization files
+        run: |
+          keys() { grep -o '^"[^"]*"' "$1" | sort; }
+          reference=Kurn/Resources/en.lproj/Localizable.strings
+          status=0
+          for f in Kurn/Resources/*.lproj/Localizable.strings; do
+            dupes=$(keys "$f" | uniq -d)
+            if [ -n "$dupes" ]; then
+              echo "::error file=$f::duplicate keys: $(echo $dupes | tr '\n' ' ')"
+              status=1
+            fi
+            if ! diff -q <(keys "$reference" | uniq) <(keys "$f" | uniq) >/dev/null; then
+              echo "::error file=$f::key set differs from en.lproj"
+              diff <(keys "$reference" | uniq) <(keys "$f" | uniq) || true
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Validate App Store metadata
+        run: |
+          python3 Tools/validate_store_metadata.py
+          ruby -r ./fastlane/accessibility_labels -e 'AccessibilityLabels.load("fastlane/accessibility.json")'
+
+  # H10 PR 24: allow-listed checks for a production fatalError/
+  # preconditionFailure, a silently-dropped ModelContext save, an ad hoc
+  # URLSession bypassing the app's sanctioned transport seams, and a raw
+  # error description logged at `.public`. Pure text scanning over Swift
+  # sources, so it needs neither Xcode nor a simulator — reports in seconds,
+  # in parallel with everything else. See Tools/check_static_policy.py's own
+  # header for what is and is not covered and why.
+  static-policy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run static policy checks
+        run: python3 Tools/check_static_policy.py
+
+      - name: Test the coverage tools
+        run: python3 -m unittest discover -s Tools/tests -t .
+
+  # Simulator-integration signal: KurnTests (Swift Testing unit/integration
+  # suite) plus KurnSwiftDataTests (split into its own test target for
+  # process isolation — see the scheme's own comment). Reports separately
+  # from ui-accessibility-tests below (H10 PR 24, item 3) so a flaky UI-test
+  # launch can never obscure a deterministic data-integrity failure in this
+  # suite, or vice versa.
+  unit-tests:
+    runs-on: macos-26
+
+    env:
+      XCODE_PROJECT: Kurn.xcodeproj
+      XCODE_SCHEME: Kurn
+      IOS_DESTINATION: platform=iOS Simulator,name=iPhone 17
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - uses: ./.github/actions/prepare-simulator
+
+      # Shared (same key) with the ui-tests shards below, since they all
+      # resolve the same packages from the same scheme.
+      - uses: ./.github/actions/cache-spm-packages
+
+      - name: Build and test
+        run: |
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -destination "$IOS_DESTINATION" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/TestResults.xcresult" \
+            -enableCodeCoverage YES \
+            -only-testing:KurnTests \
+            -only-testing:KurnSwiftDataTests \
+            clean test
+
+      - name: Collect failure diagnostics
+        if: failure()
+        uses: ./.github/actions/collect-failure-diagnostics
+        with:
+          artifact-name: unit-tests-failure-diagnostics
+
+      - name: Export and upload coverage
+        if: always()
+        uses: ./.github/actions/upload-xcode-coverage
+        with:
+          flag: unittests
+          output-file: coverage-unit-tests.lcov
+          codecov-token: ${{ secrets.CODECOV_TOKEN }}
+
+  # UI/accessibility signal: KurnUITests — AccessibilityAuditUITests,
+  # ModelStoreRecoveryUITests and the flow suites (ScreenshotUITests stays
+  # excluded here exactly as it is in the scheme — it needs fastlane's
+  # snapshot setup and runs via `fastlane screenshots` instead). Split from
+  # unit-tests above for the same reason: a simulator launch/UI flake and a
+  # data-integrity regression should never share one red check.
+  #
+  # The flow suites under KurnUITests/Flows run here since their flake rate
+  # measured 0/5 in reliability-hardening.yml's `ui-flake-rate` lane. A suite that starts flaking goes
+  # back behind a -skip-testing line until it is fixed and re-measured.
+  #
+  # UI tests run serially on one simulator and each relaunches the app, so
+  # the suite is sharded across two runners (about half the wall time each)
+  # rather than parallelized on clones of one simulator, which a 3-core
+  # runner would make flakier. The `flows` shard names the two long flow
+  # suites; `main` runs everything else in KurnUITests, so a new test class
+  # lands in a shard without anyone having to list it.
+  #
+  # Test timeouts turn a hung UI test (a dialog nothing dismisses, a wait on
+  # an element that never comes) into a failure with diagnostics after four
+  # minutes, instead of the job sitting until its own timeout. The slowest
+  # flow takes under two.
+  ui-tests:
+    name: ui-tests (${{ matrix.shard }})
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: main
+            selection: >-
+              -only-testing:KurnUITests
+              -skip-testing:KurnUITests/ScreenshotUITests
+              -skip-testing:KurnUITests/LibraryFlowUITests
+              -skip-testing:KurnUITests/SettingsFlowUITests
+          - shard: flows
+            selection: >-
+              -only-testing:KurnUITests/LibraryFlowUITests
+              -only-testing:KurnUITests/SettingsFlowUITests
+
+    env:
+      XCODE_PROJECT: Kurn.xcodeproj
+      XCODE_SCHEME: Kurn
+      IOS_DESTINATION: platform=iOS Simulator,name=iPhone 17
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - uses: ./.github/actions/prepare-simulator
+
+      - uses: ./.github/actions/cache-spm-packages
+
+      - name: Build and test
+        env:
+          TEST_SELECTION: ${{ matrix.selection }}
+        run: |
+          # Word splitting is intended: the selection is a list of flags.
+          # shellcheck disable=SC2086
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -destination "$IOS_DESTINATION" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/TestResults.xcresult" \
+            -enableCodeCoverage YES \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 240 \
+            -maximum-test-execution-time-allowance 600 \
+            $TEST_SELECTION \
+            clean test
+
+      # Failed UI/accessibility-audit tests attach their own screenshots to
+      # the .xcresult bundle automatically (XCTest's failure-screenshot
+      # capture); uploading the bundle carries them without a separate
+      # extraction step.
+      - name: Collect failure diagnostics
+        if: failure()
+        uses: ./.github/actions/collect-failure-diagnostics
+        with:
+          artifact-name: ui-tests-${{ matrix.shard }}-failure-diagnostics
+
+      - name: Export and upload coverage
+        if: always()
+        uses: ./.github/actions/upload-xcode-coverage
+        with:
+          flag: uitests
+          output-file: coverage-ui-tests-${{ matrix.shard }}.lcov
+          codecov-token: ${{ secrets.CODECOV_TOKEN }}
+
+  # One stable check for the sharded UI suite, so branch protection, the
+  # release jobs and coverage-gate keep depending on a single
+  # `ui-accessibility-tests` result however many shards there are.
+  ui-accessibility-tests:
+    needs: ui-tests
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Require every UI test shard to pass
+        env:
+          SHARDS_RESULT: ${{ needs.ui-tests.result }}
+        run: |
+          echo "ui-tests shards: $SHARDS_RESULT"
+          [ "$SHARDS_RESULT" = "success" ]
+
+  # Fast, Xcode-free signal for the KurnCore package (see CLAUDE.md,
+  # "Overview"): runs in seconds on
+  # Linux, well before the macOS jobs' simulator boot finishes, and proves
+  # the package's pure logic actually passes its tests rather than just
+  # compiling under Xcode. Deliberately no `needs:` on the other jobs so all
+  # of them run in parallel.
+  kurncore-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: swift test
+        working-directory: Packages/KurnCore
+        run: swift test --enable-code-coverage
+
+      # SwiftPM's coverage output is raw LLVM profile data, not a report.
+      # `--show-bin-path` names the build directory instead of searching for
+      # it, and `llvm-cov` is looked up through the toolchain's own resource
+      # path, since the resolved `swift` on PATH may be a version-manager
+      # proxy with no `llvm-cov` beside it. This step used to warn and exit 0
+      # when an input was missing, which left Codecov with no KurnCore report
+      # on every run without anyone noticing; it now fails, because
+      # coverage-gate needs the report.
+      - name: Export coverage report
+        working-directory: Packages/KurnCore
+        run: |
+          bin_path=$(swift build --show-bin-path)
+          profdata="$bin_path/codecov/default.profdata"
+          # The test product's name depends on the build system: the legacy
+          # one links `KurnCorePackageTests.xctest`, swift-build links
+          # `KurnCoreTests.so`. Both embed KurnCore's coverage mapping.
+          test_binary=""
+          for candidate in "$bin_path/KurnCorePackageTests.xctest" "$bin_path/KurnCoreTests.so"; do
+            if [ -f "$candidate" ]; then test_binary="$candidate"; break; fi
+          done
+          resource_dir=$(swift -print-target-info | python3 -c 'import json,sys; print(json.load(sys.stdin)["paths"]["runtimeResourcePath"])')
+          llvm_cov=""
+          for candidate in "$resource_dir/../../bin/llvm-cov" "$(dirname "$(readlink -f "$(command -v swift)")")/llvm-cov" "$(command -v llvm-cov || true)"; do
+            if [ -n "$candidate" ] && [ -x "$candidate" ]; then llvm_cov="$candidate"; break; fi
+          done
+          echo "profdata=$profdata binary=$test_binary llvm-cov=$llvm_cov"
+          if [ ! -f "$profdata" ] || [ -z "$test_binary" ] || [ -z "$llvm_cov" ]; then
+            echo "::error::KurnCore coverage export could not find its inputs"
+            ls -la "$bin_path" "$bin_path/codecov" || true
+            exit 1
+          fi
+          "$llvm_cov" export -format=lcov "$test_binary" -instr-profile "$profdata" \
+            -ignore-filename-regex='(/\.build/|/Tests/)' \
+            > "$RUNNER_TEMP/kurncore-coverage.lcov"
+          files=$(grep -c '^SF:' "$RUNNER_TEMP/kurncore-coverage.lcov" || true)
+          echo "exported $files source files"
+          if [ "${files:-0}" -eq 0 ]; then
+            echo "::error::KurnCore coverage export produced no source files"
+            exit 1
+          fi
+
+      # Also printed to the log (not only the job summary), so the per-file
+      # table can be read from the job logs API as well as the run page.
+      - name: Summarize coverage
+        run: |
+          {
+            echo "### Coverage (kurncore)"
+            python3 Tools/coverage_report.py --top 40 --root "$GITHUB_WORKSPACE" "$RUNNER_TEMP/kurncore-coverage.lcov" \
+              || echo "_coverage summary failed; see the lcov artifact_"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the coverage report as an artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-kurncore.lcov
+          path: ${{ runner.temp }}/kurncore-coverage.lcov
+          retention-days: 7
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ${{ runner.temp }}/kurncore-coverage.lcov
+          flags: kurncore
+          disable_search: true
+          fail_ci_if_error: false
+
+  # The coverage gate (CLAUDE.md "Coverage gate"). Unions the three lcov reports and fails when the in-scope code
+  # (Tools/coverage_scope.json) drops below the ratchet in
+  # Tools/coverage_floor.json, or when a pull request adds executable
+  # in-scope lines that are less than 80% covered. Lives here rather than in
+  # Codecov's status checks so a Codecov outage can never block a merge.
+  # Runs only when every test job passed: a failing test already blocks the
+  # change, and a partial report would read as a coverage drop.
+  coverage-gate:
+    needs: [unit-tests, ui-accessibility-tests, kurncore-linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The pull_request checkout is GitHub's merge commit; its first
+          # parent is the base branch the tests were run against.
+          fetch-depth: 2
+
+      - name: Download coverage reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-*.lcov
+          path: ${{ runner.temp }}/coverage
+          merge-multiple: true
+
+      - name: Check coverage
+        env:
+          PATCH_ARGS: ${{ github.event_name == 'pull_request' && '--patch-base HEAD^1' || '' }}
+        run: |
+          ls -la "$RUNNER_TEMP/coverage"
+          set -o pipefail
+          python3 Tools/coverage_gate.py --root "$GITHUB_WORKSPACE" $PATCH_ARGS \
+            "$RUNNER_TEMP/coverage/coverage-unit-tests.lcov" \
+            "$RUNNER_TEMP/coverage/coverage-ui-tests-main.lcov" \
+            "$RUNNER_TEMP/coverage/coverage-ui-tests-flows.lcov" \
+            "$RUNNER_TEMP/coverage/kurncore-coverage.lcov" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Where the uncovered in-scope lines are, file by file, in the log as
+      # well as the summary: the lcov artifacts expire, and the log is what a
+      # contributor (or an agent without artifact access) can read back.
+      - name: Rank files by uncovered lines
+        if: always()
+        run: |
+          python3 Tools/coverage_report.py --root "$GITHUB_WORKSPACE" --top 60 \
+            "$RUNNER_TEMP/coverage/coverage-unit-tests.lcov" \
+            "$RUNNER_TEMP/coverage/coverage-ui-tests-main.lcov" \
+            "$RUNNER_TEMP/coverage/coverage-ui-tests-flows.lcov" \
+            "$RUNNER_TEMP/coverage/kurncore-coverage.lcov" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  release:
+    needs: [lint-and-validate, static-policy, unit-tests, ui-accessibility-tests, kurncore-linux, coverage-gate]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # The only job in this workflow that writes to the repository (creates a
+    # GitHub Release). Every other job only needs to read — the workflow-
+    # level default above is `contents: read`.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Publish GitHub release
+        run: bundle exec fastlane github_release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  beta:
+    needs: [lint-and-validate, static-policy, unit-tests, ui-accessibility-tests, kurncore-linux, coverage-gate]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-26
+    # Gates the actual TestFlight upload behind the `release` GitHub
+    # Environment (required reviewers, if configured) so a stray tag push
+    # still waits for manual approval before anything is signed and
+    # uploaded to App Store Connect.
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      # H10 PR 25, item 7: a workflow step runs only after the `release`
+      # environment's approval is already granted, so this can't appear
+      # *before* that decision — GitHub's own approval UI is the only
+      # surface that could, and this workflow can't add to it. What this can
+      # do is leave a durable, hard-to-miss record on the run itself, for
+      # whoever reviews it during or after the fact.
+      - name: Record the physical release checklist reminder
+        run: |
+          {
+            echo "## Physical release checklist"
+            echo
+            echo "Confirm \`docs/release-physical-checklist.md\` was run on a physical device"
+            echo "against this build (or the most recent equivalent build) — this run's approval"
+            echo "does not verify that on its own."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build and upload to TestFlight
+        run: bundle exec fastlane beta
+        env:
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+
+  store-assets:
+    needs: [lint-and-validate, static-policy, unit-tests, ui-accessibility-tests, kurncore-linux, coverage-gate]
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/screenshots.yml
+    with:
+      upload: true
+    secrets: inherit
+
+  submit:
+    needs: [beta, store-assets]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: app-store-submission
+      cancel-in-progress: false
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      # Same reminder as `beta`'s, repeated here because `submit` is the
+      # actual point of no return — the build goes to Apple after this.
+      - name: Record the physical release checklist reminder
+        run: |
+          {
+            echo "## Physical release checklist"
+            echo
+            echo "Confirm \`docs/release-physical-checklist.md\` was run on a physical device"
+            echo "against this build before it goes to App Review — this run's approval does"
+            echo "not verify that on its own."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Submit processed build for App Review
+        run: bundle exec fastlane submit_review
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}

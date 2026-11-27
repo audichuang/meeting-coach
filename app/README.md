@@ -1,0 +1,786 @@
+<p align="center">
+  <img src="assets/icon-rounded.png" alt="Kurn icon" width="100" />
+</p>
+
+<h1 align="center">Kurn</h1>
+
+[![Download on the App Store](https://img.shields.io/badge/Download_on_the-App_Store-0D96F6.svg?logo=apple&logoColor=white)](https://apps.apple.com/app/id6804278920)
+[![iOS CI](https://github.com/carlosmazzei/Kurn/actions/workflows/swift.yml/badge.svg)](https://github.com/carlosmazzei/Kurn/actions/workflows/swift.yml)
+[![codecov](https://codecov.io/gh/carlosmazzei/Kurn/branch/main/graph/badge.svg)](https://codecov.io/gh/carlosmazzei/Kurn)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-iOS%2026%2B%20%7C%20watchOS%2010%2B-blue.svg)
+![Swift](https://img.shields.io/badge/Swift-6.0-orange.svg)
+![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-0A84FF.svg)
+![Architecture](https://img.shields.io/badge/architecture-local--first-2F855A.svg)
+![Privacy](https://img.shields.io/badge/privacy-no%20tracking-2F855A.svg)
+
+Kurn is a local-first iOS and watchOS app for recording meetings,
+transcribing audio, identifying speakers, and generating structured AI
+summaries. It is built with Swift 6, SwiftUI, SwiftData, AVFoundation, Apple's
+Speech framework, ActivityKit, and WatchConnectivity.
+
+Recordings and meeting data are stored on device by default. Transcription
+runs locally unless the user chooses a cloud (Whisper-compatible) provider;
+optional on-device models require an explicit download. Cloud AI features
+send data only to the configured provider.
+
+> **Kurn is available on the App Store:**
+> [apps.apple.com/app/id6804278920](https://apps.apple.com/app/id6804278920).
+> You can also build it yourself from this repo (see
+> [Getting Started](#getting-started)).
+
+## Current App
+
+- Native iPhone and iPad app targeting iOS 26.0 or newer, built around the
+  system's Liquid Glass navigation chrome.
+- Companion Apple Watch app targeting watchOS 10.0 or newer.
+- Lock Screen and Dynamic Island Live Activity for active recordings.
+- Local SwiftData store for meetings, recordings, speakers, transcripts, and
+  summaries.
+- Local `.m4a` audio files saved in a protected subdirectory of the app's
+  Documents directory, encrypted at rest with iOS Data Protection and gated
+  behind Face ID / Touch ID / passcode once per session by default.
+- UI localized into 7 languages, and transcription supports every language
+  Whisper does — see [Supported Languages](#supported-languages).
+- App Privacy Manifest with no tracking and no collected data types.
+
+## Features
+
+- Create and edit meeting sessions with title, notes, and preferred language.
+- Record meetings in one or more audio segments.
+- Pause, resume, cancel, and stop recordings from the app.
+- Minimize the recorder to a floating mini bar and keep using the app while
+  the meeting records.
+- Control active recordings from the Lock Screen, Dynamic Island, or Apple
+  Watch.
+- Mirror recording state and the elapsed time to the Watch app.
+- Search meetings and filter them by date range, tags, transcription status,
+  summary presence, and duration.
+- Organize meetings into user-defined folders, mark them favorite, or archive
+  them, alongside built-in All / Inbox / Favorites / Archive views. On iPad the
+  folder list is a persistent sidebar column instead of a sheet.
+- Tag meetings and manage tags globally (rename, recolor, merge, delete), with
+  optional LLM-based tag suggestions from the transcript.
+- Save a filter as a Smart Folder that dynamically lists matching meetings.
+- View folder analytics: meeting counts, durations, status breakdown, tag
+  distribution, and top speakers.
+- Attach PDFs to a meeting — from inside it, or shared from another app — so
+  summaries use them together with the transcript and photos.
+- Play saved recordings and seek from transcript timestamps.
+- Delete meetings and individual recording segments. Deletion moves audio into
+  a protected trash folder first and only purges it once the SwiftData
+  mutation has committed, so a failed save or a crash mid-delete never leaves
+  a meeting pointing at missing audio.
+- Start a recording hands-free from Siri and Shortcuts (`StartRecordingIntent`),
+  from a Control Center / Lock Screen / Action Button control
+  (`StartRecordingControl`), or from a Home Screen, Lock Screen or StandBy
+  widget on iPhone and iPad (`StartRecordingWidget`), without unlocking the
+  app first.
+- Chat with your meetings and search them semantically, on device: transcripts
+  are embedded with Apple's `NaturalLanguage` framework and retrieval-grounded
+  answers come from the selected AI provider.
+- Optional, off-by-default derived artifacts: a per-meeting wiki article,
+  free-form documents synthesized across meetings, and an LLM correction pass
+  over the transcript with a change-magnitude guardrail.
+- Recognize returning voices: when a new speaker's voiceprint closely matches
+  a named speaker from another meeting, Kurn suggests the name for
+  confirmation — it never renames silently.
+- Track local audio storage usage, manage downloaded on-device transcription
+  models, and reset all app data from Settings.
+- A single **Health & Recovery** screen in Settings aggregates pending capture
+  recovery, quarantined audio, degraded transcripts, failed transcription jobs,
+  corrupt on-device models and recent failure codes, and dispatches the same
+  repair actions the per-item screens use.
+- Full VoiceOver support, Dynamic Type, and Reduce Motion throughout the app,
+  the Watch companion, and the Lock Screen/Dynamic Island Live Activity — see
+  [Accessibility](#accessibility).
+
+## Recording And Transcription
+
+- Records AAC `.m4a` audio through an `AVAudioEngine` input tap.
+- Supports whole-room and focused-speaker microphone pickup preferences.
+- Supports high, standard, and low audio quality presets.
+- Handles audio interruptions and route changes, including automatic pause on
+  relevant route changes.
+- Optional live transcription preview while recording (opt-in, off by
+  default) — a rolling on-device preview that never replaces the full
+  transcript generated afterward. Choose automatic Parakeet EOU / Nemotron
+  Multilingual (the default) or Nemotron Unified with its own streaming download.
+- Cleans audio before transcription with preprocessing, while falling back to
+  the original file if preprocessing fails.
+- Transcribes on device with Apple's Speech framework, Whisper via whisper.cpp,
+  or a choice of six FluidAudio ASR models: Parakeet TDT v3 (the default),
+  Nemotron Unified 0.6B, Bark 3.0, Bark 3.0 Clean, Phonon-2, and Nemotron 3.5
+  Transcribe Lite. Parakeet and Unified support 25 European languages plus
+  Auto; the other four require **English** explicitly (not Auto).
+- Optionally transcribes with a cloud Whisper-compatible API using chunked
+  uploads for longer recordings. The transcription provider (OpenAI —
+  `whisper-1`, `gpt-4o-transcribe`, or `gpt-4o-mini-transcribe` — Groq,
+  ElevenLabs Scribe, or a custom OpenAI-compatible endpoint) is chosen
+  independently of the summary provider.
+- Runs speaker diarization with a choice of three on-device engines — a
+  lightweight built-in heuristic, FluidAudio's neural engine, or sherpa-onnx's
+  segmentation-first engine (a collapse-resistant alternative for far-field
+  audio, CPU-only) — and fuses speaker turns with transcript spans. A
+  transcription provider whose own response already includes speaker turns
+  (currently ElevenLabs Scribe) can be used as a fourth, no-download
+  diarization source instead.
+- Voice-activity detection and language detection are each independently
+  configurable between an always-available built-in engine and a FluidAudio
+  on-device model.
+- Within FluidAudio diarization, choose Pyannote (the default, with an optional
+  exact speaker count) or Nemotron 3 (up to eight speakers, no pinned count).
+  Nemotron 3 has no compatible voiceprints for voice-based identity matching;
+  review names after reruns because numbered labels cannot confirm identity.
+  Pyannote segmentation batches can be 4, 8, 16, or 32; 32
+  remains the default, while 8 is recommended to reduce memory use, not as a
+  measured speed or accuracy improvement.
+- FluidAudio model downloads require user consent for the selected model.
+  Missing or corrupt ASR, diarization, and live-preview weights require an
+  explicit download/repair in Settings, never a hidden runtime download.
+  Storage lists model variants separately; Unified batch and live share one
+  folder, so deleting it removes both. Language detection still uses a
+  separately consented Parakeet v3 download.
+- Lets users rename detected speakers.
+- Resumes chunked transcriptions after backgrounding, termination, or
+  interruption, continuing from the last completed chunk when the source and
+  settings still match. Non-default FluidAudio ASR models use five-minute
+  chunks; FluidAudio work resumes in the foreground.
+
+Transcription supports auto-detect plus every language OpenAI's Whisper model
+recognizes (101 options total) — see [Supported Languages](#supported-languages)
+for the full list and per-engine caveats.
+
+## Supported Languages
+
+Kurn's UI and its transcription-language list are independent and configured
+separately. The UI is localized into 7 languages (English, Brazilian
+Portuguese, Spanish, French, German, Italian, Chinese), while the
+transcription-language picker covers auto-detect plus every language Whisper
+supports (101 options).
+
+The full language lists, per-engine transcription support notes, and a guide
+for contributing a new UI language live in
+[`docs/supported-languages.md`](docs/supported-languages.md).
+
+## Accuracy And Evaluation
+
+Kurn's recognition accuracy is measured rather than asserted. `KurnTests/`
+implements word error rate and NIST diarization error rate, and the
+[pipeline evaluation workflow](.github/workflows/pipeline-eval.yml) runs the
+app's real pipeline over public benchmark audio once per configuration in the
+preprocessing × VAD × diarization × ASR-engine matrix, scoring each.
+
+Best WER measured per engine and corpus (lower is better), each the best of the
+four preprocessing × VAD combinations, with the FluidAudio (Pyannote) diarizer.
+AMI is four people around a table, the material that matches what Kurn records;
+LibriSpeech is read speech; CAMOES and CORAA are Portuguese interviews and
+spontaneous Brazilian speech. "—" means not measured: the engine cannot serve
+that language, or no run has scored it on that corpus.
+
+| Engine | AMI (meetings) | AMI DER (fused) | LibriSpeech | CAMOES (pt) | CORAA (pt) | Measured |
+| --- | --- | --- | --- | --- | --- | --- |
+| **On device** | | | | | | |
+| FluidAudio Parakeet v3 | 21.31% | 24.66% | 0.53% | 42.34% | 15.31% | 2026-11-03 ([en](https://github.com/carlosmazzei/Kurn/actions/runs/41693244971), [pt](https://github.com/carlosmazzei/Kurn/actions/runs/41693250571)) |
+| FluidAudio Nemotron Unified 0.6B | 28.07% | 29.68% | 0.53% | **35.04%** | **14.54%** | [2026-11-01](https://github.com/carlosmazzei/Kurn/actions/runs/41336072736) |
+| FluidAudio Phonon-2 | 22.35% | 22.07% | 0.53% | — | — | [2026-11-01](https://github.com/carlosmazzei/Kurn/actions/runs/41336072736) |
+| FluidAudio Bark 3.0 | 22.43% | 26.25% | 0.53% | — | — | [2026-11-01](https://github.com/carlosmazzei/Kurn/actions/runs/41336072736) |
+| FluidAudio Nemotron 3.5 Transcribe Lite | 23.00% | 21.88% | 5.26% | — | — | [2026-11-01](https://github.com/carlosmazzei/Kurn/actions/runs/41336072736) |
+| FluidAudio Bark 3.0 Clean | 30.34% | 26.93% | 0.53% | — | — | [2026-11-01](https://github.com/carlosmazzei/Kurn/actions/runs/41336072736) |
+| whisper.cpp large-v3-turbo | 26.00% | 31.40% | 0.53% | 40.51% | 19.39% | [2026-11-03](https://github.com/carlosmazzei/Kurn/actions/runs/41693244971) (pt: [2026-11-01](https://github.com/carlosmazzei/Kurn/actions/runs/41336084871)) |
+| whisper.cpp small | 27.65% | 44.65% | 1.05% | 54.38% | 29.08% | 2026-08-03 / 2026-08-09 / [2026-11-03](https://github.com/carlosmazzei/Kurn/actions/runs/41699664893) |
+| whisper.cpp base | 31.50%† | 44.04%† | 2.11% | 72.99% | 44.13% | 2026-11-01 ([1](https://github.com/carlosmazzei/Kurn/actions/runs/41315829712), [2](https://github.com/carlosmazzei/Kurn/actions/runs/41336084871)) |
+| **Cloud** | | | | | | |
+| ElevenLabs Scribe `scribe_v1` | **15.86%** | 19.13% | 0.53% | 42.70% | **12.50%** | [2026-11-03](https://github.com/carlosmazzei/Kurn/actions/runs/41699659363) (pt: [2026-09-26](https://github.com/carlosmazzei/Kurn/actions/runs/36272374417)) |
+| ElevenLabs Scribe `scribe_v2` | 16.01% | **19.01%** | 0.53% | 43.43% | 13.01% | [2026-11-03](https://github.com/carlosmazzei/Kurn/actions/runs/41699659363) (pt: [2026-11-01](https://github.com/carlosmazzei/Kurn/actions/runs/41305791412)) |
+| OpenAI `gpt-4o-mini-transcribe` | 24.31% | 24.72% | 0.53% | 46.35% | 17.69% | [2026-09-26](https://github.com/carlosmazzei/Kurn/actions/runs/36263668012) |
+| OpenAI `whisper-1` | 30.45% | 32.05% | 3.16% | 39.11% | 18.96% | [2026-09-26](https://github.com/carlosmazzei/Kurn/actions/runs/36263668012) |
+| Groq `whisper-large-v3` | 28.34% | 36.08% | 0.53% | 37.96% (36.13% with LLM correction) | 22.45% | [2026-11-03](https://github.com/carlosmazzei/Kurn/actions/runs/41702642987) (pt: [2026-08-03](https://github.com/carlosmazzei/Kurn/actions/runs/30800039020)) |
+| Groq `whisper-large-v3-turbo` | 26.38% | 28.47% | 0.53% | 40.51% | 20.66% | [2026-11-03](https://github.com/carlosmazzei/Kurn/actions/runs/41702642987) (pt: [2026-11-01](https://github.com/carlosmazzei/Kurn/actions/runs/41336088010)) |
+
+† 2–3 meetings (WER on 2, DER on 3); every other AMI cell is all four. AMI
+fused DER measured before 2026-11-01 (whisper.cpp `small`, OpenAI) predates a
+fusion fix that lowered it by ~9pp for Parakeet and ~13pp for ElevenLabs with
+the diarizer unchanged, so those two rows read high for that reason alone.
+
+Speaker diarization, raw DER of each diarizer's own turns (±0.25 s collar,
+lower is better):
+
+| Diarizer | AMI (4 meetings) | AMI cpWER (Parakeet v3) | VoxConverse (4 files) | Measured |
+| --- | --- | --- | --- | --- |
+| FluidAudio Nemotron 3 | 28.26% | **24.49%** | **1.39%** | 2026-11-03 ([AMI](https://github.com/carlosmazzei/Kurn/actions/runs/41694750856)), [2026-11-01](https://github.com/carlosmazzei/Kurn/actions/runs/41339676563) |
+| FluidAudio Pyannote (default) | **18.08%** | 33.28% | 10.62% | 2026-11-03 ([AMI](https://github.com/carlosmazzei/Kurn/actions/runs/41693244971)), [2026-09-26](https://github.com/carlosmazzei/Kurn/actions/runs/36258369898) |
+| sherpa-onnx | 37.41% | — | 23.32% | [2026-09-26](https://github.com/carlosmazzei/Kurn/actions/runs/36258371882) |
+| Heuristic | 49.92% | — | 30.54% | [2026-09-26](https://github.com/carlosmazzei/Kurn/actions/runs/36258369898) |
+
+cpWER is the word error rate of the speaker-attributed transcript, the closest
+single number to what a reader sees.
+
+What the numbers say, briefly:
+
+- **On device, Parakeet v3 is still the English engine to beat**; Phonon-2 ties
+  it on meetings and Bark 3.0 is close behind. In Portuguese, **Nemotron Unified is the most
+  accurate engine measured, cloud included, on CAMOES**, and second only to
+  ElevenLabs on CORAA. It is the weakest of the new models in English, so it is
+  a per-language choice.
+- **In the cloud, ElevenLabs Scribe is the most accurate on meetings**, and with
+  its own speaker turns it gives the best "who said what" transcript measured
+  (cpWER 17.06%, against ~35% for the same words attributed by Pyannote).
+  `scribe_v1` and `scribe_v2` tie.
+- **Nemotron 3 diarization beat Pyannote by a wide margin on VoxConverse**,
+  mostly by recovering one recording where Pyannote collapsed. On AMI it misses
+  more speech (higher raw DER) but mixes speakers up far less, so its
+  transcripts are better attributed (cpWER ~25% against ~33%). It is about
+  twice as slow and has no voiceprints for speaker matching.
+- **Apple Speech, the app's default transcription engine, has no number**: the
+  CI simulator does not support it. Speed and memory of the on-device models on
+  an iPhone are not measured here either.
+
+Two caveats travel with every number above: there is deliberately no pass/fail
+threshold, and the rates are comparable between runs over the same material
+(rows measured on different dates are a signal, not a controlled comparison) —
+**not** against published figures for the same corpora, since the text
+normalization here is language-neutral by design. Since 2026-09-26 each run is
+also re-scored with the reference tools (Whisper's normalizers, `meeteval`,
+`pyannote.metrics`); those "standard" figures are the ones to compare with
+published results.
+
+Every recorded run, the full per-configuration tables, and what the numbers do
+and do not mean live in
+[`docs/pipeline-evaluation.md`](docs/pipeline-evaluation.md).
+
+## AI Summaries
+
+Kurn can generate a structured meeting summary from existing transcripts.
+Summaries are template-driven: a template is a set of instructions, including
+the sections it wants, and the model replies in Markdown with one `##` heading
+per section. Sections render with emphasis, inline code, tables, task
+checkboxes, quotes and lists where helpful. Built-in templates cover General,
+Stand-up, Interview, and Outline; users can also create, edit, and delete
+their own custom templates in Settings.
+
+PDFs can be attached to a meeting as reference material — an agenda, a slide
+deck, a report — either with **Add PDF** in the meeting's Recordings tab or by
+sharing a PDF to Kurn from any other app (Files, Mail, Safari…) and picking the
+meeting it belongs to (or starting a new one). The text is read on device
+(PDFKit, with Vision OCR for scanned pages) and the file is stored encrypted
+next to the recordings. Every summary, the meeting's wiki, its chat and the
+documents generated from it then read that text alongside the transcript and
+photos, so names, figures and terms come out right; the model is told the
+documents are reference material, not something said in the meeting. A
+password-protected PDF is refused, and one with no readable text is kept but
+adds nothing to the prompt.
+
+Long transcripts are summarized in stages. The Summary tab keeps the generation
+state in place, shows progress for staged summaries, and lets the user cancel
+the current run without losing an existing summary.
+
+Supported summary providers:
+
+- Apple Intelligence — on-device Foundation Models (`FoundationModelsProvider`),
+  no API key and no network call; the default for new installs.
+- OpenAI
+- Anthropic
+- Google AI
+- Groq
+
+ElevenLabs is also a built-in provider, but transcription-only — it has no
+chat/summarize route, so it never appears as a summary provider choice.
+
+All LLM-backed features (summaries, chat, tag suggestions, wiki, documents,
+transcript correction) resolve through the same `ProviderFactory`, so the
+selected provider applies everywhere. Each cloud provider has selectable
+models in Settings. Cloud transcription uses a Whisper-compatible API chosen
+independently of the summary provider, from whichever provider that supports
+transcription (any OpenAI-compatible provider — OpenAI, Groq, or a custom
+endpoint — plus ElevenLabs) has a configured key — Anthropic and Google AI
+don't expose a transcription API, so they're only usable for summaries.
+
+## Configuration
+
+Kurn works without cloud credentials when using on-device transcription.
+Cloud features require user-provided API keys.
+
+- OpenAI key: required for OpenAI summaries, and usable for Whisper
+  transcription (`whisper-1`, `gpt-4o-transcribe`, or `gpt-4o-mini-transcribe`).
+- Anthropic key: required for Anthropic summaries.
+- Google AI key: required for Gemini summaries.
+- Groq key: required for Groq summaries, and usable for Whisper transcription
+  (Groq serves `whisper-large-v3`).
+- ElevenLabs key: usable for Whisper-compatible transcription only (Scribe,
+  `scribe_v1`), including its own native speaker diarization — no summary use.
+- API keys are stored in the Keychain; saving a key is an explicit action with
+  a typed success/failure outcome rather than a silent write.
+- Non-secret preferences are stored in `UserDefaults`.
+- Large downloads (on-device transcription and diarization models) are
+  Wi-Fi-only by default and require an explicit download action in Settings;
+  an "allow expensive network transfers" setting opts into
+  cellular/constrained paths. The network policy also applies to explicit
+  repair/download requests when cached files exist. Model downloads are
+  verified before use; missing-model buttons let users download again.
+
+Default preferences are managed in:
+
+`Kurn/Infrastructure/AppSettings.swift`
+
+Provider setup is handled through:
+
+`Kurn/Providers/ProviderFactory.swift`
+
+## Privacy
+
+Kurn is designed to avoid a backend service controlled by the app.
+
+- Audio files are saved locally in a protected subdirectory of the app's
+  Documents directory (`Documents/Recordings/`) with iOS Data Protection
+  (`FileProtectionType.completeUnlessOpen`), so the bytes are encrypted at
+  rest using a key derived from the device passcode.
+- Access to the recordings UI is gated behind Face ID / Touch ID / passcode
+  once per foreground session by default; the gate can be turned off in
+  Settings and the on-disk encryption stays active either way.
+- Meeting metadata, transcripts, summaries, speakers, and recordings are stored
+  locally with SwiftData.
+- API keys are stored in the Keychain.
+- ASR, diarization, and live-preview model loading is local-only; missing or
+  corrupt weights do not trigger a background download. Explicit model
+  downloads and opted-in cloud features use the network; the default summary
+  provider is Apple's on-device model.
+- Cloud provider calls go through a hardened HTTP boundary: request timeouts,
+  bounded retries, HTTPS-only URL validation with redirect limits, and a
+  per-provider circuit breaker that stops retrying a failing vendor.
+- Reliability diagnostics (see [Resilience](#resilience)) record only
+  operation IDs and error codes — never paths, titles, audio or transcript
+  text — and the exportable log is redacted the same way.
+- No analytics or tracking SDKs are included.
+- The privacy manifest declares no tracking and no collected data types.
+
+## Accessibility
+
+- Full VoiceOver support across the iOS app, the Watch companion
+  (`KurnWatch`), and the Lock Screen/Dynamic Island Live Activity
+  (`KurnLiveActivityExtension`) — every interactive control has a label, and
+  decorative-only elements (waveforms, status dots already redundant with
+  text) are hidden from the accessibility tree instead of read aloud.
+- Dynamic Type: reading text scales with the user's preferred text size via
+  semantic, Dynamic-Type-aware fonts. A few fixed-geometry elements (e.g. the
+  Recorder's timer) scale up to a capped size via `@ScaledMetric` rather than
+  unbounded, to avoid breaking a fixed-dimension layout.
+- Reduce Motion is respected: looping animations render their final static
+  state instead of animating when the setting is on.
+- Status is never conveyed by color alone — e.g. the Live Activity's
+  recording/paused indicator differs by icon shape, not just color.
+- The Watch and Live Activity targets are localized into the same 7 languages
+  as the main app, not just English/Portuguese, so VoiceOver reads the right
+  language everywhere.
+- Enforced by a SwiftLint guardrail (`accessibility_label_for_image`,
+  `accessibility_trait_for_button`, both build-breaking) and an automated UI
+  test (`KurnUITests/AccessibilityAuditUITests.swift`) that runs
+  `XCUIApplication.performAccessibilityAudit(for:)` over key screens in CI.
+- App Store Accessibility Nutrition Labels are declared in
+  `fastlane/accessibility.json`: VoiceOver, Larger Text, Reduced Motion, and
+  Differentiate Without Color Alone for iPhone, iPad, and Apple Watch.
+
+## Requirements
+
+- macOS with Xcode installed.
+- Xcode 26 or newer (the iOS 26 SDK is required). The project has been opened
+  with Xcode 26.5.
+- iOS 26.0 or newer for the main app.
+- watchOS 10.0 or newer for the Watch app.
+- An iOS simulator or a physical iPhone/iPad.
+- Optional: a paired Apple Watch or watchOS simulator for Watch remote control.
+- Optional: API keys for OpenAI, Anthropic, Google AI, Groq, or ElevenLabs.
+
+## Getting Started
+
+1. Open `Kurn.xcodeproj` in Xcode.
+2. Select the `Kurn` scheme.
+3. Choose an iOS simulator or a connected device.
+4. Press `Cmd + R` to build and run.
+5. Grant microphone permission when prompted.
+6. Grant speech recognition permission if you use on-device transcription.
+7. Open Settings in the app to configure transcription mode, language, audio
+   quality, microphone pickup, summary provider, model, and API keys.
+
+## Running In The Simulator
+
+In Xcode:
+
+1. Use the device picker in the toolbar.
+2. Select an iPhone simulator, such as `iPhone 17`.
+3. Run the app with `Cmd + R`.
+
+If no simulators are available, install an iOS runtime from:
+
+`Xcode > Settings > Platforms`
+
+For terminal builds, make sure the command line tools point to Xcode:
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+```
+
+Then build with:
+
+```bash
+xcodebuild \
+  -project Kurn.xcodeproj \
+  -scheme Kurn \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  build
+```
+
+Use another simulator name if `iPhone 17` is not installed locally.
+
+## Running Tests
+
+Tests use Swift Testing and are split across four targets:
+
+- `KurnTests` — unit tests for JSON parsing, Markdown export, SwiftData model
+  helpers, audio chunking and preprocessing, provider setup, formatting
+  helpers, the recording journal, the resource scheduler, and view model
+  behavior against an in-memory `ModelContainer`.
+- `KurnSwiftDataTests` — store boot, backup/salvage and other
+  concurrency-sensitive SwiftData suites, isolated in their own process.
+- `KurnUITests` — the accessibility audit (and the fastlane screenshot suite,
+  which only runs via `fastlane screenshots`).
+- `Packages/KurnCore/Tests` — the pure-Foundation package, runnable without
+  Xcode: `(cd Packages/KurnCore && swift test)`.
+
+Run tests from Xcode with `Cmd + U`, or from the terminal:
+
+```bash
+xcodebuild \
+  -project Kurn.xcodeproj \
+  -scheme Kurn \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  test
+```
+
+CI is configured in `.github/workflows/swift.yml` (`iOS CI`) and runs on every
+push to `main` and every pull request targeting it, as five independent jobs
+followed by a `coverage-gate`:
+`lint-and-validate` (SwiftLint, localization and store-metadata checks),
+`static-policy` (`python3 Tools/check_static_policy.py` — bans unchecked
+`save()`, `fatalError`, ad-hoc `URLSession`s and raw error text in public
+logs, against an allow-list baseline that fails when it goes stale),
+`unit-tests` (`KurnTests` + `KurnSwiftDataTests` on a macOS simulator),
+`ui-accessibility-tests` (`KurnUITests`, sharded across two runners) and `kurncore-linux` (`swift test`
+for `Packages/KurnCore` on Ubuntu).
+
+### Coverage
+
+The three test jobs export lcov reports (`Tools/xccov_to_lcov.py` reading
+the `.xcresult` coverage archive on macOS, `llvm-cov export` from SwiftPM's
+profile data on Linux) and upload
+them to [Codecov](https://codecov.io/gh/carlosmazzei/Kurn) under the
+`unittests`, `uitests` and `kurncore` flags, which is what the badge at the
+top of this file reports. Third-party SwiftPM checkouts and test sources are
+excluded so the number describes first-party production code. Codecov's own
+statuses stay informational (`codecov.yml` marks every status
+`informational: true`); the blocking check is the in-repo `coverage-gate` job
+(`Tools/coverage_gate.py`), which requires a PR's new in-scope lines to be at
+least 80% covered and holds the in-scope total and each layer at the ratchet
+recorded in `Tools/coverage_floor.json`. The scope — app logic and KurnCore,
+without SwiftUI view bodies and a short, justified list of exclusions — is
+`Tools/coverage_scope.json`; the target for it is 80%. `codecov.yml` also
+declares one Codecov *component* per architectural layer (Infrastructure,
+Providers, Models, Services, ViewModels, Views, KurnCore) so the PR comment
+shows where coverage moved, and `Tools/coverage_report.py` writes the same
+per-layer table plus the top uncovered files to each test job's summary.
+The watch app, the Live Activity extension and the App Intents are ignored
+until a job actually executes them. Every in-scope layer is currently above
+the 80% target (in-scope total ≈ 85%); the remaining file-level gaps are
+tracked in the [roadmap](docs/roadmap.md).
+
+### Reliability hardening lane
+
+`.github/workflows/reliability-hardening.yml` runs weekly and on demand
+rather than on every PR. It re-runs the concurrency-sensitive suites
+(capture ownership, sink faults, the recording journal, the circuit breaker,
+the reliability-event store, model downloads, the SwiftData store boot) under
+Thread Sanitizer, runs the unit-test selection in the Release configuration,
+and measures the UI-test flake rate over five attempts, reporting a
+`passed/total` count. There is no numeric flake-rate SLO, but the run itself
+fails whenever any attempt fails, so a regression shows as a red run instead
+of hiding in the summary.
+
+A second workflow, `.github/workflows/pipeline-eval.yml`, is a measurement run
+rather than a merge gate: it is dispatched on demand to score the recognition
+pipeline against public benchmark corpora. See
+[Accuracy And Evaluation](#accuracy-and-evaluation).
+
+## Releasing
+
+Kurn versions follow `vMAJOR.MINOR.PATCH`, tracked by `MARKETING_VERSION` /
+`CURRENT_PROJECT_VERSION` in `Kurn.xcodeproj`. Cutting a release is a two-step,
+Fastlane-driven process (see `fastlane/Fastfile`):
+
+1. A maintainer runs `bundle exec fastlane bump_version type:minor` (or
+   `type:patch` / `type:major`) locally. This bumps the version across all
+   targets, commits, tags the commit `vX.Y.Z`, and pushes both to `main`.
+2. Pushing the `vX.Y.Z` tag triggers the `release` job in
+   `.github/workflows/swift.yml` (gated on tag pushes), which runs once the
+   same six CI jobs that gate every push/PR pass, then publishes a
+   GitHub Release with auto-generated notes.
+
+Pushing the tag also starts the protected App Store pipeline. After the CI
+jobs, `beta` signs with `fastlane match`, uploads to TestFlight, and waits for
+Apple to finish processing; in parallel, the reusable screenshots workflow
+captures iPhone, iPad, and Watch assets and chains the marketing-screenshot
+renderer (`marketing-screenshots.yml`, real device frames) onto them, then
+`store_assets` reconciles the remote screenshot set (removing stale/duplicate images), uploads all assets
+to the exact tagged app version, and synchronizes draft Accessibility Nutrition
+Labels. Once both branches succeed, `submit` derives the exact version/build
+from the tagged project and offers it to App Review.
+TestFlight upload, assets upload, and submission each wait for administrator
+approval through the `release` GitHub Environment. After the first version is
+live, the protected `App Store Accessibility` workflow can publish the synced
+labels (Apple doesn't permit publishing them before a live version exists).
+Account-level setup and the public release after Apple's approval remain manual
+— see
+[`docs/app-store-submission-checklist.md`](docs/app-store-submission-checklist.md)
+for the full breakdown.
+
+## Linting
+
+Kurn uses SwiftLint for Swift style and static checks.
+
+Install locally with Homebrew:
+
+```bash
+brew install swiftlint
+```
+
+Run it from the repository root:
+
+```bash
+swiftlint lint --config .swiftlint.yml
+```
+
+If SwiftLint cannot load SourceKit, make sure the active developer directory
+points to Xcode:
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+```
+
+The GitHub Actions workflow installs SwiftLint and runs linting before the
+build/test step. Shared CI steps (SwiftPM cache, simulator preparation, failure
+diagnostics, coverage upload) live as composite actions under
+`.github/actions/`, and Dependabot keeps GitHub Actions, SwiftPM, Bundler and
+the other package manifests in the repo up to date.
+
+## Export
+
+Each summary and transcript of a meeting can be shared (or copied) in six
+formats, picked in the share sheet:
+
+- **Markdown** and **Obsidian** (YAML frontmatter plus `[[wikilinks]]` for
+  speakers, ready to drop into a vault).
+- **PDF** — paginated (A4 or Letter by region), with page numbers.
+- **Word (.docx)** — real Title/Heading/Quote/Code styles, so Word's
+  navigation pane and restyling work; opens in Word, Pages and Google Docs.
+- **HTML** — one self-contained page with no scripts or external resources.
+- **Plain text** — no formatting marks, for email, tickets or chat.
+
+The LLM-written summary Markdown is *rendered* in the rich formats — headings,
+lists and task boxes, bold/italic, code, quotes and tables — never dumped as
+raw syntax. Links keep only their text, as on screen. Section headings,
+labels and the date are written in the language of the summary (or of the
+transcript when exporting it alone), so a Portuguese summary reads "Resumo",
+"Transcrição", whatever language the app runs in. Every format renders the
+same format-neutral `ExportDocument`, so they differ only in presentation.
+
+Several meetings can be exported (or deleted) at once: tap **Select** on the
+meetings list, pick the meetings, then **Export**. Choose whether to include
+their latest summaries, their transcripts or both, and whether to get one file
+per meeting — one note each in an Obsidian vault — or a single file with every
+meeting grouped under its own heading, e.g. one PDF of a whole project.
+
+Export generation is implemented in:
+
+- `Kurn/Infrastructure/MeetingExport.swift` (meeting → `ExportDocument`, temp files)
+- `Kurn/Infrastructure/MeetingExportFormat.swift` and `PDFExportRenderer.swift`
+- `Packages/KurnCore/Sources/KurnCore/Export/` (document model, inline Markdown,
+  Markdown/plain-text/HTML/Word renderers, stored-ZIP writer)
+
+## Architecture
+
+The app follows an MVVM-style structure with `@Observable`, `@MainActor` view
+models, async service APIs, and a SwiftData model container.
+
+```text
+Kurn/
+├── KurnApp.swift                 # App entry point and SwiftData container
+├── ContentView.swift            # Root NavigationStack (NavigationSplitView on iPad)
+├── Models/                      # SwiftData @Model types and shared value types
+├── Views/                       # SwiftUI screens and reusable views
+├── ViewModels/                  # Main-actor observable coordinators
+├── Services/                    # Audio, diarization, live preview, summaries, folder analytics
+│   └── Pipeline/                # Transcription pipeline stages (protocol seams,
+│                                 # each with a built-in and a FluidAudio engine)
+├── Providers/                   # Apple Foundation Models, OpenAI, Anthropic, Google AI,
+│                                 # Groq, and ElevenLabs clients behind one LLMProvider seam
+├── AppIntents/                  # Siri / Shortcuts start-recording intent
+├── Infrastructure/              # Keychain, settings, export, store boot, journal,
+│                                 # recovery, reliability events, resource scheduler
+├── DebugSupport/                # Debug-only fault injection hooks
+├── Resources/                   # Localizations and privacy manifest
+└── Assets.xcassets/             # App icon and accent color
+
+Packages/
+├── KurnCore/                    # Pure-Foundation logic (AppError, ReliabilityEvent,
+│                                 # filesystem/clock seams); `swift test` on Linux
+└── WhisperCpp/                  # Binary target wrapping whisper.cpp's XCFramework
+
+KurnWatch/
+├── KurnWatchApp.swift            # Watch app entry point
+├── WatchRecorderView.swift      # Watch remote control UI
+└── WatchConnectivityManager.swift
+
+KurnLiveActivityExtension/
+└── RecordingLiveActivityWidget.swift
+```
+
+`Models/` includes `Meeting`, `Recording`, `Transcript`, `Speaker`, `Summary`,
+`Tag`, `Folder`, `SmartFolder`, `SummaryTemplate`, `SummarySection`, and
+`FolderCatalog`. `Infrastructure/` also hosts background transcription
+scheduling and recovery (`TranscriptionScheduler.swift`,
+`TranscriptionRecovery.swift`, `BackgroundActivity.swift`), disk/memory
+guardrails and on-device model downloads (`ResourceGuard.swift`,
+`ModelDownloadConsent.swift`), and `RecordingActivityAttributes.swift`, which
+is shared into the `KurnLiveActivityExtension` target rather than duplicated.
+
+### Resilience
+
+Kurn is local-first, so a recording is usually the only copy of the audio.
+A completed hardening track built on that fact:
+
+- **Capture never silently loses audio.** A `Recording` row is committed
+  before the file opens, write failures and stalls are surfaced instead of
+  counted past, and only a file that reopens, measures and carries its data
+  protection is marked ready. Interrupted captures are recovered on launch.
+- **The store never silently opens somewhere else.** Launch is a state machine
+  with protected backups (three generations), read-only salvage to Markdown
+  and an explicit, double-confirmed fresh start — not a crash.
+- **Destructive file operations are journaled** (intent → trashed →
+  committed) and replayed or rolled back after a crash; unreadable or
+  unmatched audio is quarantined, never deleted.
+- **Resumed work is exact.** Transcription checkpoints carry a fingerprint of
+  the source and the pipeline, so a resume never splices two configurations'
+  output, and automatic retries are bounded.
+- **Degradation is visible.** Each transcript records which engine every stage
+  ran and whether it degraded; a structurally broken result never replaces an
+  existing transcript.
+- **Models and keys are verified.** Downloads are size/checksum-verified and
+  installed atomically; Keychain reads distinguish "locked" from "missing".
+- **Heavy work shares one admission scheduler** that respects memory and
+  thermal pressure, and Watch/Live Activity/Siri commands are idempotent.
+- **Weekly hardening CI** runs Thread Sanitizer, a Release-configuration test
+  pass and a UI flake measurement; failures no simulator can reproduce are a
+  [physical-device release checklist](docs/release-physical-checklist.md).
+
+See CLAUDE.md's "Durability & recovery" section for the concrete types and
+invariants.
+
+## Important Implementation Notes
+
+- Cloud transcription uses a Whisper-compatible API (OpenAI, Groq, or
+  ElevenLabs today), chosen independently of the summary provider.
+- Summary generation can use Apple's on-device model, OpenAI, Anthropic,
+  Google AI, or Groq, and long
+  transcripts use a staged map-reduce pass with progress and cancellation in
+  the Summary tab. ElevenLabs is transcription-only and never appears here.
+- Voice-activity detection, transcription, and language detection are each
+  independently configurable between a built-in engine (available offline, no
+  download) and a FluidAudio on-device engine. Speaker diarization has two
+  further options: sherpa-onnx's segmentation-first engine, offered alongside
+  FluidAudio's neural engine as a collapse-resistant alternative for far-field
+  audio (CPU-only, no Apple Neural Engine acceleration); and, no download
+  either, using the selected cloud transcription provider's own speaker turns
+  when it supports native diarization (ElevenLabs Scribe today). The built-in
+  diarizer is heuristic and approximate by design; both neural engines require
+  a one-time, opt-in download.
+- On-device transcription availability depends on Apple's Speech framework
+  or the downloaded FluidAudio model, simulator/device support, and the
+  selected language.
+- Background audio recording is enabled through `UIBackgroundModes`.
+- Long transcriptions resume automatically via a `BGProcessingTask` and a
+  foreground recovery sweep, rather than failing when interrupted.
+- The main app and extensions use checked-in `Info.plist` files.
+
+## Development Notes
+
+Useful files:
+
+- `Kurn/Services/AudioRecorderService.swift`
+- `Kurn/Services/TranscriptionService.swift`
+- `Kurn/Services/LiveTranscriptionService.swift`
+- `Kurn/Services/SummaryService.swift`
+- `Kurn/Services/SpeakerDiarizer.swift`
+- `Kurn/Services/PhoneSessionController.swift`
+- `Kurn/Infrastructure/ModelDownloadConsent.swift`
+- `Kurn/Views/SettingsView.swift`
+- `Kurn/Infrastructure/MeetingExport.swift`
+
+Before shipping:
+
+- Confirm the bundle identifier and signing team.
+- Test recording on a physical device.
+- Test Watch remote control with a paired Apple Watch or watchOS simulator.
+- Test microphone, speech recognition, Live Activity, and network permission
+  flows.
+- Validate export output with real meeting data.
+
+## Roadmap
+
+What is still open — planned features, items under evaluation, ideas
+deliberately ruled out and the known gaps left by shipped work — is kept in a
+single document, [`docs/roadmap.md`](docs/roadmap.md).
+
+## Acknowledgements
+
+On-device speech recognition, speaker diarization, and voice-activity detection
+are **Powered by [Fluid Inference](https://github.com/FluidInference/FluidAudio)**.
+Kurn depends on the [FluidAudio](https://github.com/FluidInference/FluidAudio)
+Swift package (Apache 2.0) and offers separately downloaded CoreML models for
+transcription, diarization, and VAD. The weights are **not all Apache-licensed**:
+NVIDIA's Nemotron Unified, Transcribe Lite, and Nemotron 3 diarization choices
+use OpenMDW-1.1; Bark 3.0/Clean (Conway Research) and Phonon-2 (Fermion
+Research) use CC-BY-4.0. Parakeet, Pyannote / WeSpeaker / NVIDIA Sortformer,
+and Silero VAD retain their respective licenses and notices.
+
+The optional third diarization engine depends on
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache 2.0) and
+downloads pyannote's segmentation-3.0 model (MIT) and a 3D-Speaker CAM++
+speaker-embedding model (Apache 2.0), both converted to ONNX by the
+sherpa-onnx project.
+
+The full attribution list and license details are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). **Settings → Acknowledgements**
+also provides offline model license and notice copies bundled in
+`Kurn/Resources/FluidAudioModelLicenses.txt`.
+
+## License
+
+Kurn is released under the [MIT License](LICENSE). It includes and downloads
+third-party components under their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Privacy Policy
+
+Kurn's data handling is described in [PRIVACY.md](PRIVACY.md).
+
+## Encryption
+
+Kurn's use of encryption, for App Store export compliance, is described in
+[ENCRYPTION.md](ENCRYPTION.md).
+
+## Terms of Use
+
+Using Kurn — including your responsibility for consent when recording other
+people — is described in [TERMS.md](TERMS.md). [EULA.md](EULA.md) is the same
+substantive terms formatted to satisfy Apple's required minimum terms, ready
+to paste into App Store Connect as a custom License Agreement if the default
+Apple Standard License Agreement isn't used.

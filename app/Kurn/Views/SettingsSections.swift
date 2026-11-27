@@ -1,0 +1,65 @@
+//
+//  SettingsSections.swift
+//  Kurn
+//
+//  Helpers for the Settings hub: the destructive reset. Which providers have a
+//  key, and the invariants that keep the selected providers valid, live in
+//  `AppSettings+ProviderSelection.swift`.
+//
+//  The section bodies these used to sit next to now live one per screen in
+//  `Views/Settings/`.
+//
+
+import KurnCore
+import SwiftData
+import SwiftUI
+
+extension SettingsView {
+
+    /// Erasing the library is irreversible, so it re-authenticates first —
+    /// being inside an unlocked session is not proof of who is holding the
+    /// device.
+    func authorizeAndDeleteAllData() async {
+        // A recording minimized to the mini bar is still writing a row and a
+        // file this would erase out from under it.
+        guard !RecordingCommandRouter.shared.hasActiveSession else {
+            dataError = .audioError(NSLocalizedString(
+                "settings.delete_all.while_recording",
+                comment: "Delete all data is unavailable while a recording is in progress"
+            ))
+            return
+        }
+        await SensitiveActionAuthorizer().perform(
+            requireAuth: settings.requireAuthForRecordings,
+            onDenied: { dataError = $0 },
+            deleteAllData
+        )
+    }
+
+    /// Stops whatever could still write meeting content (a running
+    /// transcription, read-aloud) and hands the erase to `LibraryEraser`,
+    /// which also removes the recovery copies a plain model delete leaves.
+    func deleteAllData() {
+        ReadAloudController.shared.stop()
+        transcription?.cancelAllTranscriptions()
+        Task {
+            await transcription?.awaitActiveTranscriptions()
+            let residual: Int
+            do {
+                residual = try LibraryEraser.eraseAll(context: modelContext)
+            } catch {
+                AppLog.persistence.atError.error(
+                    "Failed to delete all data code=\(error.publicLogCode, privacy: .public) detail=\(error.localizedDescription, privacy: .private)"
+                )
+                dataError = .persistenceFailed(error.localizedDescription)
+                return
+            }
+            if residual > 0 {
+                dataError = .audioError(String(
+                    format: NSLocalizedString("settings.delete_all.residual", comment: "Files left after delete all"),
+                    residual
+                ))
+            }
+        }
+    }
+}

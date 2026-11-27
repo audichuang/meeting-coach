@@ -1,0 +1,369 @@
+//
+//  DesignComponents.swift
+//  Kurn
+//
+//  Reusable UI building blocks from the iOS design handoff: the status pill,
+//  filter chips, and the rounded card surface. Kept in one place so every screen
+//  shares the exact same tokens (radii, colors, padding).
+//
+
+import KurnCore
+import SwiftUI
+
+/// Compact wrapping layout for metadata and chips. Items move to the next line
+/// as a unit, so an icon never becomes separated from its label.
+struct FlowLayout: Layout {
+    var horizontalSpacing: CGFloat = 6
+    var verticalSpacing: CGFloat = 6
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let proposedWidth = proposal.width
+        let availableWidth = proposedWidth.flatMap { $0.isFinite ? $0 : nil } ?? .infinity
+        let result = layout(subviews: subviews, width: availableWidth)
+        let width = proposedWidth.flatMap { $0.isFinite ? $0 : nil } ?? result.width
+        return CGSize(width: width, height: result.height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            subview.place(
+                at: CGPoint(x: x, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(size)
+            )
+            x += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+
+    private func layout(subviews: Subviews, width: CGFloat) -> (width: CGFloat, height: CGFloat) {
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var contentWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            contentWidth = max(contentWidth, x + size.width)
+            x += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
+
+        return (contentWidth, subviews.isEmpty ? 0 : y + rowHeight)
+    }
+}
+
+/// Small colored pill showing a transcription status (dot + label).
+struct StatusBadge: View {
+    let status: TranscriptionStatus
+
+    var body: some View {
+        if let label {
+            HStack(spacing: 4) {
+                Circle().fill(color).frame(width: 5, height: 5)
+                Text(label)
+                    .font(.caption2.weight(.semibold))
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.16), in: Capsule())
+            .foregroundStyle(color)
+        }
+    }
+
+    private var label: String? {
+        switch status {
+        case .none: return NSLocalizedString("status.todo", comment: "To transcribe")
+        case .inProgress: return NSLocalizedString("status.in_progress", comment: "")
+        case .pending: return NSLocalizedString("status.pending", comment: "Queued to resume")
+        case .done: return NSLocalizedString("status.done", comment: "")
+        case .failed: return NSLocalizedString("status.failed", comment: "")
+        }
+    }
+
+    private var color: Color {
+        switch status {
+        case .none: return Theme.info
+        case .inProgress, .pending: return Theme.warning
+        case .done: return Theme.success
+        case .failed: return Theme.accent
+        }
+    }
+}
+
+/// Selectable rounded chip used for list filters and speaker filters.
+struct FilterChip: View {
+    let title: String
+    let isSelected: Bool
+    /// Optional accent (e.g. a speaker color). Defaults to the primary label.
+    var tint: Color = .primary
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(.footnote, design: .default, weight: isSelected ? .semibold : .regular))
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .foregroundStyle(isSelected ? selectedForeground : Theme.textSecondary)
+                .background(
+                    isSelected ? AnyShapeStyle(selectedBackground) : AnyShapeStyle(Theme.fill),
+                    in: Capsule()
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var selectedBackground: Color {
+        tint == .primary ? .primary : tint.opacity(0.18)
+    }
+
+    private var selectedForeground: Color {
+        tint == .primary ? Color(uiColor: .systemBackground) : tint
+    }
+}
+
+/// Title with its explanation directly underneath, for Form rows (toggles,
+/// pickers, buttons) whose meaning would otherwise live in a section footer
+/// several rows away from the control it describes.
+struct SettingsRowLabel: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+            Text(detail)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+enum KurnDialogActionRole: Equatable {
+    case normal
+    case destructive
+}
+
+/// App-styled modal confirmation surface used where native alerts are too
+/// constrained for Kurn's settings flows.
+struct KurnDialogModifier: ViewModifier {
+    @Binding var isPresented: Bool
+    let iconSystemName: String
+    let iconTint: Color
+    let title: String
+    let message: String
+    let primaryTitle: String
+    let primaryRole: KurnDialogActionRole
+    let primaryAction: () -> Void
+    let secondaryTitle: String?
+    let secondaryAction: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if isPresented {
+                    ZStack {
+                        Color.black.opacity(0.42)
+                            .ignoresSafeArea()
+
+                        dialog
+                            .padding(.horizontal, 24)
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    .zIndex(100)
+                }
+            }
+            .kurnAnimation(.easeInOut(duration: 0.18), value: isPresented)
+    }
+
+    private var dialog: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(iconTint.opacity(0.14))
+                        .frame(width: 36, height: 36)
+                    // Fixed size to fit the fixed 36x36 icon well.
+                    Image(systemName: iconSystemName)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(iconTint)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(Theme.headline)
+                        .foregroundStyle(Theme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("dialog.title")
+                    if !message.isEmpty {
+                        Text(message)
+                            .font(Theme.footnote)
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+
+            // Side by side while both titles fit on one line each; otherwise
+            // stacked full-width (primary first, as native alerts do), so a
+            // long localized title wraps instead of shrinking or truncating.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    secondaryButton(singleLine: true)
+                    primaryButton(singleLine: true)
+                }
+                VStack(spacing: 10) {
+                    primaryButton(singleLine: false)
+                    secondaryButton(singleLine: false)
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: 380, alignment: .leading)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Theme.separator, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.24), radius: 22, x: 0, y: 12)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func primaryButton(singleLine: Bool) -> some View {
+        dialogButton(
+            title: primaryTitle,
+            role: primaryRole,
+            isPrimary: true,
+            singleLine: singleLine
+        ) {
+            primaryAction()
+            isPresented = false
+        }
+        .accessibilityIdentifier("dialog.primary")
+    }
+
+    @ViewBuilder
+    private func secondaryButton(singleLine: Bool) -> some View {
+        if let secondaryTitle {
+            dialogButton(
+                title: secondaryTitle,
+                role: .normal,
+                isPrimary: false,
+                singleLine: singleLine
+            ) {
+                secondaryAction()
+                isPresented = false
+            }
+            .accessibilityIdentifier("dialog.secondary")
+        }
+    }
+
+    /// `singleLine` keeps the title unwrapped and reports its full width, so
+    /// `ViewThatFits` can reject the side-by-side layout when the titles
+    /// would not fit; the stacked variant wraps instead.
+    private func dialogButton(
+        title: String,
+        role: KurnDialogActionRole,
+        isPrimary: Bool,
+        singleLine: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        let background = isPrimary
+            ? (role == .destructive ? Theme.accent : Theme.info)
+            : Theme.fill
+        let foreground = isPrimary ? Color.white : Theme.textPrimary
+
+        return Button(action: action) {
+            Text(title)
+                // White text on `Theme.accent`/`Theme.info` measures ~3.55:1 /
+                // ~3.65:1 contrast — below the 4.5:1 WCAG AA floor for normal
+                // text, but above the 3:1 floor for "large text" (>=14pt
+                // bold). Bold `.subheadline` (15pt) clears that bar without
+                // touching the brand colors used identically elsewhere.
+                .font(isPrimary ? .system(.subheadline, design: .default, weight: .bold) : Theme.footnoteEmphasized)
+                .lineLimit(singleLine ? 1 : 2)
+                .fixedSize(horizontal: singleLine, vertical: true)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, minHeight: 42)
+                .foregroundStyle(foreground)
+                .background(background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+extension View {
+    /// The standard rounded card surface (#1C1C1E in dark) used across screens.
+    func kurnCard(padding: CGFloat = 16, cornerRadius: CGFloat = 18) -> some View {
+        self
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+
+    /// Strip the default `List` row chrome (separator + background) so cards sit
+    /// directly on the themed background while keeping swipe actions available.
+    func clearListRow(insets: EdgeInsets? = nil) -> some View {
+        self
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+            .listRowInsets(insets ?? EdgeInsets(top: 4, leading: 20, bottom: 4, trailing: 20))
+    }
+
+    func kurnDialog(
+        isPresented: Binding<Bool>,
+        iconSystemName: String,
+        iconTint: Color,
+        title: String,
+        message: String,
+        primaryTitle: String,
+        primaryRole: KurnDialogActionRole = .normal,
+        primaryAction: @escaping () -> Void,
+        secondaryTitle: String? = nil,
+        secondaryAction: @escaping () -> Void = {}
+    ) -> some View {
+        modifier(
+            KurnDialogModifier(
+                isPresented: isPresented,
+                iconSystemName: iconSystemName,
+                iconTint: iconTint,
+                title: title,
+                message: message,
+                primaryTitle: primaryTitle,
+                primaryRole: primaryRole,
+                primaryAction: primaryAction,
+                secondaryTitle: secondaryTitle,
+                secondaryAction: secondaryAction
+            )
+        )
+    }
+}

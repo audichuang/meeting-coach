@@ -1,0 +1,554 @@
+//
+//  TranscriptionServicePipelineTests.swift
+//  KurnTests
+//
+//  End-to-end runs of `TranscriptionService.transcribe` with a fake engine per
+//  stage (`PipelineEngineCatalog`): phase ordering, stage reports, checkpoint
+//  resume/discard, the diarization fallback warning, compaction remapping,
+//  degraded-but-continuing stages, cancellation between chunks, and fatal
+//  engine failure. No microphone, network, downloaded model, or Apple speech
+//  service is involved; the only real I/O is a short PCM fixture the
+//  orchestrator reads for its duration and digest.
+//
+
+import Foundation
+import KurnCore
+import Testing
+@testable import Kurn
+
+@Suite("TranscriptionService pipeline with fake engines")
+struct TranscriptionServicePipelineTests {
+
+    private static let regions = [
+        SpeechRegion(start: 0.2, end: 1.2),
+        SpeechRegion(start: 1.8, end: 2.8)
+    ]
+
+    private static func fixture() throws -> URL {
+        try AudioFixtures.wav(segments: [(220, 3.0)])
+    }
+
+    private static func config(
+        transcription: TranscriptionEngine = .appleSpeech
+    ) -> PipelineConfiguration {
+        var config = PipelineConfiguration()
+        config.preprocessing = .none
+        config.transcription = transcription
+        config.cloudTranscriptionConsented = transcription == .whisperAPI
+        config.diarization = .heuristic
+        return config
+    }
+
+    @Test func happyPathReportsEveryStageInOrder() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        let phases = PhaseRecorder()
+
+        let output = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: Self.config(),
+            onPhase: phases.append
+        )
+
+        #expect(output.segments.map(\.text) == ["hello", "world"])
+        #expect(output.speakerLabels == ["Speaker 1", "Speaker 2"])
+        #expect(output.turns.count == 2)
+        #expect(output.language == "en")
+        #expect(output.report.stages.map(\.stage) == [
+            .preprocessing, .languageDetection, .voiceActivityDetection,
+            .compaction, .transcription, .diarization, .fusion, .correction
+        ])
+        #expect(output.report.stages.allSatisfy { $0.outcome != .failed })
+        #expect(output.report.stages.first { $0.stage == .compaction }?.outcome == .skipped)
+        #expect(output.report.stages.first { $0.stage == .transcription }?.outcome == .succeeded)
+        #expect(output.report.stages.first { $0.stage == .diarization }?.outcome == .succeeded)
+
+        let recorded = phases.values
+        #expect(Array(recorded.prefix(3)) == [.preprocessing, .detectingSpeech, .transcribing(progress: nil)])
+        #expect(recorded.last == .finalizing)
+        #expect(recorded.contains(.transcribing(progress: 0.5, chunks: ChunkProgress(completed: 1, total: 2))))
+        let firstDiarizing = recorded.firstIndex { if case .diarizing = $0 { return true } else { return false } }
+        let lastTranscribing = recorded.lastIndex { if case .transcribing = $0 { return true } else { return false } }
+        #expect(firstDiarizing != nil && lastTranscribing != nil)
+        #expect((firstDiarizing ?? 0) > (lastTranscribing ?? 0))
+        #expect(!recorded.contains(.detectingLanguage))
+
+        #expect(harness.transcriber.requests.count == 1)
+        #expect(harness.transcriber.requests.first?.cutPoints == [1.5])
+        #expect(harness.diarizer.requests.map(\.regions) == [Self.regions])
+        #expect(harness.diarizer.requestedEngines == [.heuristic])
+    }
+
+    /// A cloud model answers a clip with no intelligible speech with `""`.
+    /// That used to reach fusion as an empty segment and make the integrity
+    /// gate reject the whole transcription (`emptySegmentText`) — 8 of 1080
+    /// cells in the 2026-09-26 public-dataset run.
+    @Test func whitespaceOnlySpansAreDroppedInsteadOfFailingTheRun() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        harness.transcriber.setSpans([
+            TranscribedSpan(text: "hello", start: 0.2, end: 1.2),
+            TranscribedSpan(text: "  ", start: 1.8, end: 2.8)
+        ])
+
+        let output = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: Self.config()
+        )
+        #expect(output.segments.map(\.text) == ["hello"])
+
+        harness.transcriber.setSpans([TranscribedSpan(text: "", start: 0, end: 0)])
+        let silent = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: Self.config()
+        )
+        #expect(silent.segments.isEmpty)
+    }
+
+    @Test func unconsentedNeuralDiarizerFallsBackWithWarningAndDegradedReport() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        let warnings = WarningRecorder()
+        var config = Self.config()
+        config.diarization = .fluidAudio
+        config.diarizationConsented = false
+
+        let output = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: config,
+            onDiarizationWarning: warnings.append
+        )
+
+        #expect(warnings.values.count == 1)
+        #expect(harness.diarizer.requestedEngines == [.heuristic])
+        let diarization = output.report.stages.first { $0.stage == .diarization }
+        #expect(diarization?.outcome == .degraded)
+        #expect(diarization?.reason == .notConsented)
+        #expect(diarization?.requestedEngine == DiarizationEngine.fluidAudio.rawValue)
+        #expect(diarization?.effectiveEngine == DiarizationEngine.heuristic.rawValue)
+    }
+
+    // MARK: - Stage decoupling: transcription engine/provider and diarization
+    // engine are independent axes. `.transcriptionProviderNative` is the one
+    // deliberate coupling (it only makes sense with `.whisperAPI` and a
+    // capable provider — see `PipelineConfiguration.effectiveDiarization`);
+    // every other diarization choice must keep running regardless of which
+    // transcription provider is selected, so picking a provider that
+    // *could* diarize natively (e.g. ElevenLabs) never silently overrides an
+    // explicit choice of a different diarizer (e.g. FluidAudio).
+
+    @Test func explicitLocalDiarizerStillRunsWhenTranscriptionProviderCouldDiarizeNatively() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        var config = Self.config(transcription: .whisperAPI)
+        // ElevenLabs supports native diarization, but the user asked for
+        // FluidAudio specifically — that choice must be honored, not
+        // coerced into `.transcriptionProviderNative` just because it's
+        // available.
+        config.transcriptionProvider = .elevenLabs
+        config.diarization = .fluidAudio
+        config.diarizationConsented = true
+
+        let output = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: config
+        )
+
+        #expect(harness.diarizer.requestedEngines == [.fluidAudio])
+        #expect(output.turns.count == 2)
+        let diarization = output.report.stages.first { $0.stage == .diarization }
+        #expect(diarization?.outcome == .succeeded)
+        #expect(diarization?.effectiveEngine == DiarizationEngine.fluidAudio.rawValue)
+    }
+
+    @Test func nativeDiarizationDerivesTurnsFromTheTranscriptionResponseWithoutRunningTheLocalDiarizer() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        harness.transcriber.setSpeakerTurns([
+            SpeakerTurn(speakerLabel: "Speaker 1", start: 0.0, end: 1.0),
+            SpeakerTurn(speakerLabel: "Speaker 2", start: 1.0, end: 3.0)
+        ])
+        var config = Self.config(transcription: .whisperAPI)
+        config.transcriptionProvider = .elevenLabs
+        config.diarization = .transcriptionProviderNative
+
+        let output = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: config
+        )
+
+        // The local diarizer (`PipelineEngineCatalog.diarizer`) is never
+        // asked to run — the turns came from the transcription response.
+        #expect(harness.diarizer.requestedEngines.isEmpty)
+        #expect(output.turns.map(\.speakerLabel) == ["Speaker 1", "Speaker 2"])
+        let diarization = output.report.stages.first { $0.stage == .diarization }
+        #expect(diarization?.outcome == .succeeded)
+        #expect(diarization?.effectiveEngine == DiarizationEngine.transcriptionProviderNative.rawValue)
+    }
+
+    @Test func nativeDiarizationFallsBackToASyntheticTurnWhenTheProviderReturnsNone() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        // Default fake transcriber output has no speaker turns attached.
+        var config = Self.config(transcription: .whisperAPI)
+        config.transcriptionProvider = .elevenLabs
+        config.diarization = .transcriptionProviderNative
+
+        let output = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: config
+        )
+
+        #expect(harness.diarizer.requestedEngines.isEmpty)
+        #expect(output.turns.count == 1)
+        let diarization = output.report.stages.first { $0.stage == .diarization }
+        #expect(diarization?.outcome == .degraded)
+        #expect(diarization?.reason == .syntheticSingleTurn)
+    }
+
+    @Test func nonWhisperEngineFallsBackToHeuristicEvenWithACapableProviderSelected() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        let warnings = WarningRecorder()
+        // `.transcriptionProviderNative` needs a `.whisperAPI` response to
+        // derive turns from; an on-device engine has none, so it must fall
+        // back exactly like an unconsented neural engine would, even though
+        // `transcriptionProvider` here is capable in principle.
+        var config = Self.config(transcription: .appleSpeech)
+        config.transcriptionProvider = .elevenLabs
+        config.diarization = .transcriptionProviderNative
+
+        _ = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: config,
+            onDiarizationWarning: warnings.append
+        )
+
+        #expect(warnings.values.count == 1)
+        #expect(harness.diarizer.requestedEngines == [.heuristic])
+    }
+
+    @Test func checkpointFromMatchingRunIsResumedAndMismatchIsDiscarded() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        let checkpoints = CheckpointRecorder()
+        let config = Self.config(transcription: .whisperAPI)
+        let service = TranscriptionService(engines: harness.catalog)
+
+        _ = try await service.transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: config,
+            onCheckpoint: checkpoints.append
+        )
+        let saved = try #require(checkpoints.values.last)
+        #expect(saved.completedChunks == 1)
+        #expect(saved.totalChunks == 2)
+        #expect(saved.engineRaw == TranscriptionEngine.whisperAPI.rawValue)
+        #expect(saved.providerID == config.transcriptionProvider.id)
+        #expect(saved.compacted == false)
+        #expect(saved.fingerprint.sourceDigest != nil)
+
+        _ = try await service.transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: config,
+            checkpoint: saved
+        )
+        let resumed = try #require(harness.transcriber.requests.last)
+        #expect(resumed.resume?.completedChunks == 1)
+        #expect(resumed.resume?.spans.map(\.text) == ["hello"])
+
+        _ = try await service.transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .portuguese,
+            config: config,
+            checkpoint: saved
+        )
+        let discarded = try #require(harness.transcriber.requests.last)
+        #expect(discarded.resume == nil)
+        #expect(discarded.language == .portuguese)
+    }
+
+    @Test func cloudEngineWithoutUploadConsentIsRefusedBeforeTheEngineRuns() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        var config = Self.config(transcription: .whisperAPI)
+        config.cloudTranscriptionConsented = false
+
+        await #expect(throws: AppError.self) {
+            try await TranscriptionService(engines: harness.catalog).transcribe(
+                fileURL: url,
+                fileName: "fixture.wav",
+                language: .english,
+                config: config
+            )
+        }
+        #expect(harness.transcriber.requests.isEmpty)
+    }
+
+    @Test func compactedSpansAreRemappedToTheOriginalTimeline() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        let compactedURL = AudioFixtures.tempURL(ext: "wav")
+        harness.compactor.setResult(.value(CompactionResult(
+            url: compactedURL,
+            map: [
+                TimelineSegment(compactedStart: 0, originalStart: 0.2, duration: 1.0),
+                TimelineSegment(compactedStart: 1.1, originalStart: 1.8, duration: 1.0)
+            ]
+        )))
+        harness.transcriber.setSpans([
+            TranscribedSpan(text: "hello", start: 0.0, end: 1.0),
+            TranscribedSpan(text: "world", start: 1.1, end: 2.1)
+        ])
+
+        let output = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: Self.config()
+        )
+
+        let request = try #require(harness.transcriber.requests.first)
+        #expect(request.url == compactedURL)
+        #expect(request.cutPoints == [1.1])
+        #expect(output.report.stages.first { $0.stage == .compaction }?.outcome == .succeeded)
+        #expect(output.segments.map(\.startTime) == [0.2, 1.8])
+        #expect(harness.compactor.cleanedUp == [compactedURL])
+    }
+
+    /// A provider's own speaker turns arrive on the compacted timeline too.
+    /// They used to be dropped when the remapped transcript was rebuilt, so
+    /// with compaction `.transcriptionProviderNative` silently became one
+    /// synthetic speaker (64% raw DER on AMI with ElevenLabs).
+    @Test func compactedNativeSpeakerTurnsAreRemappedNotDropped() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        let compactedURL = AudioFixtures.tempURL(ext: "wav")
+        harness.compactor.setResult(.value(CompactionResult(
+            url: compactedURL,
+            map: [
+                TimelineSegment(compactedStart: 0, originalStart: 0.2, duration: 1.0),
+                TimelineSegment(compactedStart: 1.1, originalStart: 1.8, duration: 1.0)
+            ]
+        )))
+        harness.transcriber.setSpans([
+            TranscribedSpan(text: "hello", start: 0.0, end: 1.0),
+            TranscribedSpan(text: "world", start: 1.1, end: 2.1)
+        ])
+        harness.transcriber.setSpeakerTurns([
+            SpeakerTurn(speakerLabel: "Speaker 1", start: 0.0, end: 1.0),
+            SpeakerTurn(speakerLabel: "Speaker 2", start: 1.1, end: 2.1)
+        ])
+        var config = Self.config(transcription: .whisperAPI)
+        config.transcriptionProvider = .elevenLabs
+        config.diarization = .transcriptionProviderNative
+
+        let output = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: config
+        )
+
+        #expect(output.turns.map(\.speakerLabel) == ["Speaker 1", "Speaker 2"])
+        let expected: [(start: Double, end: Double)] = [(0.2, 1.2), (1.8, 2.8)]
+        #expect(output.turns.count == expected.count)
+        for (turn, bounds) in zip(output.turns, expected) {
+            #expect(abs(turn.start - bounds.start) < 1e-9)
+            #expect(abs(turn.end - bounds.end) < 1e-9)
+        }
+        #expect(output.report.stages.first { $0.stage == .diarization }?.outcome == .succeeded)
+    }
+
+    @Test func degradedPreprocessingAndCompactionAreReportedAndTheRunContinues() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        harness.preprocessor.setFailure(FakeEngineError.dsp)
+        harness.compactor.setResult(.failure(FakeEngineError.compact))
+        var config = Self.config()
+        config.preprocessing = .standardDSP
+
+        let output = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: config
+        )
+
+        let preprocessing = output.report.stages.first { $0.stage == .preprocessing }
+        #expect(preprocessing?.outcome == .degraded)
+        #expect(preprocessing?.reason == .originalAudioUsed)
+        let compaction = output.report.stages.first { $0.stage == .compaction }
+        #expect(compaction?.outcome == .degraded)
+        #expect(compaction?.reason == .engineFailed)
+        #expect(output.segments.count == 2)
+        #expect(harness.transcriber.requests.first?.url == url)
+    }
+
+    @Test func engineFailureAbortsTheRunBeforeDiarization() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        harness.transcriber.setFailure(AppError.transcriptionFailed("engine"))
+
+        await #expect(throws: AppError.self) {
+            try await TranscriptionService(engines: harness.catalog).transcribe(
+                fileURL: url,
+                fileName: "fixture.wav",
+                language: .english,
+                config: Self.config()
+            )
+        }
+        #expect(harness.diarizer.requests.isEmpty)
+    }
+
+    @Test func cancellationBetweenChunksStopsTheRun() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        let handle = TaskHandle()
+
+        let task = Task {
+            try await TranscriptionService(engines: harness.catalog).transcribe(
+                fileURL: url,
+                fileName: "fixture.wav",
+                language: .english,
+                config: Self.config(),
+                onCheckpoint: { _ in await handle.cancelOnceSet() }
+            )
+        }
+        handle.set(task)
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(harness.diarizer.requests.isEmpty)
+    }
+
+    @Test func emptyTranscriptFromSpeechIsDegradedNotFatal() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        harness.transcriber.setSpans([])
+
+        let output = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: Self.config()
+        )
+
+        #expect(output.segments.isEmpty)
+        let transcription = output.report.stages.first { $0.stage == .transcription }
+        #expect(transcription?.outcome == .degraded)
+        #expect(transcription?.reason == .noInput)
+        #expect(output.language == "en")
+    }
+
+    @Test func correctionStageRunsTheSelectedCorrector() async throws {
+        let url = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let harness = FakeEngines(regions: Self.regions)
+        let phases = PhaseRecorder()
+        var config = Self.config()
+        config.correction = .llm
+        config.correctionConsented = true
+
+        let output = try await TranscriptionService(engines: harness.catalog).transcribe(
+            fileURL: url,
+            fileName: "fixture.wav",
+            language: .english,
+            config: config,
+            onPhase: phases.append
+        )
+
+        #expect(output.segments.map(\.text) == ["HELLO", "WORLD"])
+        #expect(output.report.stages.first { $0.stage == .correction }?.outcome == .succeeded)
+        #expect(phases.values.contains(.correcting(progress: nil)))
+        #expect(harness.corrector.requestedEngines == [.llm])
+    }
+}
+
+// MARK: - Recorders
+
+private final class PhaseRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var phases: [TranscriptionPhase] = []
+
+    func append(_ phase: TranscriptionPhase) {
+        lock.withLock { phases.append(phase) }
+    }
+
+    var values: [TranscriptionPhase] { lock.withLock { phases } }
+}
+
+private final class WarningRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var warnings: [String] = []
+
+    func append(_ warning: String) {
+        lock.withLock { warnings.append(warning) }
+    }
+
+    var values: [String] { lock.withLock { warnings } }
+}
+
+private final class CheckpointRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var checkpoints: [TranscriptionCheckpoint] = []
+
+    func append(_ checkpoint: TranscriptionCheckpoint) async throws {
+        lock.withLock { checkpoints.append(checkpoint) }
+    }
+
+    var values: [TranscriptionCheckpoint] { lock.withLock { checkpoints } }
+}
+
+private final class TaskHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: Task<TranscriptionService.Output, Error>?
+
+    func set(_ task: Task<TranscriptionService.Output, Error>) {
+        lock.withLock { self.task = task }
+    }
+
+    func cancelOnceSet() async {
+        while lock.withLock({ task }) == nil {
+            await Task.yield()
+        }
+        lock.withLock { task }?.cancel()
+    }
+}

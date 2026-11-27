@@ -1,0 +1,66 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode - user-specific
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# Xcode - build output / derived data
+build/
+build_dd/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.app
+*.appx
+timeline.xctimeline
+playground.xcworkspace
+
+# Xcode - injected/secret config (keep templates, ignore real values)
+*.xcconfig.local
+GoogleService-Info.plist
+secrets.xcconfig
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+# ...except the main Xcode project's own resolved manifest: Dependabot's
+# "swift" ecosystem needs this committed to track FluidAudio/sherpa-onnx
+# versions pinned directly in project.pbxproj (see .github/dependabot.yml).
+!/Kurn.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
+# CocoaPods / Carthage (unused now, ignored if added later)
+Pods/
+Carthage/Build/
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output
+fastlane/README.md
+
+# Bundler
+/.bundle/
+/vendor/bundle/
+
+# Devin CLI
+.devin/
+
+# Misc
+*.log
+*.tmp
+__pycache__/
+*.pyc
+
+# Node (scripts/screenshots marketing screenshot renderer)
+node_modules/
+scripts/screenshots/screenshots-framed/

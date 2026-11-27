@@ -1,0 +1,90 @@
+name: Export and upload Xcode test coverage
+description: >
+  Exports an lcov coverage report from an xcodebuild test run and uploads it
+  to Codecov. The report is read from the `.xcresult` bundle through
+  `xcrun xccov view --archive` (Tools/xccov_to_lcov.py), the same data
+  Xcode's coverage pane shows. Neither `xccov`'s JSON report (not a Codecov
+  report type: the upload is accepted but processing fails) nor
+  `llvm-cov export` over `Coverage.profdata` (only the test bundles' own
+  sources came out; the host app's profile never made it into the merged
+  profdata) produced a usable report, and lcov is ingested natively.
+  Third-party sources (SwiftPM checkouts, DerivedData) and test sources are
+  excluded so the percentage describes first-party production code only.
+  Call with `if: always()` so a coverage snapshot still uploads even when a
+  test failed partway through. The Codecov upload is informational
+  only (see codecov.yml: `informational: true`) and never blocks a merge —
+  `fail_ci_if_error: false` so a Codecov outage or a not-yet-configured
+  CODECOV_TOKEN can't turn an otherwise-green job red over a third-party
+  service this repo doesn't depend on for correctness.
+
+inputs:
+  flag:
+    description: Codecov flag name for this report (see codecov.yml's flags).
+    required: true
+  output-file:
+    description: Filename (written under RUNNER_TEMP) for the exported lcov report.
+    required: true
+  result-bundle-path:
+    description: The -resultBundlePath the test invocation used.
+    required: false
+    default: ${{ runner.temp }}/TestResults.xcresult
+  codecov-token:
+    description: Codecov upload token (pass secrets.CODECOV_TOKEN).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Export coverage report
+      id: export
+      shell: bash
+      env:
+        RESULT_BUNDLE: ${{ inputs.result-bundle-path }}
+        OUTPUT: ${{ runner.temp }}/${{ inputs.output-file }}
+      run: |
+        if [ ! -d "$RESULT_BUNDLE" ]; then
+          echo "::warning::no result bundle at $RESULT_BUNDLE; skipping coverage export"
+          exit 0
+        fi
+
+        # Coverage is informational: a broken export must not turn a green
+        # test job red, so failures degrade to a warning and no upload.
+        if ! python3 "$GITHUB_WORKSPACE/Tools/xccov_to_lcov.py" \
+          "$RESULT_BUNDLE" "$OUTPUT" \
+          '(/SourcePackages/|/DerivedData/|/\.build/|/Kurn[A-Za-z]*Tests/|Tests\.swift$)'; then
+          echo "::warning::coverage export from $RESULT_BUNDLE failed; skipping coverage upload"
+          rm -f "$OUTPUT"
+          exit 0
+        fi
+
+        echo "exported=true" >> "$GITHUB_OUTPUT"
+
+    - name: Summarize coverage by layer
+      if: steps.export.outputs.exported == 'true'
+      shell: bash
+      env:
+        OUTPUT: ${{ runner.temp }}/${{ inputs.output-file }}
+      run: |
+        {
+          echo "### Coverage (${{ inputs.flag }})"
+          python3 "$GITHUB_WORKSPACE/Tools/coverage_report.py" --root "$GITHUB_WORKSPACE" "$OUTPUT" \
+            || echo "_coverage summary failed; see the lcov artifact_"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Keep the coverage report as an artifact
+      if: steps.export.outputs.exported == 'true'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.output-file }}
+        path: ${{ runner.temp }}/${{ inputs.output-file }}
+        retention-days: 7
+
+    - name: Upload coverage to Codecov
+      if: steps.export.outputs.exported == 'true'
+      uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+      with:
+        token: ${{ inputs.codecov-token }}
+        files: ${{ runner.temp }}/${{ inputs.output-file }}
+        flags: ${{ inputs.flag }}
+        disable_search: true
+        fail_ci_if_error: false

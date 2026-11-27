@@ -1,0 +1,510 @@
+//
+//  MeetingDetailTabs.swift
+//  Kurn
+//
+//  Tab content split out of `MeetingDetailView` to keep that file under
+//  SwiftLint's length limits: the speaker-attributed transcript tab (with inline
+//  speaker renaming) and the AI summary tab.
+//
+
+import KurnCore
+import SwiftUI
+
+/// Transcript tab content: speaker filter chips + speaker-attributed bubbles +
+/// inline speaker renaming.
+struct TranscriptTab: View {
+    let meeting: Meeting
+    let recordings: [Recording]
+    let player: AudioPlayerService
+    /// Computed by the parent from the meeting's *full* recordings list (not
+    /// just `recordings` above, which is filtered to transcribed segments) —
+    /// the offset accounts for every earlier recording, transcribed or not.
+    let offsetFor: (Recording) -> TimeInterval
+    let onSeek: (Recording, TimeInterval) -> Void
+    let onRenameCommit: () -> Void
+    var onDeletePhoto: ((MeetingPhoto) -> Void)?
+
+    @State private var selectedSpeaker: String?
+    @State private var presentedPhoto: MeetingPhoto?
+
+    /// Labels that actually say something in the transcripts on screen.
+    ///
+    /// `meeting.speakers` can outlive them: a row the user has named is kept
+    /// when a re-transcription stops producing its label, because deleting it
+    /// would throw away what they typed (see `syncSpeakers`). Keeping it is the
+    /// right call for the data and the wrong one for this view — it would render
+    /// as a chip that filters to nothing and a row in a list of people who are
+    /// not in the transcript.
+    private var spokenLabels: Set<String> {
+        var labels: Set<String> = []
+        for recording in recordings {
+            for segment in recording.transcript?.segments ?? [] {
+                labels.insert(segment.speakerLabel)
+            }
+        }
+        return labels
+    }
+
+    private var sortedSpeakers: [Speaker] {
+        let spoken = spokenLabels
+        return meeting.speakers
+            .filter { spoken.contains($0.label) }
+            .sorted { $0.label < $1.label }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if !sortedSpeakers.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        FilterChip(title: NSLocalizedString("filter.all", comment: "All"),
+                                   isSelected: selectedSpeaker == nil) { selectedSpeaker = nil }
+                        ForEach(sortedSpeakers) { speaker in
+                            FilterChip(
+                                title: speaker.displayName,
+                                isSelected: selectedSpeaker == speaker.label,
+                                tint: Color(hex: speaker.color)
+                            ) {
+                                selectedSpeaker = (selectedSpeaker == speaker.label) ? nil : speaker.label
+                            }
+                        }
+                    }
+                }
+            }
+
+            ForEach(recordings) { recording in
+                let segments = (recording.transcript?.segments ?? [])
+                    .filter { selectedSpeaker == nil || $0.speakerLabel == selectedSpeaker }
+                TranscriptView(
+                    segments: segments,
+                    speakers: meeting.speakers,
+                    activeTime: player.loadedFileName == recording.fileName ? player.currentTime : nil,
+                    offset: offsetFor(recording),
+                    highlights: recording.highlights,
+                    photos: recording.photos,
+                    onSeek: { time in onSeek(recording, time) },
+                    onShowPhoto: { presentedPhoto = $0 }
+                )
+            }
+
+            if !sortedSpeakers.isEmpty {
+                Divider().overlay(Theme.separator).padding(.vertical, 4)
+                Text(NSLocalizedString("detail.speakers", comment: "Speakers").uppercased())
+                    .font(Theme.caption2Emphasized).tracking(0.8)
+                    .foregroundStyle(Theme.textTertiary)
+                ForEach(sortedSpeakers) { speaker in
+                    SpeakerRow(speaker: speaker, onCommit: onRenameCommit)
+                }
+                Text(NSLocalizedString("detail.speakers.note", comment: "Auto-detected note"))
+                    .font(.footnote).foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .sheet(item: $presentedPhoto) { photo in
+            PhotoViewerView(photo: photo, onDelete: onDeletePhoto == nil ? nil : { onDeletePhoto?(photo) })
+        }
+    }
+}
+
+/// Inline-editable speaker name with its color swatch.
+private struct SpeakerRow: View {
+    @Bindable var speaker: Speaker
+    let onCommit: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle().fill(Color(hex: speaker.color)).frame(width: 14, height: 14)
+            TextField(speaker.label, text: $speaker.name).onSubmit(onCommit)
+            Text(speaker.label).font(.caption2).foregroundStyle(Theme.textTertiary)
+        }
+        .kurnCard(padding: 12, cornerRadius: 12)
+    }
+}
+
+/// Summary tab content: a switcher across every generated summary (when more
+/// than one exists), the selected summary's body, and a button to generate
+/// another one (or an empty state when none exist yet).
+struct SummaryTab: View {
+    let meeting: Meeting
+    let settings: AppSettings
+    let isSummarizing: Bool
+    let isCancellingSummary: Bool
+    let isTranslatingSummary: Bool
+    /// The language an in-flight translation targets, to label the inline
+    /// progress chip. `nil` whenever `isTranslatingSummary` is false.
+    var translationTargetLanguage: MeetingLanguage?
+    /// (stage, total) when a long transcript is summarized in parts; nil for
+    /// single-pass summaries.
+    var summaryProgress: (stage: Int, total: Int)?
+    /// Approximate words the model has streamed so far in the current
+    /// request; nil until text starts arriving.
+    var summaryWordsReceived: Int?
+    /// The unformatted draft streaming in for the request in flight; empty
+    /// before its first fragment.
+    var summaryDraft = ""
+    /// When the request in flight started, for the "thinking" timer.
+    var summaryRequestStartedAt: Date?
+    /// Currently selected summary's id; falls back to the newest when nil or
+    /// no longer present (e.g. it was just deleted).
+    let selectedSummaryID: UUID?
+    let hasAnyTranscript: Bool
+    let onGenerate: () -> Void
+    let onCancel: () -> Void
+    let onSelectSummary: (Summary) -> Void
+    let onDeleteSummary: (Summary) -> Void
+    let onTranslateSummary: (Summary) -> Void
+    let onCancelTranslateSummary: () -> Void
+    /// Taps a section's photo reference chip; `nil` when the meeting has no
+    /// photos, hiding the chip row entirely (see `SummaryView.onShowPhoto`).
+    var onShowPhoto: ((TimeInterval) -> Void)?
+
+    private var sortedSummaries: [Summary] {
+        meeting.summaries.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private var selectedSummary: Summary? {
+        sortedSummaries.first { $0.id == selectedSummaryID } ?? sortedSummaries.first
+    }
+
+    var body: some View {
+        if let selectedSummary {
+            VStack(alignment: .leading, spacing: 16) {
+                summarySwitcher(selected: selectedSummary)
+                if isSummarizing {
+                    summaryProgressPanel
+                }
+                ReadAloudControl(item: .summary(selectedSummary, meeting: meeting))
+                SummaryView(summary: selectedSummary, onShowPhoto: onShowPhoto)
+                if !isSummarizing {
+                    newSummaryButton
+                }
+            }
+        } else if isSummarizing {
+            summaryProgressPanel
+                .padding(.top, 24)
+        } else if hasAnyTranscript {
+            summaryEmptyState(canGenerate: true)
+        } else {
+            summaryEmptyState(canGenerate: false)
+        }
+    }
+
+    private func summarySwitcher(selected: Summary) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(sortedSummaries) { summary in
+                    FilterChip(
+                        title: chipTitle(for: summary),
+                        isSelected: summary.id == selected.id
+                    ) {
+                        onSelectSummary(summary)
+                    }
+                    .contextMenu {
+                        Button {
+                            onTranslateSummary(summary)
+                        } label: {
+                            Label(NSLocalizedString("detail.summary.translate", comment: "Translate"), systemImage: "character.bubble")
+                        }
+                        .disabled(isTranslatingSummary)
+                        Button(role: .destructive) {
+                            onDeleteSummary(summary)
+                        } label: {
+                            Label(NSLocalizedString("common.delete", comment: "Delete"), systemImage: "trash")
+                        }
+                    }
+                }
+                if isTranslatingSummary, let translationTargetLanguage {
+                    translatingChip(to: translationTargetLanguage)
+                }
+                FilterChip(title: "+", isSelected: false) {
+                    onGenerate()
+                }
+                .disabled(isSummarizing)
+                .accessibilityLabel(NSLocalizedString("detail.summary.new", comment: "New Summary"))
+            }
+        }
+    }
+
+    /// Sits inline in the summary switcher's horizontal scroll rather than
+    /// blocking the tab with a panel like `summaryProgressPanel` — translation
+    /// is quick and starts from an existing, already-visible summary, so the
+    /// only thing worth signaling is "this is in progress", not staged
+    /// progress or a cancel button that takes over the screen.
+    private func translatingChip(to language: MeetingLanguage) -> some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityHidden(true)
+            Text(String(
+                format: NSLocalizedString("detail.summary.translating", comment: "Translating…"),
+                language.displayName
+            ))
+            .font(.system(.footnote, design: .default, weight: .regular))
+            .lineLimit(1)
+            .foregroundStyle(Theme.textSecondary)
+            Button {
+                onCancelTranslateSummary()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(NSLocalizedString("detail.summary.cancel_translate", comment: "Cancel translation"))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(Theme.fill, in: Capsule())
+    }
+
+    private func chipTitle(for summary: Summary) -> String {
+        let name = summary.templateName?.isEmpty == false
+            ? summary.templateName!
+            : NSLocalizedString("detail.summary.untitled", comment: "Summary")
+        return "\(name) · \(summary.createdAt.shortTime)"
+    }
+
+    private var summaryProgressPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(Theme.accent.opacity(0.14))
+                        .frame(width: 42, height: 42)
+                    if isCancellingSummary {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        // Fixed size to fit the fixed 42x42 well.
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                            .accessibilityHidden(true)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(progressTitle)
+                        .font(Theme.headline)
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(progressSubtitle)
+                        .font(Theme.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+
+            if let progressValue {
+                ProgressView(value: progressValue)
+                    .progressViewStyle(.linear)
+                    .tint(Theme.accent)
+            } else {
+                IndeterminateSummaryProgressBar()
+            }
+
+            if !isCancellingSummary {
+                SummaryDraftView(draft: summaryDraft, startedAt: summaryRequestStartedAt)
+            }
+
+            Button(role: .cancel) {
+                onCancel()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "xmark.circle")
+                        .accessibilityHidden(true)
+                    Text(NSLocalizedString("detail.summary.cancel", comment: "Cancel summary"))
+                        .font(Theme.footnoteEmphasized)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 42)
+            }
+            .buttonStyle(.bordered)
+            .disabled(isCancellingSummary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Theme.separator, lineWidth: 1)
+        )
+    }
+
+    private func summaryEmptyState(canGenerate: Bool) -> some View {
+        VStack(spacing: 20) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(Theme.fill)
+                    .frame(width: 72, height: 72)
+                Image(systemName: "sparkles").font(.largeTitle).foregroundStyle(Theme.textTertiary)
+                    .accessibilityHidden(true)
+            }
+            VStack(spacing: 8) {
+                Text(NSLocalizedString("detail.summary.empty.title", comment: ""))
+                    .font(.system(.title3, design: .default, weight: .bold)).foregroundStyle(Theme.textPrimary)
+                Text(NSLocalizedString("detail.summary.needs_transcript", comment: ""))
+                    .font(Theme.footnote).foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            HStack(spacing: 6) {
+                Image(systemName: "cpu").font(Theme.caption2).foregroundStyle(Theme.textSecondary)
+                    .accessibilityHidden(true)
+                Text(summaryModelNudge)
+                    .font(Theme.footnote).foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            .background(Theme.fill, in: Capsule())
+
+            if canGenerate { generateButton(title: NSLocalizedString("detail.summary.generate", comment: "Generate Summary")) }
+        }
+        .frame(maxWidth: .infinity).padding(.top, 40)
+    }
+
+    private var summarizingLabel: String {
+        if let progress = summaryProgress {
+            return String(
+                format: NSLocalizedString("detail.summarizing.progress", comment: "Summarizing part i of n"),
+                progress.stage, progress.total
+            )
+        }
+        return NSLocalizedString("detail.summarizing", comment: "Generating...")
+    }
+
+    private var progressTitle: String {
+        isCancellingSummary
+            ? NSLocalizedString("detail.summary.cancelling", comment: "Cancelling summary")
+            : summarizingLabel
+    }
+
+    private var progressSubtitle: String {
+        if isCancellingSummary {
+            return NSLocalizedString("detail.summary.cancelling.subtitle", comment: "Cancelling summary subtitle")
+        }
+        if let words = summaryWordsReceived {
+            return String(
+                format: NSLocalizedString("detail.summary.progress.streaming", comment: "Words streamed so far"),
+                words
+            )
+        }
+        if summaryProgress != nil {
+            return NSLocalizedString("detail.summary.progress.subtitle", comment: "Staged summary subtitle")
+        }
+        return NSLocalizedString("detail.summary.progress.single.subtitle", comment: "Single-pass summary subtitle")
+    }
+
+    private var progressValue: Double? {
+        guard let progress = summaryProgress, progress.total > 0 else { return nil }
+        return Double(progress.stage) / Double(progress.total)
+    }
+
+    private var summaryModelNudge: String {
+        let provider = settings.aiProvider
+        let model = settings.summaryModel(for: provider)
+        guard !model.isEmpty else {
+            return NSLocalizedString("detail.summary.model_missing", comment: "No summary model selected")
+        }
+        return String(
+            format: NSLocalizedString("detail.summary.model_nudge", comment: "Summary model nudge"),
+            provider.displayName,
+            model
+        )
+    }
+
+    private var newSummaryButton: some View {
+        generateButton(title: NSLocalizedString("detail.summary.new", comment: "New Summary"))
+    }
+
+    private func generateButton(title: String) -> some View {
+        Button { onGenerate() } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles")
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(Theme.calloutEmphasized)
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity).frame(height: 54)
+            .background(Theme.accent, in: Capsule())
+            .shadow(color: Theme.accent.opacity(0.4), radius: 18, y: 4)
+        }
+        .buttonStyle(.plain)
+        .disabled(isSummarizing)
+    }
+}
+
+private struct IndeterminateSummaryProgressBar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var phase = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let segmentWidth = max(48, width * 0.34)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Theme.fill)
+                Capsule()
+                    .fill(Theme.accent)
+                    .frame(width: segmentWidth)
+                    .offset(x: phase ? width : -segmentWidth)
+            }
+            .clipShape(Capsule())
+        }
+        .frame(height: 4)
+        .onAppear {
+            phase = false
+            // Reduce Motion: never start the infinite slide, leave the segment
+            // parked at its resting position.
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.25).repeatForever(autoreverses: false)) {
+                phase = true
+            }
+        }
+    }
+}
+
+/// The live, unformatted draft of a summary being written — the summary's
+/// counterpart of the chat's streaming reply: a "thinking for Ns" row until
+/// the first fragment arrives, then the text growing in a bounded window
+/// that follows the newest line, dimmed and with a trailing cursor so it
+/// reads as provisional. It is replaced by the formatted summary when
+/// generation finishes.
+private struct SummaryDraftView: View {
+    let draft: String
+    let startedAt: Date?
+
+    private static let endID = "summary.draft.end"
+
+    var body: some View {
+        if draft.isEmpty {
+            ThinkingRow(phase: nil, detail: nil, startedAt: startedAt ?? Date())
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(NSLocalizedString("detail.summary.draft.title", comment: "Live unformatted summary draft"))
+                    .font(Theme.caption2Emphasized)
+                    .foregroundStyle(Theme.textTertiary)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        HStack(alignment: .lastTextBaseline, spacing: 4) {
+                            Text(draft)
+                                .font(Theme.footnote)
+                                .italic()
+                                .foregroundStyle(Theme.textSecondary)
+                            StreamingCursor()
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Color.clear
+                            .frame(height: 1)
+                            .id(Self.endID)
+                    }
+                    .frame(maxHeight: 200)
+                    .onChange(of: draft) {
+                        proxy.scrollTo(Self.endID, anchor: .bottom)
+                    }
+                }
+                .padding(12)
+                .background(Theme.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+    }
+}

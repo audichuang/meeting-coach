@@ -1,0 +1,273 @@
+//
+//  Meeting.swift
+//  Kurn
+//
+//  A named meeting session that groups one or more audio recordings, their
+//  transcripts, detected speakers, and an optional AI summary.
+//
+
+import Foundation
+import KurnCore
+import SwiftData
+
+@Model
+final class Meeting {
+    @Attribute(.unique) var id: UUID
+    var title: String
+    var createdAt: Date
+    var notes: String
+    /// Short AI-generated title produced after the first transcription completes.
+    /// Nil until generated; displayed in the meetings list instead of a raw
+    /// transcript excerpt. Cleared on re-transcription so it stays in sync.
+    var aiTitle: String?
+    /// Stored raw value of `MeetingLanguage` for the transcription preference.
+    var languageRaw: String
+    /// User-pinned meeting. Surfaced as a star on the card and as the
+    /// `Favorites` library bucket. Lightweight-additive: defaults to `false`
+    /// for meetings created before this field existed.
+    var isFavorite: Bool = false
+    /// When non-nil, the meeting is archived: hidden from the default list
+    /// but still in storage and accessible from the `Archive` library bucket.
+    /// Tracking the moment of archival lets future versions sort the Archive
+    /// view by "recently archived" without a second field.
+    var archivedAt: Date?
+    /// Owning user folder, or `nil` when the meeting lives in the `Inbox`
+    /// virtual bucket. The inverse is defined on `Folder.meetings` with
+    /// `.nullify`, so deleting a folder detaches its meetings instead of
+    /// destroying them.
+    var folder: Folder?
+
+    /// User-defined tags attached to this meeting. The inverse is defined on
+    /// `Tag.meetings` with `.nullify`, so deleting a tag detaches it from
+    /// meetings without deleting them.
+    var tags: [Tag] = []
+
+    // Deleting a meeting tears down everything that belongs to it.
+    @Relationship(deleteRule: .cascade, inverse: \Recording.meeting)
+    var recordings: [Recording]
+
+    @Relationship(deleteRule: .cascade, inverse: \Speaker.meeting)
+    var speakers: [Speaker]
+
+    /// All AI-generated summaries for this meeting. A meeting can accumulate
+    /// one per generation run/template; see `latestSummary` for the default.
+    @Relationship(deleteRule: .cascade, inverse: \Summary.owningMeeting)
+    var summaries: [Summary]
+
+    /// Embedded transcript passages backing semantic search and chat retrieval.
+    /// Rebuilt (not appended) whenever the meeting is re-indexed; cascade-deleted
+    /// so a removed meeting takes its on-device index with it.
+    @Relationship(deleteRule: .cascade, inverse: \SemanticChunk.meeting)
+    var semanticChunks: [SemanticChunk]
+
+    /// LLM-generated condensed "wiki" of this meeting, used by the library-wide
+    /// chat's synthesis path. One per meeting; regenerated when the transcript or
+    /// generating model changes. Cascade-deleted with the meeting. Optional and
+    /// defaulted to `nil` so it's a lightweight-additive migration for meetings
+    /// created before this field existed.
+    @Relationship(deleteRule: .cascade, inverse: \WikiArticle.meeting)
+    var wikiArticle: WikiArticle?
+
+    /// Saved "chat with your meetings" conversations scoped to this meeting.
+    /// A meeting can accumulate several, like `summaries`; cascade-deleted
+    /// with the meeting, same as every other transcript-derived artifact.
+    @Relationship(deleteRule: .cascade, inverse: \ChatSession.meeting)
+    var chatSessions: [ChatSession]
+
+    /// Documents (PDFs) attached to this meeting as reference material.
+    /// Cascade-deleted with the meeting like every other meeting-derived
+    /// artifact; their files go through the same journaled delete as audio
+    /// (`MeetingLibrary.deleteMeeting`).
+    @Relationship(deleteRule: .cascade, inverse: \MeetingAttachment.meeting)
+    var attachments: [MeetingAttachment] = []
+
+    /// Meeting-coach records (live transcript, suggestion ledgers, spend), one
+    /// per coached recording. Cascade-deleted so deleting the meeting erases them.
+    @Relationship(deleteRule: .cascade, inverse: \CoachRecord.meeting)
+    var coachRecords: [CoachRecord] = []
+
+    /// JSON-encoded `SummaryMapCheckpoint` while a staged (map-reduce) summary
+    /// or wiki generation is in flight for this meeting (SwiftData can't store
+    /// arbitrary `Codable` values directly). Cleared on success; kept on
+    /// failure/interruption so the next attempt resumes from the last
+    /// completed map block instead of re-condensing — for a cloud provider,
+    /// re-paying for — every block from the start. Summary and wiki
+    /// generation share this one field: `WikiService` delegates to
+    /// `SummaryService`'s own `notesTemplate` for the map stage, so the two
+    /// produce identical notes for the same meeting content (H4).
+    var summaryMapCheckpointData: Data?
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        createdAt: Date = Date(),
+        notes: String = "",
+        language: MeetingLanguage = .autoDetect,
+        isFavorite: Bool = false,
+        archivedAt: Date? = nil,
+        folder: Folder? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.createdAt = createdAt
+        self.notes = notes
+        self.languageRaw = language.rawValue
+        self.isFavorite = isFavorite
+        self.archivedAt = archivedAt
+        self.folder = folder
+        self.recordings = []
+        self.speakers = []
+        self.summaries = []
+        self.semanticChunks = []
+        self.wikiArticle = nil
+        self.chatSessions = []
+    }
+
+    /// Convenience: whether the meeting is currently archived.
+    var isArchived: Bool { archivedAt != nil }
+
+    var summaryMapCheckpoint: SummaryMapCheckpoint? {
+        get { summaryMapCheckpointOutcome.decodedValue }
+        set {
+            if let newValue {
+                // A failed encode keeps the previous checkpoint bytes: an
+                // older resumable point is strictly better than none.
+                // Clearing is always the explicit `summaryMapCheckpointData = nil`.
+                summaryMapCheckpointData =
+                    JSONStorage.encodeAuthoritative(newValue) ?? summaryMapCheckpointData
+            } else {
+                summaryMapCheckpointData = nil
+            }
+        }
+    }
+
+    /// The checkpoint decode with corruption kept distinct from absence, same
+    /// reasoning as `Recording.transcriptionCheckpointOutcome`: a checkpoint
+    /// that fails to decode or verify must never be silently treated as "no
+    /// checkpoint" and redone — for a cloud provider that's repeated paid work.
+    var summaryMapCheckpointOutcome: JSONDecodeOutcome<SummaryMapCheckpoint> {
+        guard let data = summaryMapCheckpointData else { return .empty }
+        return JSONStorage.decodeAuthoritative(SummaryMapCheckpoint.self, from: data)
+    }
+
+    /// Most recently generated summary, used as the default selection when
+    /// the summary tab is shown.
+    var latestSummary: Summary? {
+        summaries.max { $0.createdAt < $1.createdAt }
+    }
+
+    var language: MeetingLanguage {
+        get { MeetingLanguage(rawValue: languageRaw) ?? .autoDetect }
+        set { languageRaw = newValue.rawValue }
+    }
+
+    /// The language actually detected in this meeting's own transcript(s) —
+    /// distinct from `language`, which is only the pre-transcription hint.
+    /// `nil` when nothing transcribed yet resolves to a recognized language.
+    var transcribedLanguage: MeetingLanguage? {
+        for recording in recordings.sorted(by: { $0.recordedAt < $1.recordedAt }) {
+            guard let raw = recording.transcript?.language, !raw.isEmpty else { continue }
+            let detected = MeetingLanguage(detectedCode: raw)
+            if detected != .autoDetect { return detected }
+        }
+        return nil
+    }
+
+    /// Sum of all recording durations.
+    var totalDuration: TimeInterval {
+        recordings.reduce(0) { $0 + $1.duration }
+    }
+
+    /// Seconds from the start of the meeting to the start of `recording`, i.e.
+    /// the sum of every chronologically earlier recording's duration. Used to
+    /// shift each segment's recording-relative timestamps into absolute meeting
+    /// time when displaying or exporting a multi-segment transcript. Based on all
+    /// recordings (not only transcribed ones) so an untranscribed gap doesn't
+    /// misalign later segments.
+    func startOffset(of recording: Recording) -> TimeInterval {
+        recordings
+            .sorted { $0.recordedAt < $1.recordedAt }
+            .prefix { $0.id != recording.id }
+            .reduce(0) { $0 + $1.duration }
+    }
+
+    /// Aggregate transcription status shown as a badge in the list.
+    var aggregateStatus: TranscriptionStatus {
+        let ready = recordings.filter(\.isReadyForConsumption)
+        guard !ready.isEmpty else { return .none }
+        if ready.contains(where: { $0.transcriptionStatus == .inProgress }) {
+            return .inProgress
+        }
+        if ready.contains(where: { $0.transcriptionStatus == .pending }) {
+            return .pending
+        }
+        if ready.allSatisfy({ $0.transcriptionStatus == .done }) {
+            return .done
+        }
+        if ready.contains(where: { $0.transcriptionStatus == .failed }) {
+            return .failed
+        }
+        return .none
+    }
+
+    var hasAnyTranscript: Bool {
+        recordings.contains { $0.transcript?.segments.isEmpty == false }
+    }
+
+    /// The whole meeting transcript as one prompt-ready string of
+    /// `[mm:ss] Speaker: text` lines across every recording, in chronological
+    /// order with each recording's offset applied so timestamps read as one
+    /// continuous timeline. Empty when nothing is transcribed. Shared by the
+    /// summary/wiki generation and full-context chat so the assembly lives in one
+    /// place; the semantic indexer needs per-recording structure and keeps its
+    /// own variant.
+    func assembledTranscriptText() -> String {
+        let groups = recordings
+            .sorted { $0.recordedAt < $1.recordedAt }
+            .compactMap { recording -> SummaryService.TranscriptGroup? in
+                guard let segments = recording.transcript?.segments, !segments.isEmpty else { return nil }
+                return SummaryService.TranscriptGroup(
+                    offset: startOffset(of: recording),
+                    segments: segments,
+                    highlights: recording.highlights,
+                    photos: recording.photos
+                )
+            }
+        return SummaryService.assembleTranscriptText(from: groups)
+    }
+
+    /// Attachments in the order they were added.
+    var sortedAttachments: [MeetingAttachment] {
+        attachments.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// `assembledTranscriptText()` followed by the text of the meeting's
+    /// attached documents (`AttachmentPromptContext`) — what every prompt
+    /// that grounds on this one meeting reads: its summaries, wiki, chat and
+    /// generated documents. Still empty when nothing is transcribed, so an
+    /// attachment alone never stands in for a transcript.
+    func assembledContextText() -> String {
+        AttachmentPromptContext.appending(
+            sortedAttachments.map(\.promptDocument),
+            to: assembledTranscriptText()
+        )
+    }
+
+    /// Whether this meeting contains `needle` anywhere the meetings list
+    /// searches: title, notes, or any recording's transcript plain text. Cheap
+    /// string fields are checked first so the transcript JSON decode (per
+    /// `Transcript.plainText`) is skipped whenever an earlier field matches.
+    /// Match is case-insensitive and locale-aware. An empty `needle` matches.
+    func matches(search needle: String) -> Bool {
+        guard !needle.isEmpty else { return true }
+        if title.localizedCaseInsensitiveContains(needle) { return true }
+        if notes.localizedCaseInsensitiveContains(needle) { return true }
+        for recording in recordings {
+            if let plain = recording.transcript?.plainText,
+               plain.localizedCaseInsensitiveContains(needle) {
+                return true
+            }
+        }
+        return false
+    }
+}

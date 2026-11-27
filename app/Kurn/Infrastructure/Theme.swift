@@ -1,0 +1,153 @@
+//
+//  Theme.swift
+//  Kurn
+//
+//  Design-system tokens derived from the iOS design handoff. Colors are adaptive
+//  (the handoff specifies the dark-mode palette; light-mode falls back to the
+//  matching system materials), so the app honors the system appearance while
+//  matching the mock pixel-for-pixel in dark mode.
+//
+
+import SwiftUI
+
+enum Theme {
+    // MARK: - Palette
+
+    /// App background (behind scroll content). Near-black in dark mode.
+    static let background = adaptive(dark: 0x0A0A0F, light: nil, lightSystem: .systemGroupedBackground)
+    /// Elevated surface for cards / grouped rows (#1C1C1E in dark).
+    static let surface = adaptive(dark: 0x1C1C1E, light: nil, lightSystem: .secondarySystemGroupedBackground)
+    /// Subtle fill (chips, icon wells) — translucent white in dark.
+    static let fill = Color(uiColor: UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.08)
+            : UIColor.systemGray5
+    })
+
+    /// Brand / record accent.
+    static let accent = Color(hex: "#FF3B30")
+    static let success = Color(hex: "#32D74B")
+    static let info = Color(hex: "#0A84FF")
+    static let warning = Color(hex: "#FF9F0A")
+
+    /// Hairline separator matching the mock (rgba(84,84,88,.4) in dark).
+    static let separator = Color(uiColor: UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 84/255, green: 84/255, blue: 88/255, alpha: 0.4)
+            : UIColor.separator
+    })
+
+    // MARK: - Text
+
+    static let textPrimary = Color.primary
+    static let textSecondary = Color(uiColor: UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.5)
+            : UIColor.secondaryLabel
+    })
+    static let textTertiary = Color(uiColor: UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.3)
+            : UIColor.tertiaryLabel
+    })
+
+    // MARK: - Typography
+
+    /// Dynamic-Type-aware replacements for the fixed `.font(.system(size:))` call
+    /// sites throughout the app. `Font.system(_:design:weight:)` (unlike
+    /// `Font.system(size:weight:)`) scales with the user's text size setting, so
+    /// migrating a call site to one of these (see Views for the largest offenders)
+    /// restores Dynamic Type support without hand-picking a new point size.
+    /// Fixed-size geometry (e.g. the recorder's timer digits) is a deliberate
+    /// exception — see `RecorderView`'s use of `@ScaledMetric` with a capped
+    /// `dynamicTypeSize` instead of these tokens.
+    static let title = Font.system(.title2, design: .default, weight: .bold)
+    static let title3 = Font.system(.title3, design: .default, weight: .semibold)
+    static let headline = Font.system(.headline, design: .default, weight: .semibold)
+    static let body = Font.system(.body, design: .default)
+    static let bodyEmphasized = Font.system(.body, design: .default, weight: .semibold)
+    static let callout = Font.system(.callout, design: .default)
+    static let calloutEmphasized = Font.system(.callout, design: .default, weight: .semibold)
+    static let subheadline = Font.system(.subheadline, design: .default)
+    static let subheadlineEmphasized = Font.system(.subheadline, design: .default, weight: .semibold)
+    static let footnote = Font.system(.footnote, design: .default)
+    static let footnoteEmphasized = Font.system(.footnote, design: .default, weight: .semibold)
+    static let caption = Font.system(.caption, design: .default)
+    static let captionEmphasized = Font.system(.caption, design: .default, weight: .semibold)
+    static let caption2 = Font.system(.caption2, design: .default)
+    static let caption2Emphasized = Font.system(.caption2, design: .default, weight: .semibold)
+    static let caption2Bold = Font.system(.caption2, design: .default, weight: .bold)
+
+    // MARK: - Button language
+    //
+    // Which `.buttonStyle` a control gets is a decision, not a per-file
+    // judgment call. Four visual languages once coexisted: pick from this
+    // table instead of adding a fifth.
+    //
+    // - **Primary action of a screen** (the one thing this screen exists to
+    //   let you do — Stop recording, download a model, confirm a share):
+    //   `.buttonStyle(.glassProminent)` with `.tint(Theme.accent)`. This is
+    //   the Liquid Glass default; prefer it over `.borderedProminent` (kept
+    //   only where the OS itself renders the control, e.g. inside a native
+    //   `.alert`).
+    // - **Secondary action alongside a primary one** (Cancel next to
+    //   Generate, a form's secondary button): `.buttonStyle(.bordered)`.
+    // - **Confirmation/destructive decision** (delete, reset, restore):
+    //   `kurnDialog` (`DesignComponents.swift`), not a bespoke button — the
+    //   deliberate app-wide convention (`errorAlert` wraps it), required
+    //   as-is by `KurnUITests/Flows/LibraryFlowUITests`/`SettingsFlowUITests`
+    //   (CLAUDE.md, "Navigation chrome").
+    // - **List/menu row, chip, or other incidental tap target** that is not
+    //   "the action this screen is for": `.buttonStyle(.plain)` with custom
+    //   content remains correct — most of the app's `.plain` buttons are
+    //   this case and do not need migrating.
+
+    // MARK: - Modal weight
+    //
+    // Two confirmation shapes exist on purpose — pick by content, not by
+    // habit or by which one looks nicer for a given screen.
+    //
+    // - **A quick binary decision with no illustration or extra context**
+    //   ("Delete this tag?", "Restore this backup?"): `kurnDialog` (or a
+    //   native `.alert`/`.confirmationDialog` where the OS must own the
+    //   control). Reserve this for exactly what HIG reserves alerts for —
+    //   essential, short, low-effort decisions that shouldn't cost more than
+    //   a glance and a tap.
+    // - **A decision that carries genuine extra content** — an illustration,
+    //   an explanation the user should actually read, more than one line of
+    //   context (`CrossMeetingSpeakerMatchView`'s voice-match confirmation is
+    //   the reference example): a real `.sheet` with `NavigationStack`, an
+    //   inline title, a `.cancellationAction` toolbar button, and full-width
+    //   `.glassProminent`/`.glass` buttons, sized with
+    //   `.presentationDetents([.medium])` (or `[.medium, .large]` if the
+    //   content can grow). This is the same "content sheet" shape
+    //   `MeetingShareSelectionView`/`SummaryTemplatePicker`/`MeetingFormView`
+    //   already use — reuse it rather than inventing a third shape.
+    //
+    // Do not promote the sheet shape to a house style for every confirmation:
+    // wrapping a one-line "Delete this tag?" in a `NavigationStack` sheet asks
+    // for more attention and more steps (an extra transition, a swipe-down or
+    // Cancel tap) than that task needs, which is the same "simplicity" failure
+    // a plain alert avoids by design.
+
+    // MARK: - Helpers
+
+    private static func adaptive(dark: Int, light: Int?, lightSystem: UIColor) -> Color {
+        Color(uiColor: UIColor { t in
+            if t.userInterfaceStyle == .dark { return UIColor(rgb: dark) }
+            if let light { return UIColor(rgb: light) }
+            return lightSystem
+        })
+    }
+}
+
+private extension UIColor {
+    convenience init(rgb: Int) {
+        self.init(
+            red: CGFloat((rgb >> 16) & 0xFF) / 255,
+            green: CGFloat((rgb >> 8) & 0xFF) / 255,
+            blue: CGFloat(rgb & 0xFF) / 255,
+            alpha: 1
+        )
+    }
+}

@@ -1,0 +1,282 @@
+name: Pipeline evaluation (public datasets)
+
+# Runs the app's actual transcription/diarization pipeline against public
+# benchmark audio (English + Portuguese), across the full cleanup x VAD x
+# diarization x ASR-engine matrix in `PipelineEvaluationMatrix`, and scores
+# WER/DER against each. See Tools/evaluation/public_datasets/README.md.
+#
+# On demand only -- this is a measurement run, not a merge gate. Dispatch it
+# after a change to any pipeline stage (preprocessing, VAD, diarization,
+# transcription engines, TranscriptFusion, ...) to see whether it actually
+# moved WER/DER, not just whether it compiles.
+
+on:
+  workflow_dispatch:
+    inputs:
+      matrix:
+        description: "essential (12 configs, whisper.cpp only) or full (36+ configs), before optional filters"
+        type: choice
+        options: [full, essential]
+        default: full
+      corpora:
+        description: "space-separated corpus ids to fetch (blank = every enabled corpus in manifest.json)"
+        type: string
+        default: ""
+      cloud_providers:
+        description: "cloud transcription providers: none / auto (every key present) / both (openai+groq) / comma list of openai,groq,elevenlabs"
+        type: string
+        default: auto
+      cloud_models:
+        description: "extra cloud transcription models as provider:model pairs, e.g. openai:gpt-4o-transcribe (blank = each provider's default)"
+        type: string
+        default: ""
+      whispercpp_models:
+        description: "whisper.cpp models to sweep (small, base, largeTurbo, all)"
+        type: string
+        default: "small"
+      fluidaudio_asr_models:
+        description: "FluidAudio ASR models for fluidAudioParakeet (parakeetV3, nemotronUnified, bark3, bark3Clean, phonon2, nemotronTranscribeLite, all); English-only models skip Portuguese"
+        type: string
+        default: "parakeetV3"
+      fluidaudio_diarization_models:
+        description: "FluidAudio diarization models for the fluidAudio diarizer (pyannote, nemotron3, all)"
+        type: string
+        default: "pyannote"
+      transcription_engines:
+        description: "on-device engines to sweep: appleSpeech,fluidAudioParakeet,whisperCpp / none (only cloud_providers) / blank=all"
+        type: string
+        default: ""
+      diarization_engines:
+        description: "diarizers to sweep: heuristic,fluidAudio,sherpaOnnx,transcriptionProviderNative / blank=all"
+        type: string
+        default: ""
+      correction:
+        description: "off / on (pair: baseline + corrected twin) / only (replace with corrected, no baseline row -- use when the baseline is already recorded)"
+        type: choice
+        options: ["off", "on", "only"]
+        default: "off"
+      correction_provider:
+        description: "provider for the LLM-correction twins (openai, groq) -- ignored when correction is off"
+        type: choice
+        options: [openai, groq]
+        default: openai
+      resume:
+        description: "reuse rows already in report.csv and run only the missing cells"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: macos-26
+    # 360 is the ceiling for GitHub-hosted runners, and a full sweep needs the
+    # headroom: `whispercpp_models: all` takes the on-device matrix to 40
+    # configurations, several of them against a model far slower than `small`,
+    # over corpora that include AMI's 5-minute clips. Running out of time is
+    # not a partial result -- `writeCSV` runs only after every item, so a job
+    # killed at the limit produces no CSV and no aggregate table at all.
+    timeout-minutes: 360
+
+    env:
+      XCODE_PROJECT: Kurn.xcodeproj
+      XCODE_SCHEME: Kurn
+      IOS_DESTINATION: platform=iOS Simulator,name=iPhone 17
+      DATASET_DIR: ${{ github.workspace }}/.kurn-eval-public
+      REPORT_PATH: ${{ github.workspace }}/.kurn-eval-public/report.csv
+      HYPOTHESES_PATH: ${{ github.workspace }}/.kurn-eval-public/hypotheses.jsonl
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - uses: ./.github/actions/prepare-simulator
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dataset-fetch and rescoring dependencies
+        run: |
+          python3 -m pip install -r Tools/evaluation/public_datasets/requirements.txt
+          python3 -m pip install -r Tools/evaluation/rescore-requirements.txt
+
+      # ffmpeg for the AMI fetch (clipping each meeting to its first N minutes).
+      - name: Install ffmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            brew install ffmpeg
+          fi
+
+      # Datasets change rarely; keyed on the manifest and fetchers so an edit
+      # to either (e.g. a new reference file) invalidates it. Restore and save
+      # are separate steps on purpose. The combined action saved only when the
+      # whole job succeeded, under one key shared by every corpus selection, so
+      # the first green run (often Portuguese-only) froze a cache without AMI and
+      # every later run went back to AMI's mirror -- which throttles GitHub
+      # runners. The saved key ends in a hash of what was fetched, so a run that
+      # completes a partial corpus saves a new entry instead of being locked out
+      # by an immutable key, and restore takes the newest entry by prefix.
+      - name: Restore public datasets
+        id: dataset-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.DATASET_DIR }}
+          key: kurn-eval-public-v2-${{ hashFiles('Tools/evaluation/public_datasets/**') }}-
+          restore-keys: |
+            kurn-eval-public-v2-${{ hashFiles('Tools/evaluation/public_datasets/**') }}-
+
+      - name: Fetch public datasets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # The AMI fetch lists meeting IDs through the GitHub API, which is
+          # capped at 60 requests/hour per IP when unauthenticated -- and
+          # hosted runners share IPs, so that budget is often already spent
+          # and the listing 403s. `contents: read` is enough to read a public
+          # repository's contents.
+          GITHUB_TOKEN: ${{ github.token }}
+          # Passed through the environment, never interpolated into the
+          # script: a workflow input expanded inside `run:` is shell code.
+          CORPORA: ${{ github.event.inputs.corpora }}
+        run: |
+          only_args=()
+          if [ -n "$CORPORA" ]; then
+            read -r -a corpora <<< "$CORPORA"
+            only_args=(--only "${corpora[@]}")
+          fi
+          python3 Tools/evaluation/public_datasets/fetch_all.py \
+            --out "$DATASET_DIR" \
+            "${only_args[@]}"
+
+      # Saved before the build, and even when the fetch reported a failure: a
+      # corpus that came down is worth keeping whatever happens next. When the
+      # content is exactly what was restored the key already exists, and the
+      # action only warns. `report.csv` is written later, so it is never cached.
+      - name: Save public datasets
+        if: always() && hashFiles('.kurn-eval-public/**/*.reference.*') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.DATASET_DIR }}
+          key: kurn-eval-public-v2-${{ hashFiles('Tools/evaluation/public_datasets/**') }}-${{ hashFiles('.kurn-eval-public/**/*.reference.*', '.kurn-eval-public/**/dataset.json') }}
+
+      - name: Build and test
+        env:
+          # xcodebuild on Xcode 15.3+ only forwards environment variables to the
+          # test runner when they are prefixed with TEST_RUNNER_. The prefix is
+          # stripped before reaching ProcessInfo.processInfo.environment.
+          TEST_RUNNER_KURN_PUBLIC_EVAL_DATA: ${{ env.DATASET_DIR }}
+          TEST_RUNNER_KURN_PUBLIC_EVAL_REPORT: ${{ env.REPORT_PATH }}
+          # The dataset cache holds every corpus earlier runs fetched, so the
+          # selection has to reach the harness too, not just the fetch.
+          TEST_RUNNER_KURN_PUBLIC_EVAL_CORPORA: ${{ github.event.inputs.corpora }}
+          TEST_RUNNER_KURN_PUBLIC_EVAL_HYPOTHESES: ${{ env.HYPOTHESES_PATH }}
+          TEST_RUNNER_KURN_PUBLIC_EVAL_MATRIX: ${{ github.event.inputs.matrix }}
+          TEST_RUNNER_KURN_PUBLIC_EVAL_CLOUD_PROVIDERS: ${{ github.event.inputs.cloud_providers }}
+          TEST_RUNNER_KURN_PUBLIC_EVAL_CLOUD_MODELS: ${{ github.event.inputs.cloud_models }}
+          TEST_RUNNER_KURN_PUBLIC_EVAL_WHISPERCPP_MODELS: ${{ github.event.inputs.whispercpp_models }}
+          TEST_RUNNER_KURN_PUBLIC_EVAL_FLUIDAUDIO_ASR_MODELS: ${{ github.event.inputs.fluidaudio_asr_models }}
+          TEST_RUNNER_KURN_PUBLIC_EVAL_FLUIDAUDIO_DIARIZATION_MODELS: ${{ github.event.inputs.fluidaudio_diarization_models }}
+          TEST_RUNNER_KURN_PUBLIC_EVAL_ENGINES: ${{ github.event.inputs.transcription_engines }}
+          TEST_RUNNER_KURN_PUBLIC_EVAL_DIARIZATION_ENGINES: ${{ github.event.inputs.diarization_engines }}
+          TEST_RUNNER_KURN_PUBLIC_EVAL_CORRECTION: ${{ github.event.inputs.correction }}
+          TEST_RUNNER_KURN_PUBLIC_EVAL_CORRECTION_PROVIDER: ${{ github.event.inputs.correction_provider }}
+          # The report is written row by row, so a cancelled or timed-out run
+          # leaves a usable partial file. `resume: true` picks that file up and
+          # runs only what is missing -- provided it survived, which means it
+          # was placed here from a previous run's artifact (the dataset cache is
+          # saved before the build, so it never carries a report). Reusing a row assumes the pipeline has not changed
+          # since it was measured; the harness cannot check that yet, which is
+          # why this is opt-in.
+          TEST_RUNNER_KURN_PUBLIC_EVAL_RESUME: ${{ github.event.inputs.resume == 'true' && '1' || '0' }}
+          # Optional and additive -- controlled by `cloud_providers`. A maintainer
+          # who wants cloud Whisper (OpenAI/Groq) in the matrix wires these as repo
+          # secrets; PipelineEvaluationMatrix only adds those entries when the
+          # corresponding key is actually present. See public_datasets/README.md.
+          TEST_RUNNER_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TEST_RUNNER_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TEST_RUNNER_ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -destination "$IOS_DESTINATION" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            test -only-testing:KurnTests/PublicDatasetEvaluationHarnessTests \
+            | tee "$RUNNER_TEMP/pipeline-eval.log"
+
+      # Renders the CSV as the Markdown that goes straight into
+      # docs/pipeline-evaluation.md, so recording a run is a paste and a
+      # commit. The raw log stays available underneath: the harness requires a
+      # failure-free run *before* it writes the CSV, so a run with any failure
+      # produces no CSV at all and the grep is the only report there is.
+      - name: Publish report summary
+        if: always()
+        run: |
+          python3 Tools/evaluation/report_to_markdown.py \
+            --csv "$REPORT_PATH" \
+            --log "$RUNNER_TEMP/pipeline-eval.log" \
+            --commit "${{ github.sha }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --out "$RUNNER_TEMP/pipeline-evaluation.md" || true
+          # The same pipeline output, re-scored by the reference tools
+          # (Whisper normalizers + jiwer, pyannote.metrics, meeteval). Adds the
+          # numbers comparable to published results, cpWER for meetings, and a
+          # cross-check of the harness's own scorer against the CSV.
+          if [ -s "$HYPOTHESES_PATH" ]; then
+            python3 Tools/evaluation/rescore.py \
+              --data "$DATASET_DIR" \
+              --hypotheses "$HYPOTHESES_PATH" \
+              --report "$REPORT_PATH" \
+              --csv "$RUNNER_TEMP/rescore.csv" \
+              --markdown "$RUNNER_TEMP/rescore.md" || true
+          fi
+          # Also into the job log: the summary and artifact are not reachable
+          # from every environment that reads a run back (artifact downloads
+          # redirect to blob storage), but the log API is.
+          if [ -s "$RUNNER_TEMP/rescore.md" ]; then
+            sed 's/^/[rescore] /' "$RUNNER_TEMP/rescore.md"
+          fi
+          {
+            echo "## Pipeline evaluation report"
+            echo
+            if [ -s "$RUNNER_TEMP/pipeline-evaluation.md" ]; then
+              cat "$RUNNER_TEMP/pipeline-evaluation.md"
+              echo
+              echo "Paste the above into \`docs/pipeline-evaluation.md\` to record this run."
+              echo
+            fi
+            if [ -s "$RUNNER_TEMP/rescore.md" ]; then
+              cat "$RUNNER_TEMP/rescore.md"
+              echo
+            fi
+            echo "<details><summary>Raw <code>[pipeline-eval]</code> output</summary>"
+            echo
+            echo '```'
+            grep '^\[pipeline-eval\]' "$RUNNER_TEMP/pipeline-eval.log" || echo "(no [pipeline-eval] lines found -- check the build/test log below)"
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pipeline-eval-report
+          path: |
+            ${{ env.REPORT_PATH }}
+            ${{ env.HYPOTHESES_PATH }}
+            ${{ runner.temp }}/rescore.csv
+            ${{ runner.temp }}/rescore.md
+            ${{ runner.temp }}/pipeline-eval.log
+            ${{ runner.temp }}/pipeline-evaluation.md
+          if-no-files-found: warn
+          retention-days: 90

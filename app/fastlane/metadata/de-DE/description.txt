@@ -1,0 +1,38 @@
+Kurn ist eine KI-App für Meeting-Notizen und Protokolle: Sie nimmt deine Besprechungen, Vorlesungen und Interviews auf, transkribiert und fasst sie zusammen – privat auf deinem iPhone. Kein Bot tritt deinem Anruf bei, du brauchst kein Konto, und deine Aufnahmen bleiben standardmäßig auf deinem Gerät.
+
+ALLES AUFNEHMEN
+- Nimm Besprechungen vor Ort, Vorlesungen, Interviews und Sprachnotizen auf, in einem oder mehreren Abschnitten.
+- Starten, pausieren und stoppen in der App, auf dem Sperrbildschirm, in der Dynamic Island, im Kontrollzentrum, mit Siri und Kurzbefehlen oder auf deiner Apple Watch.
+- Nimm weiter auf, während du andere Apps nutzt: Der Rekorder schrumpft zu einer Mini-Leiste.
+
+AUDIO IN TEXT TRANSKRIBIEREN
+- Transkription auf dem Gerät mit Apples Spracherkennung, einem mehrsprachigen lokalen Modell oder Whisper direkt auf deinem iPhone.
+- Optionale Cloud-Transkription mit deinem eigenen OpenAI-, Groq- oder ElevenLabs-Schlüssel.
+- Die Sprechererkennung zeigt, wer was gesagt hat, und schlägt den Namen einer Stimme vor, die du in einem anderen Meeting schon benannt hast.
+- Lange Transkriptionen machen dort weiter, wo sie unterbrochen wurden.
+
+KI-PROTOKOLLE, ZUSAMMENFASSUNGEN UND AUFGABEN
+- Strukturierte Zusammenfassungen mit Entscheidungen, Aufgaben und Kernpunkten – Vorlagen für allgemeine Meetings, Stand-ups, Interviews oder Gliederungen, oder deine eigene.
+- Läuft mit Apple Intelligence auf unterstützten Geräten oder mit einem Anbieter deiner Wahl und deinem eigenen API-Schlüssel.
+- Stelle Fragen zu einem Meeting oder deiner ganzen Bibliothek und erhalte Antworten mit antippbaren Zeitmarken.
+- Hänge PDFs als Referenz an, erstelle Dokumente aus mehreren Meetings und lass dir Zusammenfassungen vorlesen.
+
+ORGANISIEREN UND TEILEN
+- Ordner, intelligente Ordner, Tags, Favoriten und ein Archiv, mit Suche in allen Transkripten.
+- Exportiere Zusammenfassungen und Transkripte als PDF, Word, Markdown, Obsidian, HTML oder reinen Text.
+
+PRIVAT VON GRUND AUF
+- Aufnahmen und Transkripte werden auf deinem Gerät gespeichert, verschlüsselt und mit Face ID, Touch ID oder Code geschützt.
+- Nichts verlässt dein iPhone, außer du aktivierst einen Cloud-Anbieter.
+- Kein Tracking, keine Analysen, keine Werbung, kein Konto.
+
+KOSTENLOS UND OPEN SOURCE
+- Kostenlos laden und nutzen, ohne Abo, ohne In-App-Käufe und ohne Werbung.
+- Der gesamte Quellcode ist auf GitHub unter der MIT-Lizenz öffentlich, sodass jeder prüfen kann, wie deine Aufnahmen behandelt werden.
+- Cloud-Anbieter sind optional und rechnen direkt über deinen eigenen API-Schlüssel ab; Kurn schlägt nichts auf.
+
+BARRIEREFREI VON GRUND AUF
+- Volle VoiceOver-Unterstützung in der App, auf der Apple Watch und in der Live-Aktivität.
+- Dynamische Schrift, Bewegung reduzieren und Status, der nie nur über Farbe vermittelt wird.
+
+Kurn ist auf Deutsch, Englisch, Portugiesisch, Spanisch, Französisch, Italienisch und vereinfachtem Chinesisch verfügbar und transkribiert Dutzende Sprachen.

@@ -1,0 +1,109 @@
+//
+//  TranscriptView.swift
+//  Kurn
+//
+//  Renders speaker-attributed transcript segments. Tapping a segment asks the
+//  parent to seek the audio player to that timestamp. The active segment (while
+//  the owning recording plays) is highlighted.
+//
+
+import KurnCore
+import SwiftUI
+
+struct TranscriptView: View {
+    let segments: [TranscriptSegment]
+    let speakers: [Speaker]
+    /// Current playback time within the owning recording (or nil if not playing).
+    let activeTime: TimeInterval?
+    /// Seconds from the meeting start to this recording, added only to the
+    /// displayed timestamp so a multi-segment transcript reads as one continuous
+    /// timeline. Seeking and active-segment highlighting still use the raw,
+    /// recording-relative times, since playback is per recording.
+    var offset: TimeInterval = 0
+    /// Recording-relative highlight markers, same convention as `startTime`.
+    var highlights: [Highlight] = []
+    /// Photos captured during this recording, same recording-relative
+    /// timestamp convention as `highlights`.
+    var photos: [MeetingPhoto] = []
+    let onSeek: (TimeInterval) -> Void
+    /// Presents a photo full-screen. `nil` (the default) hides the inline
+    /// photo marker entirely, so call sites that don't pass `photos` don't
+    /// need to pass this either.
+    var onShowPhoto: ((MeetingPhoto) -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(segments) { segment in
+                segmentRow(segment)
+                    .contentShape(Rectangle())
+                    .onTapGesture { onSeek(segment.startTime) }
+                    .accessibilityAddTraits(.isButton)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func segmentRow(_ segment: TranscriptSegment) -> some View {
+        let speaker = speakers.first { $0.label == segment.speakerLabel }
+        let name = speaker?.displayName ?? segment.speakerLabel
+        let color = Color(hex: speaker?.color ?? "#888888")
+        let isActive = activeTime.map { $0 >= segment.startTime && $0 < segment.endTime } ?? false
+        let matchingHighlights = highlights.filter { $0.timestamp >= segment.startTime && $0.timestamp < segment.endTime }
+        let matchingPhotos = photos.filter { $0.capturedAt >= segment.startTime && $0.capturedAt < segment.endTime }
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                ZStack {
+                    Circle().fill(color.opacity(0.2)).frame(width: 26, height: 26)
+                    // Fixed size to fit the fixed 26x26 avatar circle.
+                    Text(String(name.prefix(1)).uppercased())
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(color)
+                }
+                Text(name)
+                    .font(Theme.footnoteEmphasized)
+                    .foregroundStyle(color)
+                Text((segment.startTime + offset).clockDisplay)
+                    .font(Theme.caption2)
+                    .foregroundStyle(Theme.textTertiary)
+                ForEach(matchingHighlights) { highlight in
+                    Button {
+                        onSeek(highlight.timestamp)
+                    } label: {
+                        Image(systemName: "bookmark.fill")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.warning)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(NSLocalizedString("transcript.jump_to_highlight", comment: "Jump to highlight"))
+                }
+                ForEach(matchingPhotos) { photo in
+                    Button {
+                        onShowPhoto?(photo)
+                    } label: {
+                        Image(systemName: "camera.fill")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(NSLocalizedString("transcript.view_photo", comment: "View photo"))
+                }
+                Spacer()
+            }
+            Text(segment.text)
+                .font(Theme.subheadline)
+                .foregroundStyle(Theme.textPrimary.opacity(0.85))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 34)
+        }
+        .padding(10)
+        .background(
+            isActive ? AnyShapeStyle(color.opacity(0.12)) : AnyShapeStyle(.clear),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(isActive ? color.opacity(0.6) : .clear, lineWidth: 1.5)
+        )
+    }
+}

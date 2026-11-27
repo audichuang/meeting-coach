@@ -1,0 +1,793 @@
+//
+//  AppSettings.swift
+//  Kurn
+//
+//  Observable, UserDefaults-backed app preferences. API keys are NOT stored here
+//  — they live in the Keychain (see KeychainManager). Only non-secret defaults
+//  belong in this file.
+//
+
+import Foundation
+import KurnCore
+import Observation
+
+/// UserDefaults key for diagnostic-reports consent, hoisted out of `AppSettings.Keys`
+/// (which is `private`) so `DiagnosticsSubscriber` can read it directly without
+/// holding an `AppSettings` reference — see that type for why.
+enum AppSettingsKeys {
+    static let diagnosticReportsConsented = "settings.diagnosticReportsConsented"
+}
+
+@MainActor
+@Observable
+final class AppSettings {
+    private enum Keys {
+        static let provider = "settings.aiProvider"
+        static let providers = "settings.aiProviders"
+        static let transcriptionProvider = "settings.transcriptionProviderID"
+        static let transcriptionModels = "settings.transcriptionModels"
+        static let defaultMode = "settings.defaultTranscriptionMode"
+        static let defaultLanguage = "settings.defaultLanguage"
+        static let micPickup = "settings.micPickup"
+        static let audioQuality = "settings.audioQuality"
+        static let alwaysUseBuiltInMic = "settings.alwaysUseBuiltInMic"
+        static let summaryModels = "settings.summaryModels"
+        static let summaryTemplates = "settings.summaryTemplates"
+        static let lastSummaryTemplate = "settings.lastSummaryTemplate"
+        static let liveTranscriptionEnabled = "settings.liveTranscriptionEnabled"
+        static let meetingCoachEnabled = "settings.meetingCoachEnabled"
+        static let coachUserName = "settings.coachUserName"
+        static let coachBudgetUSD = "settings.coachBudgetUSD"
+        static let diarizationEngine = "settings.diarizationEngine"
+        static let fluidAudioSpeakerCount = "settings.fluidAudioSpeakerCount"
+        /// Superseded by `fluidAudioSpeakerCount`; read once at init to migrate.
+        static let legacyFluidAudioMinSpeakers = "settings.fluidAudioMinSpeakers"
+        static let diarizationPreprocessingEnabled = "settings.diarizationPreprocessingEnabled"
+        static let playbackEnhancementEnabled = "settings.playbackEnhancementEnabled"
+        static let transcriptionEngine = "settings.transcriptionEngine"
+        static let preprocessingEngine = "settings.preprocessingEngine"
+        static let vadEngine = "settings.vadEngine"
+        static let languageDetectionEngine = "settings.languageDetectionEngine"
+        static let fluidAudioASRModelsConsented = "settings.fluidAudioASRModelsConsented"
+        static let fluidAudioBatchASRModelsConsented = "settings.fluidAudioBatchASRModelsConsented"
+        static let fluidAudioDiarizationModelsConsented = "settings.fluidAudioDiarizationModelsConsented"
+        static let fluidAudioVADModelsConsented = "settings.fluidAudioVADModelsConsented"
+        static let whisperCppModel = "settings.whisperCppModel"
+        static let fluidAudioASRModel = "settings.fluidAudioASRModel"
+        static let fluidAudioLiveModel = "settings.fluidAudioLiveModel"
+        static let fluidAudioDiarizationModel = "settings.fluidAudioDiarizationModel"
+        static let fluidAudioSegmentationBatchSize = "settings.fluidAudioSegmentationBatchSize"
+        static let fluidAudioASRModelConsents = "settings.fluidAudioASRModelConsents"
+        static let fluidAudioNemotronModelsConsented = "settings.fluidAudioNemotronModelsConsented"
+        static let fluidAudioUnifiedStreamingConsented = "settings.fluidAudioUnifiedStreamingConsented"
+        static let whisperCppModelsConsented = "settings.whisperCppModelsConsented"
+        static let sherpaOnnxModelsConsented = "settings.sherpaOnnxModelsConsented"
+        static let allowsExpensiveNetworkTransfers = "settings.allowsExpensiveNetworkTransfers"
+        static let allowsConstrainedNetworkTransfers = "settings.allowsConstrainedNetworkTransfers"
+        static let cloudTranscriptionConsentKeys = "settings.cloudTranscriptionConsentKeys"
+        static let logLevel = "settings.logLevel"
+        static let requireAuthForRecordings = "settings.requireAuthForRecordings"
+        static let hideLiveActivityMeetingTitle = "settings.hideLiveActivityMeetingTitle"
+        static let meetingsSortOrder = "settings.meetingsSortOrder"
+        static let autoTaggingEnabled = "settings.autoTaggingEnabled"
+        static let usageStats = "settings.usageStats"
+        static let semanticSearchEnabled = "settings.semanticSearchEnabled"
+        static let wikiEnabled = "settings.wikiEnabled"
+        static let correctionEnabled = "settings.correctionEnabled"
+        static let aiTitleCloudEnabled = "settings.aiTitleCloudEnabled"
+        static let templatesSyncEnabled = "settings.templatesSyncEnabled"
+        static let readAloud = "settings.readAloud"
+    }
+
+    /// iCloud key-value storage key for the synced custom-template payload.
+    /// Not in `Keys` (that enum is `UserDefaults` keys) — this one lives in
+    /// `CloudKeyValueStore` instead.
+    static let cloudTemplatesKey = "cloud.summaryTemplates"
+
+    private let defaults: UserDefaults
+    let cloudStore: CloudKeyValueStore
+
+    /// The provider API keys, observable for the UI. Every key write goes
+    /// through it, and each one re-applies `ensureProviderSelectionsAreUsable`.
+    let credentials: CredentialStore
+
+    var providers: [AIProvider] {
+        didSet { persistProviders() }
+    }
+
+    var aiProviderID: String {
+        didSet { defaults.set(aiProviderID, forKey: Keys.provider) }
+    }
+
+    var aiProvider: AIProvider {
+        providers.first(where: { $0.id == aiProviderID }) ?? providers.first ?? .openAI
+    }
+
+    /// Provider used for cloud (Whisper) transcription, chosen independently of
+    /// the summary `aiProvider`. Only meaningful when `transcriptionEngine` is
+    /// `.whisperAPI`. Defaults to OpenAI to preserve the previous behavior.
+    var transcriptionProviderID: String {
+        didSet { defaults.set(transcriptionProviderID, forKey: Keys.transcriptionProvider) }
+    }
+
+    /// Resolve `transcriptionProviderID` to a configured provider, falling back
+    /// to the first transcription-capable provider (or OpenAI) if it's stale or
+    /// points at a provider that can't transcribe.
+    var transcriptionProvider: AIProvider {
+        if let provider = providers.first(where: { $0.id == transcriptionProviderID }),
+           provider.supportsTranscription {
+            return provider
+        }
+        return providers.first(where: { $0.supportsTranscription }) ?? .openAI
+    }
+
+    var defaultMode: TranscriptionMode {
+        didSet { defaults.set(defaultMode.rawValue, forKey: Keys.defaultMode) }
+    }
+
+    var defaultLanguage: MeetingLanguage {
+        didSet { defaults.set(defaultLanguage.rawValue, forKey: Keys.defaultLanguage) }
+    }
+
+    /// Built-in microphone pickup preference. Defaults to whole-room capture.
+    var micPickup: MicPickup {
+        didSet { defaults.set(micPickup.rawValue, forKey: Keys.micPickup) }
+    }
+
+    /// Recording audio quality (encoder bit rate). Defaults to high.
+    var audioQuality: AudioQuality {
+        didSet { defaults.set(audioQuality.rawValue, forKey: Keys.audioQuality) }
+    }
+
+    /// When on, recordings always use the iPhone's built-in microphone, even
+    /// if an external (e.g. Bluetooth) input is connected, and the recorder
+    /// never asks which microphone to use. Off by default, so a connected
+    /// accessory is offered as a choice when more than one input is available.
+    var alwaysUseBuiltInMic: Bool {
+        didSet { defaults.set(alwaysUseBuiltInMic, forKey: Keys.alwaysUseBuiltInMic) }
+    }
+
+    /// How the meetings list is sorted. Defaults to newest first to match the
+    /// previous hard-coded behavior. See `MeetingsSortOrder.apply(to:)`.
+    var meetingsSortOrder: MeetingsSortOrder {
+        didSet { defaults.set(meetingsSortOrder.rawValue, forKey: Keys.meetingsSortOrder) }
+    }
+
+    /// Whether auto-tagging is enabled. When on, the app can suggest tags after
+    /// a transcription finishes and the user can apply them with one tap.
+    var autoTaggingEnabled: Bool {
+        didSet { defaults.set(autoTaggingEnabled, forKey: Keys.autoTaggingEnabled) }
+    }
+
+    /// Opt-in live transcription preview during recording (FluidAudio streaming
+    /// ASR). Off by default; never replaces the post-recording transcript.
+    var liveTranscriptionEnabled: Bool {
+        didSet { defaults.set(liveTranscriptionEnabled, forKey: Keys.liveTranscriptionEnabled) }
+    }
+
+    /// Meeting coach: cloud live transcript (OpenAI) plus suggestion cards while
+    /// recording. On by default in this fork, but inert until an OpenAI key is
+    /// saved, so a fresh install still sends nothing.
+    var meetingCoachEnabled: Bool {
+        didSet { defaults.set(meetingCoachEnabled, forKey: Keys.meetingCoachEnabled) }
+    }
+
+    /// The name the coach addresses and listens for (local only).
+    var coachUserName: String {
+        didSet { defaults.set(coachUserName, forKey: Keys.coachUserName) }
+    }
+
+    /// Per-meeting spend that triggers the coach's budget warning, in USD.
+    var coachBudgetUSD: Double {
+        didSet { defaults.set(coachBudgetUSD, forKey: Keys.coachBudgetUSD) }
+    }
+
+    /// Whether on-device semantic indexing, search, and meeting chat retrieval
+    /// are active. On by default: embeddings run fully on-device (Apple's
+    /// `NLContextualEmbedding`, no third-party model), and the vectors persist in
+    /// the encrypted SwiftData store. Turning it off makes list search fall back
+    /// to substring matching and disables the chat retrieval index; it does not
+    /// delete existing chunks (use "Clear index" in Settings for that).
+    var semanticSearchEnabled: Bool {
+        didSet { defaults.set(semanticSearchEnabled, forKey: Keys.semanticSearchEnabled) }
+    }
+
+    /// Whether the LLM-generated per-meeting "wiki" is built and used by the
+    /// library-wide chat's synthesis path. Unlike `semanticSearchEnabled`, this
+    /// is **off by default**: generating articles makes cloud LLM calls (one per
+    /// meeting), so it must be an explicit opt-in. When on, articles are generated
+    /// after each transcription and backfilled in small batches, and cross-meeting
+    /// "synthesis" questions are answered over the articles instead of raw
+    /// passages.
+    var wikiEnabled: Bool {
+        didSet { defaults.set(wikiEnabled, forKey: Keys.wikiEnabled) }
+    }
+
+    /// Whether the opt-in LLM transcription-correction stage runs after fusion,
+    /// fixing spelling, punctuation, and misheard words on low- (or unknown-)
+    /// confidence segments using the summary AI provider. Off by default — like
+    /// `wikiEnabled`, it makes cloud LLM calls per transcription and needs
+    /// explicit opt-in. See `LLMTranscriptCorrector`.
+    var correctionEnabled: Bool {
+        didSet { defaults.set(correctionEnabled, forKey: Keys.correctionEnabled) }
+    }
+
+    /// Whether a meeting's title is generated automatically after
+    /// transcription when the summary provider is a cloud vendor. Off by
+    /// default: it sends the whole transcript off the device on every
+    /// transcription, which choosing a provider for on-demand summaries does
+    /// not imply. The on-device provider is never gated, and an explicit
+    /// "regenerate title" always runs. See `AITitleCoordinator`.
+    var aiTitleCloudEnabled: Bool {
+        didSet { defaults.set(aiTitleCloudEnabled, forKey: Keys.aiTitleCloudEnabled) }
+    }
+
+    /// Whether custom summary templates sync via iCloud key-value storage, so
+    /// they survive a device switch. Off by default: it's the first setting
+    /// that leaves the device, even though — unlike `wikiEnabled`/
+    /// `correctionEnabled` — no cloud LLM call or network request is involved.
+    /// Toggling it on reconciles immediately in both directions; toggling it
+    /// off clears the iCloud copy rather than leaving it to go stale.
+    var templatesSyncEnabled: Bool {
+        didSet {
+            defaults.set(templatesSyncEnabled, forKey: Keys.templatesSyncEnabled)
+            if templatesSyncEnabled {
+                reconcileTemplatesWithCloud()
+            } else {
+                cloudStore.setData(nil, forKey: Self.cloudTemplatesKey)
+            }
+        }
+    }
+
+    /// When on, the recordings UI requires Face ID / Touch ID / passcode once
+    /// per foreground session before listing meetings or playing audio. Audio
+    /// files are always encrypted at rest by iOS Data Protection regardless
+    /// of this toggle. Defaults to on so the secure path is the default.
+    var requireAuthForRecordings: Bool {
+        didSet { defaults.set(requireAuthForRecordings, forKey: Keys.requireAuthForRecordings) }
+    }
+
+    /// When on, the Lock Screen / Dynamic Island Live Activity shows a generic
+    /// "Recording…" label instead of the real meeting title, since the Live
+    /// Activity is visible to anyone glancing at a locked phone. Defaults to
+    /// on so the private option is the default.
+    var hideLiveActivityMeetingTitle: Bool {
+        didSet {
+            defaults.set(hideLiveActivityMeetingTitle, forKey: Keys.hideLiveActivityMeetingTitle)
+        }
+    }
+
+    /// Speaker diarization engine used by the transcription pipeline. Defaults
+    /// to the always-available heuristic engine.
+    var diarizationEngine: DiarizationEngine {
+        didSet { defaults.set(diarizationEngine.rawValue, forKey: Keys.diarizationEngine) }
+    }
+
+    /// Exact number of speakers to pin on the FluidAudio (neural) diarizer.
+    /// `0` means "let it decide". On far-field/single-mic audio the neural
+    /// pipeline's VBx step collapses every cluster into one speaker; pinning a
+    /// count makes FluidAudio re-cluster the raw speaker embeddings with KMeans
+    /// into exactly that many speakers instead. Ignored by the heuristic
+    /// engine, which auto-detects from pitch/timbre.
+    ///
+    /// This replaced a *minimum* speaker setting, which could not work: the
+    /// library only applies a speaker-count constraint when the count it
+    /// detected falls outside the bounds, and the count it compares is the
+    /// pre-clustering estimate (tens, on any real meeting), so a floor of 2 or 3
+    /// was always already satisfied. See `FluidAudioDiarizer.tunedConfig`.
+    var fluidAudioSpeakerCount: Int {
+        didSet { defaults.set(fluidAudioSpeakerCount, forKey: Keys.fluidAudioSpeakerCount) }
+    }
+
+    /// When on, the diarization stage runs a dedicated lighter cleanup
+    /// (`DiarizationPreprocessor`) on the original recording and feeds the
+    /// resulting WAV to both diarizer engines. When off, diarization uses the
+    /// original recording directly. It never reuses the ASR-tuned `.m4a`
+    /// produced by `AudioPreprocessor`.
+    var diarizationPreprocessingEnabled: Bool {
+        didSet { defaults.set(diarizationPreprocessingEnabled, forKey: Keys.diarizationPreprocessingEnabled) }
+    }
+
+    /// When on, playback prefers an enhanced copy of each recording — equalized,
+    /// level-controlled and loudness-normalized — generated on first use. Off by
+    /// default: it changes what the user hears relative to what was recorded, and
+    /// it costs a second audio file per recording.
+    var playbackEnhancementEnabled: Bool {
+        didSet { defaults.set(playbackEnhancementEnabled, forKey: Keys.playbackEnhancementEnabled) }
+    }
+
+    /// Engine that turns audio into text. Replaces the legacy `defaultMode` +
+    /// on-device-multilingual pairing; `init` migrates the old keys into this.
+    var transcriptionEngine: TranscriptionEngine {
+        didSet { defaults.set(transcriptionEngine.rawValue, forKey: Keys.transcriptionEngine) }
+    }
+
+    /// GGML weight file the on-device Whisper (whisper.cpp) engine runs. Only
+    /// meaningful when `transcriptionEngine` is `.whisperCpp`.
+    var whisperCppModel: WhisperCppModel {
+        didSet { defaults.set(whisperCppModel.rawValue, forKey: Keys.whisperCppModel) }
+    }
+
+    var fluidAudioASRModel: FluidAudioASRModel {
+        didSet { defaults.set(fluidAudioASRModel.rawValue, forKey: Keys.fluidAudioASRModel) }
+    }
+
+    var fluidAudioLiveModel: FluidAudioLiveModel {
+        didSet { defaults.set(fluidAudioLiveModel.rawValue, forKey: Keys.fluidAudioLiveModel) }
+    }
+
+    var fluidAudioDiarizationModel: FluidAudioDiarizationModel {
+        didSet { defaults.set(fluidAudioDiarizationModel.rawValue, forKey: Keys.fluidAudioDiarizationModel) }
+    }
+
+    var fluidAudioSegmentationBatchSize: FluidAudioSegmentationBatchSize {
+        didSet { defaults.set(fluidAudioSegmentationBatchSize.rawValue, forKey: Keys.fluidAudioSegmentationBatchSize) }
+    }
+
+    var fluidAudioASRModelConsents: Set<String> {
+        didSet { defaults.set(fluidAudioASRModelConsents.sorted(), forKey: Keys.fluidAudioASRModelConsents) }
+    }
+
+    var fluidAudioNemotronModelsConsented: Bool {
+        didSet { defaults.set(fluidAudioNemotronModelsConsented, forKey: Keys.fluidAudioNemotronModelsConsented) }
+    }
+
+    var fluidAudioUnifiedStreamingConsented: Bool {
+        didSet { defaults.set(fluidAudioUnifiedStreamingConsented, forKey: Keys.fluidAudioUnifiedStreamingConsented) }
+    }
+
+    /// Offline audio-cleanup engine applied before the transcription path.
+    var preprocessingEngine: PreprocessingEngine {
+        didSet { defaults.set(preprocessingEngine.rawValue, forKey: Keys.preprocessingEngine) }
+    }
+
+    /// Voice-activity-detection engine used for speech-region segmentation.
+    var vadEngine: VADEngine {
+        didSet { defaults.set(vadEngine.rawValue, forKey: Keys.vadEngine) }
+    }
+
+    /// Language-detection engine run before transcription to refine the language.
+    var languageDetectionEngine: LanguageDetectionEngine {
+        didSet { defaults.set(languageDetectionEngine.rawValue, forKey: Keys.languageDetectionEngine) }
+    }
+
+    /// The full per-stage pipeline configuration assembled from the individual
+    /// engine preferences, passed to `TranscriptionService`.
+    var pipelineConfiguration: PipelineConfiguration {
+        PipelineConfiguration(
+            preprocessing: preprocessingEngine,
+            vad: vadEngine,
+            languageDetection: languageDetectionEngine,
+            diarization: diarizationEngine,
+            diarizationConsented: selectedFluidDiarizationConsented,
+            sherpaOnnxConsented: sherpaOnnxModelsConsented,
+            transcription: transcriptionEngine,
+            transcriptionProvider: transcriptionProvider,
+            transcriptionModel: transcriptionModel(for: transcriptionProvider),
+            cloudTranscriptionConsented: hasCloudTranscriptionConsent(for: transcriptionProvider),
+            largeTransferPolicy: largeTransferPolicy,
+            fluidAudioSpeakerCount: fluidAudioSpeakerCount,
+            diarizationPreprocessingEnabled: diarizationPreprocessingEnabled,
+            whisperCppModel: whisperCppModel,
+            fluidAudioASRModel: fluidAudioASRModel,
+            fluidAudioASRConsented: selectedFluidAudioASRModelsConsented,
+            fluidAudioDiarizationModel: fluidAudioDiarizationModel,
+            fluidAudioSegmentationBatchSize: fluidAudioSegmentationBatchSize,
+            correction: correctionEnabled ? .llm : .none,
+            correctionProvider: aiProvider,
+            correctionModel: correctionEnabled ? summaryModel(for: aiProvider) : "",
+            correctionConsented: correctionEnabled && aiProvider.isUsable
+        )
+    }
+
+    /// Whether the selected pipeline relies on the FluidAudio on-device ASR model
+    /// (as the Parakeet transcriber or the auto-language detector) *and* the user
+    /// has consented to downloading it. Gates foreground pre-warming so the model
+    /// is only loaded for users who will actually use it, and never downloaded
+    /// without consent. See `FluidAudioModelStore.prewarm()`.
+    var usesFluidAudioModel: Bool {
+        let needsOnDeviceASR = (transcriptionEngine == .fluidAudioParakeet && fluidAudioASRModel == .parakeetV3)
+            || languageDetectionEngine.requiredModelSet == .onDeviceASR
+        return needsOnDeviceASR && fluidAudioBatchASRModelsConsented
+    }
+
+    /// Whether the user has consented to downloading FluidAudio's streaming ASR
+    /// models (independent of the diarization model consent below).
+    var fluidAudioASRModelsConsented: Bool {
+        didSet { defaults.set(fluidAudioASRModelsConsented, forKey: Keys.fluidAudioASRModelsConsented) }
+    }
+
+    /// Whether the user has consented to downloading FluidAudio's multilingual
+    /// on-device batch ASR model (Parakeet TDT v3). When enabled, "Auto" meetings
+    /// transcribed on-device detect the language from the audio instead of
+    /// falling back to Apple Speech with the device locale.
+    var fluidAudioBatchASRModelsConsented: Bool {
+        didSet { defaults.set(fluidAudioBatchASRModelsConsented, forKey: Keys.fluidAudioBatchASRModelsConsented) }
+    }
+
+    /// Whether the user has consented to downloading FluidAudio's diarization
+    /// models (independent of the ASR model consent above).
+    var fluidAudioDiarizationModelsConsented: Bool {
+        didSet { defaults.set(fluidAudioDiarizationModelsConsented, forKey: Keys.fluidAudioDiarizationModelsConsented) }
+    }
+
+    /// Whether the user has consented to downloading FluidAudio's Silero VAD
+    /// model (used by the FluidAudio voice-activity-detection engine).
+    var fluidAudioVADModelsConsented: Bool {
+        didSet { defaults.set(fluidAudioVADModelsConsented, forKey: Keys.fluidAudioVADModelsConsented) }
+    }
+
+    /// Whether the user has consented to downloading whisper.cpp's GGML weights
+    /// for the on-device Whisper engine. Which variant is downloaded is a
+    /// separate choice (`whisperCppModel`).
+    var whisperCppModelsConsented: Bool {
+        didSet { defaults.set(whisperCppModelsConsented, forKey: Keys.whisperCppModelsConsented) }
+    }
+
+    /// Whether the user has consented to downloading sherpa-onnx's diarization
+    /// models (segmentation + speaker embedding), independent of the
+    /// FluidAudio diarization consent above — the two are separate downloads
+    /// for separate engines.
+    var sherpaOnnxModelsConsented: Bool {
+        didSet { defaults.set(sherpaOnnxModelsConsented, forKey: Keys.sherpaOnnxModelsConsented) }
+    }
+
+    var allowsExpensiveNetworkTransfers: Bool {
+        didSet { defaults.set(allowsExpensiveNetworkTransfers, forKey: Keys.allowsExpensiveNetworkTransfers) }
+    }
+
+    var allowsConstrainedNetworkTransfers: Bool {
+        didSet { defaults.set(allowsConstrainedNetworkTransfers, forKey: Keys.allowsConstrainedNetworkTransfers) }
+    }
+
+    private(set) var cloudTranscriptionConsentKeys: Set<String> {
+        didSet {
+            defaults.set(
+                Array(cloudTranscriptionConsentKeys).sorted(),
+                forKey: Keys.cloudTranscriptionConsentKeys
+            )
+        }
+    }
+
+    var largeTransferPolicy: LargeTransferPolicy {
+        LargeTransferPolicy(
+            allowsExpensiveAccess: allowsExpensiveNetworkTransfers,
+            allowsConstrainedAccess: allowsConstrainedNetworkTransfers
+        )
+    }
+
+    func hasCloudTranscriptionConsent(for provider: AIProvider) -> Bool {
+        cloudTranscriptionConsentKeys.contains(cloudTranscriptionConsentKey(for: provider))
+    }
+
+    func recordCloudTranscriptionConsent(for provider: AIProvider) {
+        cloudTranscriptionConsentKeys.insert(cloudTranscriptionConsentKey(for: provider))
+    }
+
+    private func cloudTranscriptionConsentKey(for provider: AIProvider) -> String {
+        "\(provider.id)|\(provider.baseURLString)"
+    }
+
+    /// Whether the user has opted in to on-device MetricKit diagnostic reports
+    /// (crashes + hangs). Off by default: until this is `true`,
+    /// `DiagnosticsSubscriber` discards every payload it receives instead of
+    /// persisting it, so nothing is captured without explicit consent. Even
+    /// when on, nothing leaves the device automatically — reports only leave
+    /// via an explicit "Share" action on a specific report.
+    var diagnosticReportsConsented: Bool {
+        didSet {
+            defaults.set(diagnosticReportsConsented, forKey: AppSettingsKeys.diagnosticReportsConsented)
+        }
+    }
+
+    /// Minimum severity emitted by `AppLog`. Persisted here and pushed to
+    /// `AppLog.minimumLevel` so the choice survives relaunches. `.off` disables
+    /// all app logging.
+    var logLevel: LogLevel {
+        didSet {
+            defaults.set(logLevel.rawValue, forKey: Keys.logLevel)
+            AppLog.minimumLevel = logLevel
+        }
+    }
+
+    /// Local-only usage counters (recordings completed, engine/template usage),
+    /// shown read-only in the "My Data" screen. Never transmitted anywhere.
+    private var usageStats: UsageStats {
+        didSet {
+            if let data = try? JSONEncoder().encode(usageStats) {
+                defaults.set(data, forKey: Keys.usageStats)
+            }
+        }
+    }
+
+    /// Read-aloud provider, voice, model and speed (`ReadAloudPreferences`).
+    /// On-device by default, so nothing is sent anywhere until the user picks
+    /// a cloud voice in Settings.
+    var readAloud: ReadAloudPreferences {
+        didSet {
+            if let data = try? JSONEncoder().encode(readAloud) {
+                defaults.set(data, forKey: Keys.readAloud)
+            }
+        }
+    }
+
+    /// The provider that reads aloud: the stored choice while it still exists
+    /// and has its key, otherwise the always-available on-device voice — so
+    /// removing a key never leaves reading aloud pointing at a dead provider.
+    var speechProvider: AIProvider {
+        providers.first { $0.id == readAloud.providerID && $0.isUsableForSpeech } ?? .appleOnDevice
+    }
+
+    /// Read-only snapshot for the "My Data" screen.
+    var usageStatsSnapshot: UsageStats { usageStats }
+
+    func recordRecordingCompleted() {
+        usageStats.recordingsCompleted += 1
+    }
+
+    func recordTranscriptionEngineUsed(_ engine: TranscriptionEngine) {
+        usageStats.transcriptionEngineUsage[engine.rawValue, default: 0] += 1
+    }
+
+    func recordSummaryTemplateUsed(_ templateID: String) {
+        usageStats.summaryTemplateUsage[templateID, default: 0] += 1
+    }
+
+    /// Clear every local usage counter. Surfaced as "Clear my data" on the
+    /// usage insights screen.
+    func resetUsageStats() {
+        usageStats = UsageStats()
+    }
+
+    /// Per-provider chosen summary model (rawValue → model id).
+    private var summaryModels: [String: String] {
+        didSet {
+            if let data = try? JSONEncoder().encode(summaryModels) {
+                defaults.set(data, forKey: Keys.summaryModels)
+            }
+        }
+    }
+
+    /// Selected summary model for a provider, falling back to its default.
+    func summaryModel(for provider: AIProvider) -> String {
+        let stored = summaryModels[provider.rawValue]
+        if let stored, !stored.isEmpty { return stored }
+        return provider.defaultModel
+    }
+
+    func setSummaryModel(_ model: String, for provider: AIProvider) {
+        summaryModels[provider.rawValue] = model
+    }
+
+    /// Per-provider chosen transcription (Whisper) model (rawValue → model id).
+    private var transcriptionModels: [String: String] {
+        didSet {
+            if let data = try? JSONEncoder().encode(transcriptionModels) {
+                defaults.set(data, forKey: Keys.transcriptionModels)
+            }
+        }
+    }
+
+    /// Selected transcription model for a provider, falling back to its default
+    /// Whisper model (`whisper-1`, or `whisper-large-v3` for Groq).
+    func transcriptionModel(for provider: AIProvider) -> String {
+        let stored = transcriptionModels[provider.rawValue]
+        if let stored, !stored.isEmpty { return stored }
+        return provider.defaultTranscriptionModel
+    }
+
+    func setTranscriptionModel(_ model: String, for provider: AIProvider) {
+        transcriptionModels[provider.rawValue] = model
+    }
+
+    /// Summary templates (built-in presets + user-defined). Built-ins are seeded
+    /// from `SummaryTemplate.defaultTemplates` and merged on launch.
+    var summaryTemplates: [SummaryTemplate] {
+        didSet { persistTemplates() }
+    }
+
+    /// Id of the template chosen for the most recent summary, used to preselect
+    /// the picker. Falls back to the first available template.
+    var lastSummaryTemplateID: String {
+        didSet { defaults.set(lastSummaryTemplateID, forKey: Keys.lastSummaryTemplate) }
+    }
+
+    func addProvider(_ provider: AIProvider) {
+        providers.append(provider)
+        aiProviderID = provider.id
+    }
+
+    func updateProvider(_ provider: AIProvider) {
+        guard let index = providers.firstIndex(where: { $0.id == provider.id }) else { return }
+        providers[index] = provider
+        // An edited kind can change what the provider supports, so the
+        // selections are re-checked like after a key change.
+        credentials.invalidate()
+    }
+
+    func removeProvider(_ provider: AIProvider) {
+        guard !provider.isBuiltIn else { return }
+        providers.removeAll { $0.id == provider.id }
+        summaryModels[provider.id] = nil
+        transcriptionModels[provider.id] = nil
+        if aiProviderID == provider.id {
+            aiProviderID = providers.first?.id ?? AIProvider.openAI.id
+        }
+        if transcriptionProviderID == provider.id {
+            transcriptionProviderID = providers.first(where: { $0.supportsTranscription })?.id
+                ?? AIProvider.openAI.id
+        }
+        credentials.saveKey("", for: provider)
+    }
+
+    init(
+        cloudStore: CloudKeyValueStore = CloudSettingsSync.shared,
+        defaults: UserDefaults = .standard,
+        credentials: CredentialStore = CredentialStore()
+    ) {
+        self.cloudStore = cloudStore
+        self.defaults = defaults
+        self.credentials = credentials
+        // An empty stored list is treated as absent: it can only come from a
+        // corrupt write, and shipping the app with no providers at all is worse
+        // than re-seeding the built-ins.
+        let loadedProviders = defaults.decoded([AIProvider].self, forKey: Keys.providers)
+            .flatMap { $0.isEmpty ? nil : $0 }
+            .map(Self.mergedProviders) ?? AIProvider.defaultProviders
+        providers = loadedProviders
+        // A fresh install (no stored value yet) defaults to the on-device
+        // provider rather than a cloud vendor requiring a key — this is what
+        // actually closes invariant I1 for a user who never opens Settings. An
+        // existing stored selection, cloud or on-device, is always honored.
+        let storedProviderID = defaults.string(forKey: Keys.provider) ?? AIProvider.appleOnDevice.id
+        aiProviderID = loadedProviders.contains(where: { $0.id == storedProviderID })
+            ? storedProviderID
+            : AIProvider.appleOnDevice.id
+        let storedTranscriptionProviderID = defaults.string(forKey: Keys.transcriptionProvider)
+            ?? AIProvider.openAI.id
+        transcriptionProviderID = loadedProviders.contains(where: {
+            $0.id == storedTranscriptionProviderID && $0.supportsTranscription
+        }) ? storedTranscriptionProviderID : AIProvider.openAI.id
+        let resolvedDefaultMode = defaults.enumValue(forKey: Keys.defaultMode, default: TranscriptionMode.onDevice)
+        defaultMode = resolvedDefaultMode
+        let resolvedDefaultLanguage = defaults.enumValue(forKey: Keys.defaultLanguage, default: MeetingLanguage.autoDetect)
+        defaultLanguage = resolvedDefaultLanguage
+        micPickup = defaults.enumValue(forKey: Keys.micPickup, default: .wholeRoom)
+        // `.standard` (48 kbps mono at the recorder's fixed 24kHz) is transparent
+        // for speech, so it is the default rather than `.high`. Users who already
+        // picked a tier keep it — they still gain from the fixed sample rate.
+        audioQuality = defaults.enumValue(forKey: Keys.audioQuality, default: .standard)
+        alwaysUseBuiltInMic = defaults.bool(forKey: Keys.alwaysUseBuiltInMic)
+        meetingsSortOrder = defaults.enumValue(forKey: Keys.meetingsSortOrder, default: .dateNewest)
+        autoTaggingEnabled = defaults.bool(forKey: Keys.autoTaggingEnabled, default: false)
+        liveTranscriptionEnabled = defaults.bool(forKey: Keys.liveTranscriptionEnabled)
+        meetingCoachEnabled = defaults.bool(forKey: Keys.meetingCoachEnabled, default: true)
+        coachUserName = defaults.string(forKey: Keys.coachUserName) ?? ""
+        coachBudgetUSD = (defaults.object(forKey: Keys.coachBudgetUSD) as? Double) ?? 10
+        semanticSearchEnabled = defaults.bool(forKey: Keys.semanticSearchEnabled, default: true)
+        // Off by default: wiki generation makes paid cloud LLM calls, so it is an
+        // explicit opt-in.
+        wikiEnabled = defaults.bool(forKey: Keys.wikiEnabled, default: false)
+        // Off by default: transcription correction makes paid cloud LLM calls,
+        // so it is an explicit opt-in, same as wiki generation.
+        correctionEnabled = defaults.bool(forKey: Keys.correctionEnabled, default: false)
+        aiTitleCloudEnabled = defaults.bool(forKey: Keys.aiTitleCloudEnabled, default: false)
+        // Screenshot automation (fastlane `snapshot`) always forces this off so
+        // the recordings lock screen never blocks an unattended UI test run;
+        // so does the injected store-open failure, whose recovery actions
+        // re-authenticate (`ModelStoreRecoveryViewModel`) and would otherwise
+        // stop at a prompt no UI test can answer.
+        #if DEBUG
+        let unattendedUITestRun = ProcessInfo.processInfo.arguments.contains("UI-Testing-Screenshots")
+            || ProcessInfo.processInfo.environment["UI_TESTING_STORE_OPEN_FAILURE_REASON"] != nil
+        requireAuthForRecordings = unattendedUITestRun
+            ? false
+            : defaults.bool(forKey: Keys.requireAuthForRecordings, default: true)
+        #else
+        requireAuthForRecordings = defaults.bool(forKey: Keys.requireAuthForRecordings, default: true)
+        #endif
+        hideLiveActivityMeetingTitle = defaults.bool(forKey: Keys.hideLiveActivityMeetingTitle, default: true)
+        // FluidAudio rather than the heuristic engine, which is what every user
+        // got who never opened Settings. `PipelineConfiguration.effectiveDiarization`
+        // steps back down to the heuristic until the models are consented to, so
+        // this default never triggers a download on its own.
+        diarizationEngine = defaults.enumValue(forKey: Keys.diarizationEngine, default: .fluidAudio)
+        // Migration: the old key held a *minimum* speaker count that never
+        // engaged (see `fluidAudioSpeakerCount`). Carry the number over as the
+        // pinned count — it is the count the user believed they were asking for.
+        if let pinned = defaults.object(forKey: Keys.fluidAudioSpeakerCount) as? Int {
+            fluidAudioSpeakerCount = pinned
+        } else {
+            fluidAudioSpeakerCount = defaults.integer(forKey: Keys.legacyFluidAudioMinSpeakers)
+        }
+        diarizationPreprocessingEnabled = defaults.bool(forKey: Keys.diarizationPreprocessingEnabled, default: true)
+        playbackEnhancementEnabled = defaults.bool(forKey: Keys.playbackEnhancementEnabled)
+        fluidAudioASRModelsConsented = defaults.bool(forKey: Keys.fluidAudioASRModelsConsented)
+        let batchASRConsented = defaults.bool(forKey: Keys.fluidAudioBatchASRModelsConsented)
+        fluidAudioBatchASRModelsConsented = batchASRConsented
+        fluidAudioDiarizationModelsConsented = defaults.bool(forKey: Keys.fluidAudioDiarizationModelsConsented)
+        fluidAudioVADModelsConsented = defaults.bool(forKey: Keys.fluidAudioVADModelsConsented)
+        whisperCppModelsConsented = defaults.bool(forKey: Keys.whisperCppModelsConsented)
+        sherpaOnnxModelsConsented = defaults.bool(forKey: Keys.sherpaOnnxModelsConsented)
+        allowsExpensiveNetworkTransfers = defaults.bool(forKey: Keys.allowsExpensiveNetworkTransfers)
+        allowsConstrainedNetworkTransfers = defaults.bool(forKey: Keys.allowsConstrainedNetworkTransfers)
+        cloudTranscriptionConsentKeys = Set(
+            defaults.stringArray(forKey: Keys.cloudTranscriptionConsentKeys) ?? []
+        )
+        diagnosticReportsConsented = defaults.bool(forKey: AppSettingsKeys.diagnosticReportsConsented)
+        // Transcription engine: prefer the stored value; otherwise migrate the
+        // legacy `defaultMode` + on-device-multilingual pairing into the new
+        // single explicit choice.
+        let storedTranscriptionEngine = (defaults.string(forKey: Keys.transcriptionEngine))
+            .flatMap(TranscriptionEngine.init(rawValue:))
+        let resolvedTranscriptionEngine = storedTranscriptionEngine
+            ?? Self.migratedTranscriptionEngine(
+                mode: resolvedDefaultMode,
+                language: resolvedDefaultLanguage,
+                multilingualConsented: batchASRConsented
+            )
+        transcriptionEngine = resolvedTranscriptionEngine
+        preprocessingEngine = defaults.enumValue(forKey: Keys.preprocessingEngine, default: .standardDSP)
+        vadEngine = defaults.enumValue(forKey: Keys.vadEngine, default: .energyThreshold)
+        languageDetectionEngine = defaults.enumValue(forKey: Keys.languageDetectionEngine, default: .byTranscriber)
+        whisperCppModel = defaults.enumValue(forKey: Keys.whisperCppModel, default: WhisperCppModel.default)
+        fluidAudioASRModel = defaults.enumValue(forKey: Keys.fluidAudioASRModel, default: FluidAudioASRModel.default)
+        fluidAudioLiveModel = defaults.enumValue(forKey: Keys.fluidAudioLiveModel, default: FluidAudioLiveModel.default)
+        fluidAudioDiarizationModel = defaults.enumValue(forKey: Keys.fluidAudioDiarizationModel, default: FluidAudioDiarizationModel.default)
+        fluidAudioSegmentationBatchSize = FluidAudioSegmentationBatchSize(
+            rawValue: defaults.integer(forKey: Keys.fluidAudioSegmentationBatchSize)
+        ) ?? .default
+        fluidAudioASRModelConsents = Set(defaults.stringArray(forKey: Keys.fluidAudioASRModelConsents) ?? [])
+        fluidAudioNemotronModelsConsented = defaults.bool(forKey: Keys.fluidAudioNemotronModelsConsented)
+        fluidAudioUnifiedStreamingConsented = defaults.bool(forKey: Keys.fluidAudioUnifiedStreamingConsented)
+        // Fall back to the environment-derived default (set on `AppLog` at
+        // launch) when the user hasn't chosen a level yet.
+        let resolvedLogLevel = defaults.enumValue(forKey: Keys.logLevel, default: AppLog.minimumLevel)
+        logLevel = resolvedLogLevel
+        AppLog.minimumLevel = resolvedLogLevel
+        summaryModels = defaults.decoded([String: String].self, forKey: Keys.summaryModels) ?? [:]
+        transcriptionModels = defaults.decoded([String: String].self, forKey: Keys.transcriptionModels) ?? [:]
+        usageStats = defaults.decoded(UsageStats.self, forKey: Keys.usageStats) ?? UsageStats()
+        readAloud = defaults.decoded(ReadAloudPreferences.self, forKey: Keys.readAloud) ?? ReadAloudPreferences()
+        // As with `providers`, an empty stored list re-seeds the built-in presets.
+        let loadedTemplates = defaults.decoded([SummaryTemplate].self, forKey: Keys.summaryTemplates)
+            .flatMap { $0.isEmpty ? nil : $0 }
+            .map(Self.mergedTemplates) ?? SummaryTemplate.defaultTemplates
+        summaryTemplates = loadedTemplates
+        let storedTemplateID = defaults.string(forKey: Keys.lastSummaryTemplate)
+            ?? SummaryTemplate.general.id
+        lastSummaryTemplateID = loadedTemplates.contains(where: { $0.id == storedTemplateID })
+            ? storedTemplateID
+            : (loadedTemplates.first?.id ?? SummaryTemplate.general.id)
+        templatesSyncEnabled = defaults.bool(forKey: Keys.templatesSyncEnabled, default: false)
+
+        if templatesSyncEnabled {
+            reconcileTemplatesWithCloud()
+        }
+        // Registered last: the closure captures `self` weakly and dispatches
+        // back to the main actor, so it must not run before every stored
+        // property above has its initial value.
+        cloudStore.didChangeExternally = { [weak self] changedKeys in
+            guard changedKeys.contains(AppSettings.cloudTemplatesKey) else { return }
+            Task { @MainActor in
+                guard let self, self.templatesSyncEnabled else { return }
+                self.reconcileTemplatesWithCloud()
+            }
+        }
+        credentials.onChange = { [weak self] in
+            self?.ensureProviderSelectionsAreUsable()
+        }
+    }
+
+    private func persistProviders() {
+        if let data = try? JSONEncoder().encode(providers) {
+            defaults.set(data, forKey: Keys.providers)
+        }
+    }
+
+    private func persistTemplates() {
+        if let data = try? JSONEncoder().encode(summaryTemplates) {
+            defaults.set(data, forKey: Keys.summaryTemplates)
+        }
+    }
+}

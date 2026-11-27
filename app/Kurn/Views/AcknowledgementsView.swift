@@ -1,0 +1,192 @@
+//
+//  AcknowledgementsView.swift
+//  Kurn
+//
+//  Open-source attribution screen reached from Settings → Acknowledgements.
+//  Mirrors THIRD_PARTY_NOTICES.md so the license credits required by the linked
+//  packages (FluidAudio, whisper.cpp) and the on-demand models are also
+//  available inside the app.
+//
+
+import SwiftUI
+
+struct AcknowledgementsView: View {
+    /// A single credited component. `name`/`license` are proper names and
+    /// license identifiers, so they stay verbatim rather than localized.
+    private struct Credit: Identifiable {
+        let name: String
+        let license: String
+        let urlString: String
+        var id: String { name }
+        var url: URL? { URL(string: urlString) }
+    }
+
+    private let packages: [Credit] = [
+        Credit(
+            name: "FluidAudio",
+            license: "Apache License 2.0",
+            urlString: "https://github.com/FluidInference/FluidAudio"
+        ),
+        Credit(
+            name: "whisper.cpp",
+            license: "MIT License",
+            urlString: "https://github.com/ggml-org/whisper.cpp"
+        ),
+        Credit(
+            name: "sherpa-onnx",
+            license: "Apache License 2.0",
+            urlString: "https://github.com/k2-fsa/sherpa-onnx"
+        )
+    ]
+
+    private let models: [Credit] = [
+        Credit(
+            name: "NVIDIA Parakeet TDT (ASR)",
+            license: "NVIDIA / open-source model license",
+            urlString: "https://github.com/NVIDIA/NeMo"
+        ),
+        Credit(
+            name: "NVIDIA Nemotron Labs Unified ASR 0.6B",
+            license: "OpenMDW License Agreement 1.1 (OpenMDW-1.1)",
+            urlString: "https://huggingface.co/FluidInference/nemotron-labs-unified-asr-0.6b-coreml"
+        ),
+        Credit(
+            name: "Nemotron 3.5 Transcribe Lite (Fluid Inference)",
+            license: "OpenMDW License Agreement 1.1 (OpenMDW-1.1)",
+            urlString: "https://huggingface.co/FluidInference/nemotron-3.5-transcribe-lite-coreml"
+        ),
+        Credit(
+            name: "Underdog Bark 3.0 (Conway Research)",
+            license: "Creative Commons Attribution 4.0 International (CC-BY-4.0)",
+            urlString: "https://huggingface.co/FluidInference/bark-3.0-coreml"
+        ),
+        Credit(
+            name: "Underdog Bark 3.0 Clean (Conway Research)",
+            license: "Creative Commons Attribution 4.0 International (CC-BY-4.0)",
+            urlString: "https://huggingface.co/FluidInference/bark-3.0-coreml"
+        ),
+        Credit(
+            name: "Phonon-2 (Fermion Research)",
+            license: "Creative Commons Attribution 4.0 International (CC-BY-4.0)",
+            urlString: "https://huggingface.co/FluidInference/phonon-2-coreml"
+        ),
+        Credit(
+            name: "NVIDIA Nemotron 3 Diarization (8 speakers)",
+            license: "OpenMDW License Agreement 1.1 (OpenMDW-1.1)",
+            urlString: "https://huggingface.co/FluidInference/nemotron-3-diarization-coreml"
+        ),
+        Credit(
+            name: "pyannote-audio (diarization)",
+            license: "MIT License",
+            urlString: "https://github.com/pyannote/pyannote-audio"
+        ),
+        Credit(
+            name: "WeSpeaker (diarization)",
+            license: "Apache License 2.0",
+            urlString: "https://github.com/wenet-e2e/wespeaker"
+        ),
+        Credit(
+            name: "NVIDIA Sortformer (diarization)",
+            license: "NVIDIA Open Model License",
+            urlString: "https://github.com/NVIDIA/NeMo"
+        ),
+        Credit(
+            name: "pyannote/segmentation-3.0 (sherpa-onnx diarization)",
+            license: "MIT License",
+            urlString: "https://huggingface.co/pyannote/segmentation-3.0"
+        ),
+        Credit(
+            name: "3D-Speaker CAM++ (sherpa-onnx diarization)",
+            license: "Apache License 2.0",
+            urlString: "https://github.com/modelscope/3D-Speaker"
+        ),
+        Credit(
+            name: "Silero VAD",
+            license: "MIT License",
+            urlString: "https://github.com/snakers4/silero-vad"
+        ),
+        Credit(
+            name: "OpenAI Whisper (GGML)",
+            license: "MIT License",
+            urlString: "https://huggingface.co/ggerganov/whisper.cpp"
+        )
+    ]
+
+    private var modelLicensesTitle: String {
+        NSLocalizedString("ack.fluid_audio_model_licenses", comment: "")
+    }
+
+    private var modelLicensesText: String? {
+        guard let url = Bundle.main.url(forResource: "FluidAudioModelLicenses", withExtension: "txt") else {
+            return nil
+        }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }
+
+    private var modelLicensesView: some View {
+        ScrollView {
+            Text(verbatim: modelLicensesText ?? NSLocalizedString("common.error", comment: ""))
+                .font(Theme.footnote)
+                .foregroundStyle(Theme.textPrimary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+        }
+        .background(Theme.background.ignoresSafeArea())
+        .navigationTitle(modelLicensesTitle)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Text(NSLocalizedString("ack.intro", comment: "Acknowledgements intro"))
+                    .font(Theme.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+
+            Section(NSLocalizedString("ack.packages", comment: "Swift packages")) {
+                ForEach(packages) { creditRow($0) }
+            }
+
+            Section {
+                ForEach(models) { creditRow($0) }
+                NavigationLink(modelLicensesTitle) {
+                    modelLicensesView
+                }
+            } header: {
+                Text(NSLocalizedString("ack.models", comment: "Machine-learning models"))
+            } footer: {
+                Text(NSLocalizedString("ack.footer", comment: "Acknowledgements footer"))
+            }
+        }
+        .navigationTitle(NSLocalizedString("settings.acknowledgements", comment: "Acknowledgements"))
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private func creditRow(_ credit: Credit) -> some View {
+        let content = VStack(alignment: .leading, spacing: 2) {
+            Text(credit.name)
+                .font(.system(.subheadline, design: .default, weight: .medium))
+                .foregroundStyle(Theme.textPrimary)
+            Text(credit.license)
+                .font(Theme.caption)
+                .foregroundStyle(Theme.textSecondary)
+        }
+
+        if let url = credit.url {
+            Link(destination: url) {
+                HStack {
+                    content
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(.caption, weight: .semibold))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+            }
+        } else {
+            content
+        }
+    }
+}

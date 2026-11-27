@@ -1,0 +1,266 @@
+//
+//  GoogleProvider.swift
+//  Kurn
+//
+//  Google Gemini implementation of summary generation via the Generative
+//  Language API (models/{model}:generateContent). Gemini has no speech endpoint
+//  wired here, so cloud transcription continues to route through OpenAI Whisper.
+//
+
+import Foundation
+import KurnCore
+
+struct GoogleProvider: LLMProvider {
+    let provider: AIProvider
+
+    private let apiKey: String
+    private let session: URLSession
+    private let model: String
+
+    init(provider: AIProvider = .google, apiKey: String, model: String = "gemini-1.5-pro", session: URLSession = .shared) {
+        self.provider = provider
+        self.apiKey = apiKey
+        self.model = model
+        self.session = session
+    }
+
+    func summarize(systemPrompt: String, userPrompt: String) async throws -> SummaryResult {
+        try LLMHTTP.requireAPIKey(apiKey, provider: provider)
+
+        let request = try makeRequest(
+            timeout: LLMHTTP.summaryTimeout,
+            body: Self.summaryBody(systemPrompt: systemPrompt, userPrompt: userPrompt)
+        )
+
+        let (data, _) = try await LLMHTTP.sendValidated(request, session: session)
+
+        return try LLMHTTP.summaryResult(
+            from: data,
+            as: GeminiResponse.self,
+            emptyMessage: "empty Gemini response",
+            isTruncated: { $0.candidates?.first?.finishReason == "MAX_TOKENS" },
+            extractContent: { Self.text(from: $0) }
+        )
+    }
+
+    /// Streamed `summarize`: the same request against
+    /// `streamGenerateContent`.
+    func streamSummary(
+        systemPrompt: String,
+        userPrompt: String,
+        onDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> SummaryResult {
+        try LLMHTTP.requireAPIKey(apiKey, provider: provider)
+
+        let request = try makeStreamRequest(
+            timeout: LLMHTTP.summaryTimeout,
+            body: Self.summaryBody(systemPrompt: systemPrompt, userPrompt: userPrompt)
+        )
+
+        let accumulator = StreamingAccumulator()
+        let finish = FinishReasonRecorder()
+        try await LLMHTTP.streamSSE(
+            request,
+            session: session,
+            policy: .streamingSummary,
+            retriesBeforeFirstPayload: true
+        ) { payload in
+            guard let data = payload.data(using: .utf8),
+                  let chunk = try? JSONDecoder().decode(GeminiResponse.self, from: data) else { return }
+            finish.record(chunk.candidates?.first?.finishReason)
+            if let delta = Self.text(from: chunk), !delta.isEmpty {
+                accumulator.append(delta)
+                onDelta(delta)
+            }
+        }
+        return try LLMHTTP.summaryResult(
+            streamedText: accumulator.value,
+            truncated: finish.value == "MAX_TOKENS",
+            emptyMessage: "empty Gemini response"
+        )
+    }
+
+    /// The summary request body shared by the buffered and streamed routes.
+    /// Gemini has no dedicated system role here, so the system prompt is
+    /// folded into the user turn. No response schema: the reply is Markdown
+    /// (`SummaryMarkdown`), like every other vendor's.
+    private static func summaryBody(systemPrompt: String, userPrompt: String) -> [String: Any] {
+        [
+            "contents": [["role": "user", "parts": [["text": "\(systemPrompt)\n\n\(userPrompt)"]]]],
+            "generationConfig": [
+                "maxOutputTokens": LLMHTTP.summaryMaxOutputTokens
+            ]
+        ]
+    }
+
+    // MARK: - Chat (generateContent, plain text)
+
+    func chat(
+        systemPrompt: String,
+        messages: [ChatMessage],
+        options: TextGenerationOptions
+    ) async throws -> String {
+        try LLMHTTP.requireAPIKey(apiKey, provider: provider)
+
+        // Gemini has no dedicated system role here; fold the system prompt into
+        // the first user turn (as `summarize` does) and map assistant → model.
+        var contents: [[String: Any]] = []
+        for (index, message) in messages.enumerated() where message.role != .system {
+            let role = message.role == .assistant ? "model" : "user"
+            var text = message.content
+            if index == 0 && message.role == .user {
+                text = "\(systemPrompt)\n\n\(text)"
+            }
+            contents.append(["role": role, "parts": [["text": text]]])
+        }
+        if contents.isEmpty {
+            contents = [["role": "user", "parts": [["text": systemPrompt]]]]
+        }
+        let request = try makeRequest(
+            timeout: options.timeout,
+            body: [
+                "contents": contents,
+                "generationConfig": ["maxOutputTokens": options.maxOutputTokens]
+            ]
+        )
+
+        let (data, _) = try await LLMHTTP.sendValidated(request, session: session)
+
+        return try LLMHTTP.textResult(
+            from: data,
+            as: GeminiResponse.self,
+            emptyMessage: "empty Gemini response",
+            isTruncated: { $0.candidates?.first?.finishReason == "MAX_TOKENS" },
+            extractContent: { Self.text(from: $0) }
+        )
+    }
+
+    // MARK: - Chat (streamGenerateContent, streaming)
+
+    @discardableResult
+    func streamChat(
+        systemPrompt: String,
+        messages: [ChatMessage],
+        options: TextGenerationOptions,
+        onDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> TokenUsage? {
+        try LLMHTTP.requireAPIKey(apiKey, provider: provider)
+
+        var contents: [[String: Any]] = []
+        for (index, message) in messages.enumerated() where message.role != .system {
+            let role = message.role == .assistant ? "model" : "user"
+            var text = message.content
+            if index == 0 && message.role == .user {
+                text = "\(systemPrompt)\n\n\(text)"
+            }
+            contents.append(["role": role, "parts": [["text": text]]])
+        }
+        if contents.isEmpty {
+            contents = [["role": "user", "parts": [["text": systemPrompt]]]]
+        }
+        let request = try makeStreamRequest(
+            timeout: options.timeout,
+            body: [
+                "contents": contents,
+                "generationConfig": ["maxOutputTokens": options.maxOutputTokens]
+            ]
+        )
+
+        let accumulator = StreamingAccumulator()
+        let usage = UsageAccumulator()
+        try await LLMHTTP.streamSSE(
+            request,
+            session: session,
+            policy: .interactive(totalDeadline: options.timeout)
+        ) { payload in
+            guard let data = payload.data(using: .utf8),
+                  let chunk = try? JSONDecoder().decode(GeminiResponse.self, from: data) else { return }
+            if let delta = Self.text(from: chunk), !delta.isEmpty {
+                accumulator.append(delta)
+                onDelta(delta)
+            }
+            // Each chunk repeats Gemini's running cumulative counts, so the
+            // last chunk that carries one is the final tally — overwriting on
+            // every occurrence rather than only the first gets that for free.
+            if let metadata = chunk.usageMetadata {
+                usage.set(promptTokens: metadata.promptTokenCount, completionTokens: metadata.candidatesTokenCount)
+            }
+        }
+        guard accumulator.receivedText else {
+            throw AppError.decodingError("empty Gemini response")
+        }
+        return usage.value
+    }
+
+    // MARK: - Helpers
+
+    /// The `generateContent` route for the configured model. Gemini model IDs are
+    /// sometimes stored with a `models/` prefix already attached, so strip it
+    /// rather than emit `models/models/…`.
+    private var generateContentPath: String {
+        "models/\(model.replacingOccurrences(of: "models/", with: "")):generateContent"
+    }
+
+    /// The `streamGenerateContent` route for the configured model, SSE-shaped
+    /// (`alt=sse`) rather than the newline-delimited JSON array the endpoint
+    /// returns by default — `LLMHTTP.streamSSE` only understands `data:` framing.
+    private var streamGenerateContentPath: String {
+        "models/\(model.replacingOccurrences(of: "models/", with: "")):streamGenerateContent"
+    }
+
+    /// A `streamGenerateContent` request with Gemini's API-key header and
+    /// `alt=sse` query item.
+    private func makeStreamRequest(timeout: TimeInterval, body: [String: Any]) throws -> URLRequest {
+        try LLMHTTP.jsonRequest(
+            provider: provider,
+            path: streamGenerateContentPath,
+            timeout: timeout,
+            headers: ["x-goog-api-key": apiKey],
+            queryItems: [URLQueryItem(name: "alt", value: "sse")],
+            body: body
+        )
+    }
+
+    /// A `generateContent` request with Gemini's API-key header.
+    private func makeRequest(timeout: TimeInterval, body: [String: Any]) throws -> URLRequest {
+        try LLMHTTP.jsonRequest(
+            provider: provider,
+            path: generateContentPath,
+            timeout: timeout,
+            headers: ["x-goog-api-key": apiKey],
+            body: body
+        )
+    }
+
+    private static func text(from response: GeminiResponse) -> String? {
+        response.candidates?.first?.content?.parts.compactMap { $0.text }.joined()
+    }
+}
+
+private struct GeminiResponse: Decodable {
+    let candidates: [GeminiCandidate]?
+    let usageMetadata: GeminiUsageMetadata?
+}
+
+/// Gemini reports cumulative token counts on (typically) every streamed
+/// chunk rather than once at the end, unlike OpenAI/Anthropic.
+private struct GeminiUsageMetadata: Decodable {
+    let promptTokenCount: Int?
+    let candidatesTokenCount: Int?
+}
+
+private struct GeminiCandidate: Decodable {
+    // Optional: a candidate stopped by MAX_TOKENS or a safety filter can omit
+    // the content block entirely, and decoding must still succeed so the
+    // truncation check gets a chance to run.
+    let content: GeminiContent?
+    let finishReason: String?
+}
+
+private struct GeminiContent: Decodable {
+    let parts: [GeminiPart]
+}
+
+private struct GeminiPart: Decodable {
+    let text: String?
+}

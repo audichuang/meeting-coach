@@ -1,0 +1,216 @@
+//
+//  SettingsView.swift
+//  Kurn
+//
+//  The Settings hub. This screen used to be one flat `Form` with twelve stacked
+//  sections — providers, the whole recognition pipeline, summaries, tags, search,
+//  templates, recording, diagnostics, storage, models and about — which meant a
+//  long undifferentiated scroll that mixed unrelated decisions.
+//
+//  It is now a short list of destinations grouped by subject, each pushing a
+//  focused screen in `Views/Settings/`. What stays here is what has to: the
+//  destructive reset. Key status and the provider-selection invariants live in
+//  `AppSettings.credentials` / `AppSettings+ProviderSelection.swift`.
+//
+
+import SwiftData
+import KurnCore
+import SwiftUI
+
+struct SettingsView: View {
+    @Environment(AppSettings.self) var settings
+    @Environment(\.modelContext) var modelContext
+    @Environment(\.dismiss) var dismiss
+    /// Optional: Settings also renders in the security cover window, which
+    /// does not inject the transcription coordinator.
+    @Environment(TranscriptionCoordinator.self) var transcription: TranscriptionCoordinator?
+
+    /// The FluidAudio download state shared by the Transcription, Recording and
+    /// Storage screens. Owned by `KurnApp` rather than here: the diarization
+    /// models are also offered from a meeting's transcript, and a second
+    /// controller would track a download this one knows nothing about.
+    @Environment(ModelDownloadController.self) private var downloads
+
+    @State var showingDeleteConfirm = false
+    /// Set when "Delete all data" fails to erase the store, so the failure
+    /// surfaces instead of the wipe silently doing nothing.
+    @State var dataError: AppError?
+
+    var body: some View {
+        Form {
+            Section {
+                link(
+                    NSLocalizedString("settings.providers", comment: "AI Providers"),
+                    systemImage: "brain",
+                    identifier: "settings.link.providers"
+                ) {
+                    ProvidersSettingsView()
+                }
+                link(
+                    NSLocalizedString("settings.summary", comment: "Summary"),
+                    systemImage: "sparkles",
+                    identifier: "settings.link.summary"
+                ) {
+                    SummarySettingsView()
+                }
+                link(
+                    NSLocalizedString("settings.semantic_search_title", comment: "Search and chat"),
+                    systemImage: "magnifyingglass",
+                    identifier: "settings.link.search"
+                ) {
+                    SemanticSearchSettingsView()
+                }
+                link(
+                    NSLocalizedString("settings.wiki_title", comment: "Meeting wiki"),
+                    systemImage: "book",
+                    identifier: "settings.link.wiki"
+                ) {
+                    WikiSettingsView()
+                }
+                link(
+                    NSLocalizedString("settings.read_aloud.title", comment: "Read Aloud"),
+                    systemImage: "speaker.wave.2",
+                    identifier: "settings.link.readAloud"
+                ) {
+                    ReadAloudSettingsView()
+                }
+            } header: {
+                Text(NSLocalizedString("settings.group.intelligence", comment: "Intelligence group"))
+            }
+
+            Section {
+                link(
+                    NSLocalizedString("settings.recording", comment: "Recording"),
+                    systemImage: "mic",
+                    identifier: "settings.link.recording"
+                ) {
+                    RecordingSettingsView()
+                }
+                link(
+                    NSLocalizedString("settings.transcription", comment: "Transcription"),
+                    systemImage: "waveform",
+                    identifier: "settings.link.transcription"
+                ) {
+                    TranscriptionSettingsView()
+                }
+            } header: {
+                Text(NSLocalizedString("settings.group.capture", comment: "Capture group"))
+            }
+
+            Section {
+                link(
+                    NSLocalizedString("tag.title", comment: "Tags"),
+                    systemImage: "tag",
+                    identifier: "settings.link.tags"
+                ) {
+                    TagsSettingsView()
+                }
+                link(
+                    NSLocalizedString("usage_insights.title", comment: "Usage Insights"),
+                    systemImage: "chart.bar",
+                    identifier: "settings.link.usage"
+                ) {
+                    UsageInsightsView()
+                }
+            } header: {
+                Text(NSLocalizedString("settings.group.library", comment: "Library group"))
+            } footer: {
+                Text(NSLocalizedString("usage_insights.footer", comment: "Explains local-only usage data"))
+            }
+
+            Section {
+                link(
+                    NSLocalizedString("settings.storage", comment: "Storage"),
+                    systemImage: "internaldrive",
+                    identifier: "settings.link.storage"
+                ) {
+                    StorageSettingsView()
+                }
+                link(
+                    NSLocalizedString("health.title", comment: "Health & Recovery"),
+                    systemImage: "wrench.and.screwdriver",
+                    identifier: "settings.link.health"
+                ) {
+                    HealthRecoveryView()
+                }
+                link(
+                    NSLocalizedString("settings.diagnostics", comment: "Diagnostics"),
+                    systemImage: "stethoscope",
+                    identifier: "settings.link.diagnostics"
+                ) {
+                    DiagnosticsSettingsView()
+                }
+                link(
+                    NSLocalizedString("settings.about", comment: "About"),
+                    systemImage: "info.circle",
+                    identifier: "settings.link.about"
+                ) {
+                    AboutSettingsView()
+                }
+            } header: {
+                Text(NSLocalizedString("settings.group.system", comment: "System group"))
+            }
+
+            Section {
+                Button(role: .destructive) { showingDeleteConfirm = true } label: {
+                    Text(NSLocalizedString("settings.delete_all", comment: "Delete All Data"))
+                }
+            }
+        }
+        .navigationTitle(NSLocalizedString("settings.title", comment: "Settings"))
+        .navigationBarTitleDisplayMode(.inline)
+        .environment(downloads)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button(NSLocalizedString("common.done", comment: "Done")) { dismiss() }
+            }
+        }
+        // Key writes re-apply this themselves (`AppSettings.credentials`);
+        // running it on appear also catches what no write announces, such as
+        // the on-device model becoming unavailable.
+        .onAppear { settings.ensureProviderSelectionsAreUsable() }
+        .kurnDialog(
+            isPresented: $showingDeleteConfirm,
+            iconSystemName: "exclamationmark.triangle.fill",
+            iconTint: Theme.accent,
+            title: NSLocalizedString("settings.delete_all.confirm", comment: "Confirm delete all"),
+            message: NSLocalizedString("settings.delete_all.message", comment: ""),
+            primaryTitle: NSLocalizedString("settings.delete_all", comment: "Delete All Data"),
+            primaryRole: .destructive,
+            primaryAction: { Task { await authorizeAndDeleteAllData() } },
+            secondaryTitle: NSLocalizedString("common.cancel", comment: "Cancel")
+        )
+        .errorAlert($dataError)
+    }
+
+    /// One hub row: icon + title pushing a destination.
+    ///
+    /// The destination gets `downloads` injected here rather than relying on the
+    /// `.environment(downloads)` applied to the hub's `Form`. This view is the
+    /// root content of a `NavigationStack` (see `MeetingsListView`), so pushed
+    /// destinations are hosted by the stack and don't reliably inherit an
+    /// environment object installed inside the root — every other object the
+    /// screens read (`AppSettings`, the coordinators) comes from `KurnApp`, above
+    /// the stack, which is why only the three screens reading `downloads`
+    /// (Recording, Transcription, Storage) crashed on a missing object.
+    private func link<Destination: View>(
+        _ title: String,
+        systemImage: String,
+        identifier: String,
+        @ViewBuilder destination: @escaping () -> Destination
+    ) -> some View {
+        NavigationLink {
+            destination()
+                .environment(downloads)
+        } label: {
+            Label(title, systemImage: systemImage)
+        }
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+// The section screens live in `Views/Settings/`; the shared provider helpers and
+// the destructive reset live in an `extension SettingsView` in
+// `SettingsSections.swift`. `ProviderRow`, `ProviderEditor`, `AddProviderView`,
+// `SummaryModelPicker`, `ModelDownloadAlerts` and `ModelDownloadProgressRow` are
+// in `SettingsProviderViews.swift`.

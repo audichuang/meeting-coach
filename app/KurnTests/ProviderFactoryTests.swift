@@ -1,0 +1,238 @@
+//
+//  ProviderFactoryTests.swift
+//  KurnTests
+//
+//  Exercises the real Keychain (via KeychainManager.shared) since that is the
+//  only place the "do we have a key?" decision can be observed end to end.
+//  Each test snapshots and restores whatever was already stored so it doesn't
+//  leak state into other tests or the app itself.
+//
+
+import Testing
+import KurnCore
+@testable import Kurn
+
+// Serialized because these tests mutate the real, process-wide Keychain
+// (`KeychainManager.shared`) — several share the `.openAI` key, so running them
+// in parallel races on set/delete (one test clears the key while another expects
+// it set). Matches the same precaution in `ProviderHTTPTests`.
+@Suite(.serialized)
+struct ProviderFactoryTests {
+
+    @discardableResult
+    private func withClearedKey<R>(_ key: KeychainKey, _ body: () throws -> R) rethrows -> R {
+        let original = KeychainManager.shared.value(for: key)
+        KeychainManager.shared.delete(key)
+        defer {
+            if let original { KeychainManager.shared.set(original, for: key) } else { KeychainManager.shared.delete(key) }
+        }
+        return try body()
+    }
+
+    @discardableResult
+    private func withKey<R>(_ key: KeychainKey, value: String, _ body: () throws -> R) rethrows -> R {
+        let original = KeychainManager.shared.value(for: key)
+        KeychainManager.shared.set(value, for: key)
+        defer {
+            if let original { KeychainManager.shared.set(original, for: key) } else { KeychainManager.shared.delete(key) }
+        }
+        return try body()
+    }
+
+    @Test func summaryProviderThrowsNoAPIKeyWhenKeychainIsEmpty() {
+        withClearedKey(.openAI) {
+            #expect(throws: AppError.self) {
+                _ = try ProviderFactory.summaryProvider(for: .openAI, model: "gpt-4o")
+            }
+        }
+    }
+
+    @Test func summaryProviderBuildsOpenAIProviderWhenKeyPresent() throws {
+        try withKey(.openAI, value: "test-key") {
+            let provider = try ProviderFactory.summaryProvider(for: .openAI, model: "gpt-4o")
+            #expect(provider.provider == .openAI)
+        }
+    }
+
+    @Test func summaryProviderBuildsAnthropicProviderWhenKeyPresent() throws {
+        try withKey(.anthropic, value: "test-key") {
+            let provider = try ProviderFactory.summaryProvider(for: .anthropic, model: "claude-3-5-sonnet-latest")
+            #expect(provider.provider == .anthropic)
+        }
+    }
+
+    @Test func summaryProviderBuildsGoogleProviderWhenKeyPresent() throws {
+        try withKey(.google, value: "test-key") {
+            let provider = try ProviderFactory.summaryProvider(for: .google, model: "gemini-1.5-pro")
+            #expect(provider.provider == .google)
+        }
+    }
+
+    @Test func summaryProviderResolvesDefaultModelWhenModelEmpty() throws {
+        // An empty model resolves to the provider's defaultModel, so building
+        // still succeeds (the built-in providers all have a non-empty default).
+        try withKey(.openAI, value: "test-key") {
+            let provider = try ProviderFactory.summaryProvider(for: .openAI, model: "")
+            #expect(provider.provider == .openAI)
+        }
+    }
+
+    @Test func whisperProviderThrowsNoAPIKeyWhenSelectedProviderKeyIsEmpty() {
+        withClearedKey(.openAI) {
+            #expect(throws: AppError.self) {
+                _ = try ProviderFactory.whisperProvider(for: .openAI, model: "whisper-1")
+            }
+        }
+    }
+
+    @Test func whisperProviderBuildsForOpenAIWhenKeyPresent() throws {
+        try withKey(.openAI, value: "test-key") {
+            let provider = try ProviderFactory.whisperProvider(for: .openAI, model: "whisper-1")
+            #expect(provider.provider == .openAI)
+        }
+    }
+
+    @Test func whisperProviderBuildsForGroqIndependentlyOfOpenAIKey() throws {
+        // A Groq key alone is enough — the transcription provider is decoupled
+        // from OpenAI. Clearing the OpenAI key proves it isn't consulted.
+        try withClearedKey(.openAI) {
+            try withKey(.groq, value: "groq-key") {
+                let provider = try ProviderFactory.whisperProvider(for: .groq, model: "whisper-large-v3")
+                #expect(provider.provider == .groq)
+            }
+        }
+    }
+
+    @Test func whisperProviderThrowsForGroqWhenGroqKeyMissingEvenWithOpenAIKey() {
+        // Selecting Groq must require Groq's own key, not fall back to OpenAI's.
+        withKey(.openAI, value: "openai-key") {
+            withClearedKey(.groq) {
+                #expect(throws: AppError.self) {
+                    _ = try ProviderFactory.whisperProvider(for: .groq, model: "whisper-large-v3")
+                }
+            }
+        }
+    }
+
+    @Test func whisperProviderBuildsElevenLabsProviderWhenKeyPresent() throws {
+        try withKey(.elevenLabs, value: "eleven-key") {
+            let provider = try ProviderFactory.whisperProvider(for: .elevenLabs, model: "scribe_v1")
+            #expect(provider.provider == .elevenLabs)
+            #expect(provider is ElevenLabsProvider)
+        }
+    }
+
+    /// Anthropic has no speech route. The factory used to hand it back as an
+    /// `OpenAIProvider` and send the audio to a Whisper-shaped endpoint the
+    /// vendor does not have; it now refuses instead.
+    @Test func whisperProviderRefusesAProviderWithoutATranscriptionRoute() throws {
+        try withKey(.anthropic, value: "anthropic-key") {
+            #expect(throws: AppError.self) {
+                _ = try ProviderFactory.whisperProvider(for: .anthropic, model: "")
+            }
+        }
+    }
+
+    @Test func summaryProviderThrowsSummarizationUnsupportedForElevenLabs() throws {
+        try withKey(.elevenLabs, value: "eleven-key") {
+            #expect(throws: AppError.self) {
+                _ = try ProviderFactory.summaryProvider(for: .elevenLabs, model: "")
+            }
+        }
+    }
+
+    @Test func factoriesRejectInvalidCustomURLsBeforeReadingCredentials() {
+        let provider = AIProvider.custom(
+            displayName: "Broken",
+            kind: .openAICompatible,
+            baseURLString: "https://127.0.0.1/v1"
+        )
+
+        do {
+            _ = try ProviderFactory.summaryProvider(for: provider, model: "gpt-test")
+            Issue.record("Expected invalidProviderURL for summary")
+        } catch AppError.invalidProviderURL {
+        } catch {
+            Issue.record("Unexpected summary error: \(error)")
+        }
+
+        do {
+            _ = try ProviderFactory.whisperProvider(for: provider, model: "whisper-test")
+            Issue.record("Expected invalidProviderURL for transcription")
+        } catch AppError.invalidProviderURL {
+        } catch {
+            Issue.record("Unexpected transcription error: \(error)")
+        }
+    }
+
+    // MARK: - Apple On-Device
+
+    /// `SystemLanguageModel.default.availability` can't be forced into a
+    /// specific state here (CI's simulator has no Apple Intelligence), so this
+    /// asserts the factory's outcome always agrees with whatever the live
+    /// availability actually is, rather than asserting one fixed outcome.
+    @Test func summaryProviderForAppleOnDeviceMatchesLiveAvailability() {
+        let reason = OnDeviceModelAvailability.unavailableReason
+        do {
+            _ = try ProviderFactory.summaryProvider(for: .appleOnDevice, model: "")
+            #expect(reason == nil, "factory succeeded but availability reports unavailable: \(reason ?? "")")
+        } catch let error as AppError {
+            guard case .onDeviceModelUnavailable = error else {
+                Issue.record("expected onDeviceModelUnavailable, got \(error)")
+                return
+            }
+            #expect(reason != nil, "factory threw but availability reports available")
+        } catch {
+            Issue.record("expected AppError, got \(error)")
+        }
+    }
+
+    /// The on-device provider has no Keychain account in real use, so this
+    /// proves it independently: the factory's outcome must never depend on
+    /// (or fail with) a missing API key for this provider.
+    @Test func summaryProviderForAppleOnDeviceNeverRequiresAnAPIKey() {
+        do {
+            _ = try ProviderFactory.summaryProvider(for: .appleOnDevice, model: "")
+        } catch let error as AppError {
+            if case .noAPIKey = error {
+                Issue.record("appleOnDevice must never require an API key")
+            }
+        } catch {
+            Issue.record("expected AppError, got \(error)")
+        }
+    }
+
+    // MARK: - Speech
+
+    @Test func speechProviderThrowsNoAPIKeyWhenKeychainIsEmpty() {
+        withClearedKey(.openAI) {
+            #expect(throws: AppError.self) {
+                _ = try ProviderFactory.speechProvider(for: .openAI, model: "", voice: "")
+            }
+        }
+    }
+
+    @Test func speechProviderBuildsEachVendorsSpeechClient() throws {
+        try withKey(.openAI, value: "test-key") {
+            let speech = try ProviderFactory.speechProvider(for: .openAI, model: "", voice: "")
+            #expect(speech is OpenAISpeechProvider)
+            #expect(speech.provider == .openAI)
+        }
+        try withKey(.elevenLabs, value: "test-key") {
+            let speech = try ProviderFactory.speechProvider(for: .elevenLabs, model: "", voice: "")
+            #expect(speech is ElevenLabsSpeechProvider)
+        }
+        try withKey(.google, value: "test-key") {
+            let speech = try ProviderFactory.speechProvider(for: .google, model: "custom", voice: "Kore")
+            #expect(speech is GeminiSpeechProvider)
+        }
+    }
+
+    @Test func speechProviderRefusesAVendorWithoutASpeechRoute() {
+        withKey(.anthropic, value: "test-key") {
+            #expect(throws: AppError.self) {
+                _ = try ProviderFactory.speechProvider(for: .anthropic, model: "", voice: "")
+            }
+        }
+    }
+}

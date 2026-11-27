@@ -1,0 +1,1 @@
+Diese Version bringt vollständige Barrierefreiheit: VoiceOver-Beschriftungen in der gesamten App, der Apple-Watch-Begleit-App und der Live Activity auf dem Sperrbildschirm/in der Dynamic Island; dynamische Schriftgröße, damit Text mit deiner bevorzugten Lesegröße skaliert; sowie Unterstützung für „Bewegung reduzieren". Der Status wird nie allein durch Farbe angezeigt.

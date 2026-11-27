@@ -1,0 +1,363 @@
+require_relative "accessibility_labels"
+
+XCODEPROJ_PBXPROJ = File.expand_path("../Kurn.xcodeproj/project.pbxproj", __dir__)
+ACCESSIBILITY_CONFIG = File.expand_path("accessibility.json", __dir__)
+
+def kurn_marketing_version
+  version = File.read(XCODEPROJ_PBXPROJ)[/MARKETING_VERSION = ([\d.]+);/, 1]
+  UI.user_error!("Could not find MARKETING_VERSION in #{XCODEPROJ_PBXPROJ}") if version.nil?
+  version
+end
+
+# Bumps MARKETING_VERSION / CURRENT_PROJECT_VERSION directly via text
+# substitution rather than `increment_version_number` / `xcodeproj`, which
+# rewrite and reorder large unrelated parts of this pbxproj (it uses Xcode
+# 16 file-system-synchronized groups) — this keeps release commits to just
+# the version lines.
+lane :bump_version do |options|
+  ensure_git_status_clean
+
+  bump_type = (options[:type] || "patch").to_s
+  UI.user_error!("type must be one of patch, minor, major") unless %w[patch minor major].include?(bump_type)
+
+  pbxproj = File.read(XCODEPROJ_PBXPROJ)
+  current_marketing = pbxproj[/MARKETING_VERSION = ([\d.]+);/, 1]
+  current_build = pbxproj[/CURRENT_PROJECT_VERSION = (\d+);/, 1]
+  UI.user_error!("Could not find MARKETING_VERSION/CURRENT_PROJECT_VERSION in #{XCODEPROJ_PBXPROJ}") if current_marketing.nil? || current_build.nil?
+
+  version_parts = current_marketing.split(".").map(&:to_i)
+  version_parts << 0 while version_parts.length < 3
+  new_version_parts = case bump_type
+                       when "major" then [version_parts[0] + 1, 0, 0]
+                       when "minor" then [version_parts[0], version_parts[1] + 1, 0]
+                       else [version_parts[0], version_parts[1], version_parts[2] + 1]
+                       end
+  new_marketing = new_version_parts.join(".")
+  new_build = current_build.to_i + 1
+
+  updated = pbxproj.gsub(/MARKETING_VERSION = [\d.]+;/, "MARKETING_VERSION = #{new_marketing};")
+  updated = updated.gsub(/CURRENT_PROJECT_VERSION = \d+;/, "CURRENT_PROJECT_VERSION = #{new_build};")
+  File.write(XCODEPROJ_PBXPROJ, updated)
+
+  tag = "v#{new_marketing}"
+  git_add(path: XCODEPROJ_PBXPROJ)
+  git_commit(path: XCODEPROJ_PBXPROJ, message: "chore: bump version to #{new_marketing} (#{new_build})")
+  add_git_tag(tag: tag)
+  push_to_git_remote(tags: true)
+
+  UI.success("Bumped to #{new_marketing} (#{new_build}) and pushed tag #{tag}.")
+end
+
+# CI-only: publishes a GitHub Release for the tag that triggered the
+# `release.yml` workflow, guarded against a stray/mismatched tag.
+lane :github_release do
+  tag = ENV["GITHUB_REF_NAME"].to_s
+  UI.user_error!("GITHUB_REF_NAME is not set - this lane runs from the release workflow") if tag.empty?
+
+  repository_name = ENV["GITHUB_REPOSITORY"].to_s
+  repository_name = "carlosmazzei/Kurn" if repository_name.empty?
+
+  github_token = ENV["GITHUB_TOKEN"].to_s
+  UI.user_error!("GITHUB_TOKEN is not set - cannot publish GitHub release") if github_token.empty?
+
+  pbxproj = File.read(XCODEPROJ_PBXPROJ)
+  current_marketing = pbxproj[/MARKETING_VERSION = ([\d.]+);/, 1]
+  UI.user_error!("Tag #{tag} does not match project MARKETING_VERSION v#{current_marketing}") unless tag == "v#{current_marketing}"
+
+  set_github_release(
+    repository_name: repository_name,
+    tag_name: tag,
+    name: "Kurn #{tag}",
+    is_generate_release_notes: true,
+    api_bearer: github_token
+  )
+end
+
+# CI-only: signs and uploads a TestFlight build for the tag that triggered
+# the release workflow (runs in parallel with `github_release`, gated behind
+# the `release` GitHub Environment so a stray tag push still waits for
+# manual approval before anything is uploaded to App Store Connect).
+#
+# Signing comes entirely from fastlane match (readonly in CI — this lane
+# never generates or revokes certs, only installs ones that already exist
+# in the private kurn-certificates repo) plus an App Store Connect API key,
+# so no Apple ID password or 2FA prompt is ever needed here.
+lane :beta do
+  # Creates a throwaway keychain and points match/gym at it instead of the
+  # runner's login keychain, which has no unlock password to script around
+  # non-interactively. No-op outside CI.
+  setup_ci if is_ci
+
+  api_key = app_store_connect_api_key(
+    key_id: ENV["ASC_KEY_ID"],
+    issuer_id: ENV["ASC_ISSUER_ID"],
+    key_content: ENV["ASC_KEY_CONTENT"],
+    is_key_content_base64: true
+  )
+
+  match(type: "appstore", readonly: is_ci)
+
+  archive_path = File.expand_path("build/Kurn.xcarchive", Dir.pwd)
+
+  # Archive only (skip_package_ipa stops gym after `xcodebuild archive`,
+  # before it runs `-exportArchive`) so the unwanted onnxruntime.framework
+  # below can be stripped before export/codesign-adjacent packaging sees it.
+  build_app(
+    scheme: "Kurn",
+    archive_path: archive_path,
+    skip_package_ipa: true
+  )
+
+  strip_unused_onnxruntime_framework(archive_path: archive_path)
+
+  # Export + package from the already-built, now-cleaned archive.
+  build_app(
+    scheme: "Kurn",
+    skip_build_archive: true,
+    archive_path: archive_path,
+    export_method: "app-store",
+    output_directory: "build",
+    export_options: {
+      provisioningProfiles: {
+        "ai.kurn.app" => "match AppStore ai.kurn.app",
+        "ai.kurn.app.watchkitapp" => "match AppStore ai.kurn.app.watchkitapp",
+        "ai.kurn.app.LiveActivityExtension" => "match AppStore ai.kurn.app.LiveActivityExtension"
+      }
+    }
+  )
+
+  upload_to_testflight(
+    api_key: api_key,
+    skip_waiting_for_build_processing: false
+  )
+end
+
+# k2-fsa/sherpa-onnx pulls in onnxruntime-libs' onnxruntime.xcframework, whose
+# Info.plist has no LibraryType key. Xcode can't tell it's static from that
+# metadata alone, so it auto-embeds the bundle into Kurn.app/Frameworks/ even
+# though SherpaOnnxC.framework already statically links onnxruntime at build
+# time — nothing loads the embedded copy at runtime (verified: neither `Kurn`
+# nor `SherpaOnnxC` has an LC_LOAD_DYLIB or symbol reference to it). Apple's
+# validator rejects the resulting static-archive-in-a-.framework-wrapper with
+# ITMS-90208 ("does not support the minimum OS Version specified in the
+# Info.plist"). A Run Script build phase can't fix this from inside the
+# target: the embed step and any script both claiming
+# Frameworks/onnxruntime.framework as their output trips Xcode's new build
+# system's "Multiple commands produce" error. Stripping it from the archive
+# between the archive-only and export-only build_app calls above sidesteps
+# that build-graph conflict entirely. See microsoft/onnxruntime#27396 for the
+# same class of upstream packaging gap.
+#
+# Kurn.app's own code signature seals Frameworks/ (confirmed locally: removing
+# the framework without resigning fails `codesign --verify` with "a sealed
+# resource is missing"), so the app must be resigned afterward. Reusing the
+# identity already on the archive — rather than looking one up separately —
+# guarantees it matches what match/gym just signed with, and
+# `--preserve-metadata=identifier,entitlements,flags` keeps the bundle ID,
+# entitlements and flags from that same signature intact.
+def strip_unused_onnxruntime_framework(archive_path:)
+  app_path = File.join(archive_path, "Products/Applications/Kurn.app")
+  frameworks_dir = File.join(app_path, "Frameworks")
+  removed_any = false
+
+  %w[onnxruntime onnxruntime_extensions].each do |name|
+    framework_path = File.join(frameworks_dir, "#{name}.framework")
+    next unless File.directory?(framework_path)
+
+    UI.message("Stripping unused static #{name}.framework from archive")
+    FileUtils.rm_rf(framework_path)
+    removed_any = true
+  end
+
+  return unless removed_any
+
+  identity = sh("codesign -dvv #{app_path.shellescape} 2>&1 | grep '^Authority=' | head -1 | cut -d= -f2", log: false).strip
+  UI.user_error!("Could not determine the signing identity already on #{app_path} to resign after stripping onnxruntime.framework") if identity.empty?
+
+  sh("codesign --force --sign #{identity.shellescape} --preserve-metadata=identifier,entitlements,flags #{app_path.shellescape}")
+  sh("codesign --verify --deep --strict #{app_path.shellescape}")
+end
+
+# Pushes fastlane/metadata/ (description, keywords, support/marketing/privacy
+# URLs, category, copyright — see that folder for the actual English copy) to
+# App Store Connect. Deliberately scoped to text only: no binary, no
+# screenshots, so this never collides with `beta`'s TestFlight upload or
+# `screenshots`' capture run. privacy_url.txt points at PRIVACY.md rendered
+# on GitHub rather than a dedicated hosted page — a real webpage with no
+# extra infrastructure to stand up or keep online.
+lane :metadata do
+  api_key = app_store_connect_api_key(
+    key_id: ENV["ASC_KEY_ID"],
+    issuer_id: ENV["ASC_ISSUER_ID"],
+    key_content: ENV["ASC_KEY_CONTENT"],
+    is_key_content_base64: true
+  )
+
+  deliver(
+    api_key: api_key,
+    app_version: kurn_marketing_version,
+    skip_binary_upload: true,
+    skip_screenshots: true,
+    precheck_include_in_app_purchases: false,
+    force: true
+  )
+end
+
+# Generates App Store screenshots from the KurnUITests target. The app is
+# launched with the "UI-Testing-Screenshots" argument (see KurnApp.swift and
+# Kurn/DebugSupport/ScreenshotSeedData.swift), which swaps in a seeded,
+# in-memory SwiftData store and bypasses the recordings lock screen — no real
+# recordings, transcripts, or API keys are ever involved. Never touches
+# project.pbxproj, matching bump_version's reasoning above.
+#
+# A second capture_screenshots call covers the Apple Watch tab: KurnWatchUITests
+# is a separate UI Testing target/scheme (paired with the KurnWatch app, not
+# Kurn), since a standalone watchOS app can't share a scheme with its iOS
+# companion. Same "UI-Testing-Screenshots" launch argument, but seeded by
+# WatchConnectivityManager.seedForScreenshot() instead — there's no paired
+# iPhone simulator during a UI test run to drive the real WatchConnectivity
+# session. clear_previous_screenshots is off here so this pass doesn't wipe
+# the iPhone/iPad screenshots the first call just wrote. "Apple Watch Series 11
+# (46mm)" is the current-generation large-case simulator as of Xcode 26; if a
+# local Xcode install doesn't have it, substitute an installed Watch simulator
+# name (`xcrun simctl list devicetypes`).
+#
+# `languages:` (comma-separated App Store locales, e.g. "pt-BR,de-DE") narrows
+# the Snapfile's list; screenshots.yml runs one language per matrix job.
+# `watch:false` skips the Watch pass, for a quicker local run of the
+# iPhone/iPad screens.
+lane :screenshots do |options|
+  languages = options[:languages].to_s.split(",").map(&:strip).reject(&:empty?)
+  language_options = languages.empty? ? {} : { languages: languages }
+  # `device:` (iphone | ipad | watch) captures one device only, which is how CI
+  # slices the work; omitted, every device runs as before.
+  device = options[:device].to_s.strip.downcase
+  UI.user_error!("device must be iphone, ipad or watch") unless ["", "iphone", "ipad", "watch"].include?(device)
+
+  phone_devices = {
+    "iphone" => ["iPhone 17 Pro Max"],
+    "ipad" => ["iPad Pro 13-inch (M5)"]
+  }.fetch(device, nil)
+  if device != "watch"
+    device_options = phone_devices ? { devices: phone_devices } : {}
+    capture_screenshots(**language_options, **device_options)
+  end
+  next if device == "iphone" || device == "ipad"
+  next if options[:watch].to_s == "false"
+
+  capture_screenshots(
+    scheme: "KurnWatchUITests",
+    devices: ["Apple Watch Series 11 (46mm)"],
+    only_testing: ["KurnWatchUITests/ScreenshotUITests"],
+    clear_previous_screenshots: false,
+    **language_options
+  )
+end
+
+# Everything a real App Store submission needs beyond the binary already on
+# TestFlight: text metadata (same as `metadata`) plus the screenshots
+# `screenshots` captured into fastlane/screenshots/. Run `screenshots` first
+# — this lane does not capture them itself, only uploads what's already on
+# disk, so it also works with screenshots downloaded from the
+# `screenshots.yml` CI artifact instead of a local run. Still never touches
+# the binary and never submits for review; `submit_review` handles that as a
+# separate, manually dispatched and environment-gated operation.
+lane :store_assets do
+  api_key = app_store_connect_api_key(
+    key_id: ENV["ASC_KEY_ID"],
+    issuer_id: ENV["ASC_ISSUER_ID"],
+    key_content: ENV["ASC_KEY_CONTENT"],
+    is_key_content_base64: true
+  )
+  ENV["FASTLANE_ENABLE_BETA_DELIVER_SYNC_SCREENSHOTS"] = "1"
+
+  deliver(
+    api_key: api_key,
+    app_version: kurn_marketing_version,
+    skip_binary_upload: true,
+    skip_screenshots: false,
+    sync_screenshots: true,
+    precheck_include_in_app_purchases: false,
+    force: true
+  )
+
+  sync_accessibility_labels(api_key: api_key, publish: false)
+end
+
+lane :submit_review do |options|
+  pbxproj = File.read(XCODEPROJ_PBXPROJ)
+  current_marketing = pbxproj[/MARKETING_VERSION = ([\d.]+);/, 1]
+  current_build = pbxproj[/CURRENT_PROJECT_VERSION = (\d+);/, 1]
+  UI.user_error!("Could not find project version/build") if current_marketing.nil? || current_build.nil?
+
+  ci = is_ci
+  version = options[:version].to_s
+  build_number = options[:build_number].to_s
+  version = current_marketing if ci && version.empty?
+  build_number = current_build if ci && build_number.empty?
+
+  UI.user_error!("version must use MAJOR.MINOR.PATCH format") unless version.match?(/\A\d+\.\d+\.\d+\z/)
+  UI.user_error!("build_number must be a positive integer") unless build_number.match?(/\A[1-9]\d*\z/)
+  UI.user_error!("Version #{version} does not match project MARKETING_VERSION #{current_marketing}") unless version == current_marketing
+  UI.user_error!("Build #{build_number} does not match project CURRENT_PROJECT_VERSION #{current_build}") unless build_number == current_build
+
+  if ci
+    tag = ENV["GITHUB_REF_NAME"].to_s
+    UI.user_error!("Workflow tag #{tag} does not match version #{version}") unless tag == "v#{version}"
+  end
+
+  api_key = app_store_connect_api_key(
+    key_id: ENV["ASC_KEY_ID"],
+    issuer_id: ENV["ASC_ISSUER_ID"],
+    key_content: ENV["ASC_KEY_CONTENT"],
+    is_key_content_base64: true
+  )
+
+  deliver(
+    api_key: api_key,
+    app_version: version,
+    build_number: build_number,
+    skip_binary_upload: true,
+    skip_metadata: true,
+    skip_screenshots: true,
+    submit_for_review: true,
+    automatic_release: false,
+    precheck_include_in_app_purchases: false,
+    force: true
+  )
+end
+
+lane :accessibility_labels do |options|
+  dry_run = options[:dry_run] == true || options[:dry_run].to_s == "true"
+  publish = options[:publish] == true || options[:publish].to_s == "true"
+  config = AccessibilityLabels.load(ACCESSIBILITY_CONFIG)
+
+  if dry_run
+    UI.message("Accessibility labels valid for #{config.fetch('declarations').keys.join(', ')}")
+    UI.message("Publish requested: #{publish}")
+    next
+  end
+
+  api_key = app_store_connect_api_key(
+    key_id: ENV["ASC_KEY_ID"],
+    issuer_id: ENV["ASC_ISSUER_ID"],
+    key_content: ENV["ASC_KEY_CONTENT"],
+    is_key_content_base64: true
+  )
+  sync_accessibility_labels(api_key: api_key, publish: publish)
+end
+
+private_lane :sync_accessibility_labels do |options|
+  config = AccessibilityLabels.load(ACCESSIBILITY_CONFIG)
+  token = Spaceship::ConnectAPI::Token.from(hash: options[:api_key])
+  client = Spaceship::ConnectAPI::Client.new(token: token)
+  app = Spaceship::ConnectAPI::App.find("ai.kurn.app", client: client)
+  UI.user_error!("Could not find ai.kurn.app in App Store Connect") if app.nil?
+
+  actions = AccessibilityLabels.new(
+    client: client.tunes_request_client,
+    app_id: app.id,
+    config: config
+  ).sync(publish: options[:publish])
+  actions.each { |action| UI.success(action) }
+end

@@ -1,0 +1,303 @@
+name: Reliability hardening lane
+
+# H10 PR 25's scheduled/release hardening lane -- deliberately NOT part of
+# `iOS CI` (`swift.yml`), which runs on every push/PR. This lane is slower
+# and noisier by design (Thread Sanitizer, a Release-configuration run, and
+# several repeated attempts at the UI/accessibility suite to measure flake
+# rate), so it runs weekly plus on demand rather than gating every PR.
+#
+# No blanket retries here turn a real failure green: each repeated attempt
+# is its own job/matrix leg and is reported individually. A failing attempt
+# stays failed; the summary job below preserves those failures and reports
+# counts without rerunning anything to make a number look better.
+#
+# "Record baseline counts... without inventing a numeric reliability SLO"
+# (the resilience track's H10 contract, CLAUDE.md "Durability & recovery"):
+# the summary job writes counts to the job summary for a maintainer to read
+# and, if useful, record by hand -- the same "recording a run is a human
+# step" philosophy `pipeline-eval.yml`/`docs/pipeline-evaluation.md` already
+# established, not a gate with an invented numeric threshold. The run as a
+# whole still fails when any attempt fails, so a regression is visible as a
+# red run rather than only as a lower count.
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Sunday 03:00 UTC -- low-traffic time, well clear of any weekday release
+    # activity.
+    - cron: "0 3 * * 0"
+
+permissions:
+  contents: read
+
+env:
+  XCODE_PROJECT: Kurn.xcodeproj
+  XCODE_SCHEME: Kurn
+  IOS_DESTINATION: platform=iOS Simulator,name=iPhone 17
+
+jobs:
+  # Item 5's "repeated cancellation/concurrency tests" and "sanitizer runs
+  # where supported": Thread Sanitizer against the app's concurrency-
+  # sensitive suites specifically -- the ones this track's own audits
+  # (H8 PR 18's `@unchecked Sendable`/`nonisolated(unsafe)`/continuation
+  # bridge review, the SwiftData concurrency crash behind
+  # `KurnSwiftDataTests` being its own target) already named as the
+  # historically fragile surface. Not the whole ~950-test suite: TSan's
+  # instrumentation overhead makes a full run impractically slow for a
+  # weekly job, and the highest-signal targets are the ones already known
+  # to touch shared mutable state, cancellation, or cross-actor handoffs.
+  # Two independent attempts (not a retry of each other -- both are
+  # reported) since a data race is inherently nondeterministic and a single
+  # clean run doesn't rule one out.
+  #
+  # The capture path (`RecordingSink`'s render-thread/actor bridge and the
+  # recorder's ownership handoff), the background-upload delegate, the
+  # `@unchecked Sendable` journal/quarantine file managers, the durable
+  # circuit and event stores, and the download delegate are on the list for
+  # the same reason: each crosses an isolation boundary through a callback
+  # or a lock rather than an actor, which is exactly what TSan can see and
+  # the compiler cannot.
+  thread-sanitizer:
+    runs-on: macos-26
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - uses: ./.github/actions/prepare-simulator
+
+      - uses: ./.github/actions/cache-spm-packages
+
+      - name: Build and test under Thread Sanitizer
+        id: run
+        run: |
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -destination "$IOS_DESTINATION" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/TestResults.xcresult" \
+            -enableThreadSanitizer YES \
+            -only-testing:KurnTests/ResourceSchedulerTests \
+            -only-testing:KurnTests/ResourceGuardTests \
+            -only-testing:KurnTests/TranscriptionRecoveryTests \
+            -only-testing:KurnTests/SpeechEnhancerTests \
+            -only-testing:KurnTests/RecordingAccessGateTests \
+            -only-testing:KurnTests/MeetingChatViewModelTests \
+            -only-testing:KurnTests/ChunkedTranscriptionRunnerTests \
+            -only-testing:KurnTests/SummaryMapRunnerTests \
+            -only-testing:KurnTests/RecordingSinkFaultTests \
+            -only-testing:KurnTests/RecorderCaptureOwnershipTests \
+            -only-testing:KurnTests/WhisperBackgroundUploaderTests \
+            -only-testing:KurnTests/RecordingOperationJournalTests \
+            -only-testing:KurnTests/ProviderCircuitBreakerTests \
+            -only-testing:KurnTests/ReliabilityEventStoreTests \
+            -only-testing:KurnTests/ModelFileDownloaderTests \
+            -only-testing:KurnSwiftDataTests \
+            clean test
+
+      - name: Collect failure diagnostics
+        if: failure()
+        uses: ./.github/actions/collect-failure-diagnostics
+        with:
+          artifact-name: thread-sanitizer-attempt-${{ matrix.attempt }}-failure-diagnostics
+
+      - name: Record attempt result
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/result"
+          echo "${{ job.status }}" > "$RUNNER_TEMP/result/thread-sanitizer-attempt-${{ matrix.attempt }}.txt"
+
+      - name: Upload attempt result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: thread-sanitizer-result-${{ matrix.attempt }}
+          path: ${{ runner.temp }}/result/thread-sanitizer-attempt-${{ matrix.attempt }}.txt
+          retention-days: 14
+
+  # Item 5's "Release build": every other job in `iOS CI` and this lane runs
+  # `-configuration Debug` (xcodebuild's default). Release strips some
+  # assertions and enables whole-module optimization, both of which have
+  # historically hidden or changed the shape of concurrency and precondition
+  # bugs that a Debug run never exercises. Scoped to KurnTests +
+  # KurnSwiftDataTests (the data/pipeline-integrity signal) rather than also
+  # the UI suite, which is app-launch/accessibility behavior unlikely to
+  # differ meaningfully by build configuration and would roughly double this
+  # job's runtime for little extra signal. Two Debug-only project settings are
+  # overridden on the command line because the test targets need them:
+  # ENABLE_TESTABILITY for `@testable import Kurn`, and ONLY_ACTIVE_ARCH
+  # because FluidAudio ships an arm64-only simulator static library
+  # (libtext_processing_rs.a) that fails the x86_64 slice a Release build
+  # would otherwise also link.
+  release-configuration-tests:
+    runs-on: macos-26
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - uses: ./.github/actions/prepare-simulator
+
+      - uses: ./.github/actions/cache-spm-packages
+
+      - name: Build and test (Release configuration)
+        run: |
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -destination "$IOS_DESTINATION" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/TestResults.xcresult" \
+            -configuration Release \
+            ENABLE_TESTABILITY=YES \
+            ONLY_ACTIVE_ARCH=YES \
+            -only-testing:KurnTests \
+            -only-testing:KurnSwiftDataTests \
+            clean test
+
+      - name: Collect failure diagnostics
+        if: failure()
+        uses: ./.github/actions/collect-failure-diagnostics
+        with:
+          artifact-name: release-configuration-tests-failure-diagnostics
+
+  # Item 5's "selected UI tests repeated to measure flake rate." Five
+  # independent attempts at the same suite `ui-accessibility-tests` in
+  # `iOS CI` runs on every PR, sharded there (AccessibilityAuditUITests,
+  # ModelStoreRecoveryUITests and the flow suites, ScreenshotUITests still
+  # excluded); here each attempt runs the whole suite on one runner. Each
+  # attempt uploads its own pass/fail marker; the summary job below counts
+  # them into an actual rate rather than reporting only the matrix's overall
+  # green/red.
+  ui-flake-rate:
+    runs-on: macos-26
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3, 4, 5]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - uses: ./.github/actions/prepare-simulator
+
+      - uses: ./.github/actions/cache-spm-packages
+
+      - name: Build and test
+        run: |
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -destination "$IOS_DESTINATION" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/TestResults.xcresult" \
+            -only-testing:KurnUITests \
+            -skip-testing:KurnUITests/ScreenshotUITests \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 240 \
+            -maximum-test-execution-time-allowance 600 \
+            clean test
+
+      - name: Collect failure diagnostics
+        if: failure()
+        uses: ./.github/actions/collect-failure-diagnostics
+        with:
+          artifact-name: ui-flake-rate-attempt-${{ matrix.attempt }}-failure-diagnostics
+
+      - name: Record attempt result
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/result"
+          echo "${{ job.status }}" > "$RUNNER_TEMP/result/ui-flake-attempt-${{ matrix.attempt }}.txt"
+
+      - name: Upload attempt result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ui-flake-result-${{ matrix.attempt }}
+          path: ${{ runner.temp }}/result/ui-flake-attempt-${{ matrix.attempt }}.txt
+          retention-days: 14
+
+  # Counts and reports without retrying; preserves failures from every job.
+  hardening-summary:
+    needs: [thread-sanitizer, release-configuration-tests, ui-flake-rate]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download attempt results
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: "*-result-*"
+          path: ${{ runner.temp }}/results
+          merge-multiple: true
+
+      - name: Summarize
+        if: always()
+        run: |
+          count_status() {
+            # $1: glob prefix, e.g. thread-sanitizer-attempt / ui-flake-attempt
+            local prefix="$1"
+            local total=0 passed=0
+            for f in "$RUNNER_TEMP"/results/"$prefix"-*.txt; do
+              [ -e "$f" ] || continue
+              total=$((total + 1))
+              if [ "$(cat "$f")" = "success" ]; then
+                passed=$((passed + 1))
+              fi
+            done
+            echo "$passed/$total"
+          }
+
+          {
+            echo "## Reliability hardening lane summary"
+            echo
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            echo "| thread-sanitizer (2 independent attempts) | $(count_status thread-sanitizer-attempt) passed |"
+            echo "| release-configuration-tests | ${{ needs.release-configuration-tests.result }} |"
+            echo "| ui-flake-rate (5 attempts) | $(count_status ui-flake-attempt) passed |"
+            echo
+            echo "A less-than-full pass rate on \`thread-sanitizer\` or \`ui-flake-rate\` is a real signal to"
+            echo "investigate, not noise to retry away. No numeric SLO is enforced here — record a rate"
+            echo "worth tracking over time by hand, the same way \`docs/pipeline-evaluation.md\` records"
+            echo "pipeline-eval runs."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require successful hardening jobs
+        if: always()
+        env:
+          TSAN_RESULT: ${{ needs.thread-sanitizer.result }}
+          RELEASE_RESULT: ${{ needs.release-configuration-tests.result }}
+          UI_RESULT: ${{ needs.ui-flake-rate.result }}
+        run: |
+          if [ "$TSAN_RESULT" != "success" ] || [ "$RELEASE_RESULT" != "success" ] || [ "$UI_RESULT" != "success" ]; then
+            echo "::error::Hardening jobs did not all succeed: TSan=$TSAN_RESULT Release=$RELEASE_RESULT UI=$UI_RESULT"
+            exit 1
+          fi

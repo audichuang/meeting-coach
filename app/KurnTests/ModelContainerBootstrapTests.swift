@@ -1,0 +1,168 @@
+//
+//  ModelContainerBootstrapTests.swift
+//  KurnTests
+//
+//  Proves the `ModelContainerFactory` seam: a construction failure
+//  propagates through `ModelContainerBootstrap.makeStore` rather than being
+//  swallowed or masquerading as success, and that `makeStore` defaults to the
+//  app's one centralized, versioned schema (`KurnModelGraph`) instead of each
+//  call site re-declaring its own model list. This is the seam H2's eventual
+//  migration/bootstrap state machine will drive with real failure fixtures
+//  (locked store, incompatible schema, full disk) — here it only needs to
+//  prove the plumbing works with a canned error, and that the schema/
+//  migration-plan values reaching a factory are the centralized ones.
+//
+//  See `LegacyStoreAdoptionTests` for the round-trip proof that a store
+//  written with a bare, unversioned schema (exactly what every Kurn store
+//  predating this file is) still opens through `KurnModelGraph` without data
+//  loss.
+//
+
+import Foundation
+import SwiftData
+import Testing
+@testable import Kurn
+
+struct ModelContainerBootstrapTests {
+
+    @Test func propagatesFactoryFailureRatherThanSucceeding() {
+        let schema = Schema([Meeting.self])
+        let failure = NSError(domain: "test", code: 42)
+
+        #expect(throws: Error.self) {
+            _ = try ModelContainerBootstrap.makeStore(
+                schema: schema,
+                migrationPlan: nil,
+                factory: ThrowingModelContainerFactory(error: failure)
+            )
+        }
+    }
+
+    @Test func succeedsWithAWorkingFactory() throws {
+        // Exercises the same `factory.makeContainer` call
+        // `SystemModelContainerFactory` makes in production, but against an
+        // in-memory configuration passed through a stand-in factory — this
+        // proves `makeStore`'s own plumbing (both `ModelStoreProtection.apply()`
+        // calls, the container it returns) without touching the shared,
+        // on-disk default store `SystemModelContainerFactory` itself targets.
+        struct InMemoryModelContainerFactory: ModelContainerFactory {
+            func makeContainer(
+                schema: Schema,
+                migrationPlan: (any SchemaMigrationPlan.Type)?,
+                configurations: [ModelConfiguration]
+            ) throws -> ModelContainer {
+                try ModelContainer(
+                    for: schema,
+                    configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+                )
+            }
+        }
+        let schema = Schema([Meeting.self])
+        let container = try ModelContainerBootstrap.makeStore(
+            schema: schema, migrationPlan: nil, factory: InMemoryModelContainerFactory()
+        )
+        #expect(container.schema.entities.map(\.name) == schema.entities.map(\.name))
+    }
+
+    @Test func defaultsToTheCentralizedVersionedSchemaAndMigrationPlan() throws {
+        final class RecordingModelContainerFactory: ModelContainerFactory, @unchecked Sendable {
+            private(set) var capturedSchema: Schema?
+            private(set) var capturedMigrationPlan: (any SchemaMigrationPlan.Type)?
+
+            func makeContainer(
+                schema: Schema,
+                migrationPlan: (any SchemaMigrationPlan.Type)?,
+                configurations: [ModelConfiguration]
+            ) throws -> ModelContainer {
+                capturedSchema = schema
+                capturedMigrationPlan = migrationPlan
+                // Real construction needs an in-memory configuration — the
+                // caller-provided one targets the on-disk default store.
+                let inMemoryConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+                return try ModelContainer(for: schema, migrationPlan: migrationPlan, configurations: [inMemoryConfiguration])
+            }
+        }
+
+        let factory = RecordingModelContainerFactory()
+        _ = try ModelContainerBootstrap.makeStore(factory: factory)
+
+        let expectedNames = Set(KurnModelGraph.schema.entities.map(\.name))
+        #expect(Set(factory.capturedSchema?.entities.map(\.name) ?? []) == expectedNames)
+        let capturedMigrationPlanIdentifier = factory.capturedMigrationPlan.map { ObjectIdentifier($0) }
+        #expect(capturedMigrationPlanIdentifier == ObjectIdentifier(KurnSchemaMigrationPlan.self))
+    }
+}
+
+struct KurnModelGraphTests {
+
+    @Test func declaresEveryPersistentModelExactlyOnce() {
+        let identifiers = Set(KurnModelGraph.currentModels.map { ObjectIdentifier($0) })
+        #expect(identifiers.count == KurnModelGraph.currentModels.count)
+        #expect(identifiers == Set([
+            ObjectIdentifier(Meeting.self),
+            ObjectIdentifier(Recording.self),
+            ObjectIdentifier(Transcript.self),
+            ObjectIdentifier(Speaker.self),
+            ObjectIdentifier(Summary.self),
+            ObjectIdentifier(Folder.self),
+            ObjectIdentifier(Kurn.Tag.self),
+            ObjectIdentifier(SmartFolder.self),
+            ObjectIdentifier(SemanticChunk.self),
+            ObjectIdentifier(WikiArticle.self),
+            ObjectIdentifier(GeneratedDocument.self),
+            ObjectIdentifier(ChatSession.self),
+            ObjectIdentifier(MeetingPhoto.self),
+            ObjectIdentifier(MeetingAttachment.self),
+            ObjectIdentifier(CoachRecord.self)
+        ]))
+    }
+
+    @Test func firstVersionedSchemaHasExactlyElevenModelsAndNoStages() {
+        // Historical shape, frozen: `KurnSchemaV1` describes exactly what a
+        // store created before `KurnSchemaV2` existed actually contained.
+        #expect(KurnSchemaV1.models.count == 11)
+        #expect(!KurnSchemaV1.models.contains { ObjectIdentifier($0) == ObjectIdentifier(ChatSession.self) })
+    }
+
+    @Test func firstVersionedSchemaIsFrozenApartFromTheLiveClasses() {
+        // A versioned schema that lists the live `@Model` classes is not a
+        // version at all — it is redefined by every edit to them (the live
+        // `Meeting` already carries `chatSessions`) and stops matching the
+        // stores it claims to describe. V1 must therefore consist entirely of
+        // its own frozen types, and each must still name the same entity as
+        // its live counterpart so the store's tables line up across versions.
+        let liveIdentifiers = Set(KurnSchemaV2.models.map { ObjectIdentifier($0) })
+        #expect(KurnSchemaV1.models.allSatisfy { !liveIdentifiers.contains(ObjectIdentifier($0)) })
+
+        let frozenEntityNames = Set(Schema(KurnSchemaV1.models).entities.map(\.name))
+        let liveEntityNames = Set(Schema(KurnSchemaV2.models).entities.map(\.name))
+        #expect(frozenEntityNames.count == 11)
+        #expect(frozenEntityNames.isSubset(of: liveEntityNames))
+        #expect(liveEntityNames.subtracting(frozenEntityNames) == ["ChatSession"])
+
+        let frozenMeeting = Schema(KurnSchemaV1.models).entities.first { $0.name == "Meeting" }
+        #expect(frozenMeeting?.relationships.contains { $0.name == "chatSessions" } == false)
+        let liveMeeting = Schema(KurnSchemaV2.models).entities.first { $0.name == "Meeting" }
+        #expect(liveMeeting?.relationships.contains { $0.name == "chatSessions" } == true)
+    }
+
+    @Test func migrationPlanDeclaresAllSchemasWithLightweightStages() {
+        // KurnSchemaV2 added ChatSession, KurnSchemaV3 MeetingPhoto and
+        // KurnSchemaV4 MeetingAttachment, KurnSchemaV5 CoachRecord — all purely
+        // additive, so each gets its own lightweight stage. The next
+        // *non*-additive model change must add KurnSchemaV6 here rather than
+        // editing an earlier version in place.
+        #expect(KurnSchemaMigrationPlan.schemas.map { ObjectIdentifier($0) } == [
+            ObjectIdentifier(KurnSchemaV1.self), ObjectIdentifier(KurnSchemaV2.self),
+            ObjectIdentifier(KurnSchemaV3.self), ObjectIdentifier(KurnSchemaV4.self),
+            ObjectIdentifier(KurnSchemaV5.self)
+        ])
+        #expect(KurnSchemaMigrationPlan.stages.count == 4)
+    }
+
+    @Test func versionedSchemaModelsMatchTheCentralizedGraph() {
+        let versionedIdentifiers = Set(KurnSchemaV5.models.map { ObjectIdentifier($0) })
+        let graphIdentifiers = Set(KurnModelGraph.currentModels.map { ObjectIdentifier($0) })
+        #expect(versionedIdentifiers == graphIdentifiers)
+    }
+}

@@ -1,0 +1,145 @@
+{
+  "_comment": "What the coverage gate (Tools/coverage_gate.py) measures. A file counts when its repository-relative path starts with an `include` root and matches no `exclude` pattern. Every exclusion carries its reason; an adapter may only be listed once all of its decisions live in a tested type (see CLAUDE.md, 'Coverage gate'). An adapter entry also records `maxLines`, the file's size when it was excluded: Tools/lcov.py's Scope.audit fails the static-policy job when an adapter grows past it, so new code landing in an unmeasured file is a visible, reviewed budget change rather than a silent one. A pattern that no longer matches any file fails the same check.",
+  "include": [
+    "Kurn/",
+    "Packages/KurnCore/Sources/"
+  ],
+  "exclude": [
+    {
+      "pattern": "Kurn/Views/**",
+      "reason": "SwiftUI view bodies; exercised by KurnUITests flows, not measured by the gate. Presentation logic is extracted to a pure type below Views/ so it counts."
+    },
+    {
+      "pattern": "Kurn/ContentView.swift",
+      "reason": "Root SwiftUI view (split view / sheet host); same rule as Kurn/Views."
+    },
+    {
+      "pattern": "Kurn/DebugSupport/**",
+      "reason": "DEBUG-only seed data and fault-injection hooks; test glue, compiled out of Release."
+    },
+    {
+      "pattern": "Kurn/AppIntents/**",
+      "reason": "App Intents run only from Siri/Shortcuts; no test target executes them yet."
+    },
+    {
+      "pattern": "Kurn/Services/Pipeline/WhisperCppTranscriber.swift",
+      "reason": "Adapter: drives whisper.cpp, which needs a downloaded GGML model. Segment assembly, confidence, progress and thread budget live in KurnCore's WhisperSegmentAssembly/ChunkedProgress (tested).",
+      "maxLines": 449
+    },
+    {
+      "pattern": "Kurn/Services/FluidAudioDiarizer.swift",
+      "reason": "Adapter: drives FluidAudio's OfflineDiarizerManager, which needs downloaded CoreML models. Labeling and progress live in KurnCore's DiarizerSegmentLabeling/ChunkProgressSampler, the rescue, smoothing, voiceprints and time budget in DiarizationFinalization (all tested).",
+      "maxLines": 271
+    },
+    {
+      "pattern": "Kurn/Services/FluidAudioTranscriber.swift",
+      "reason": "Adapter: drives FluidAudio's AsrManager, which needs downloaded CoreML models. The progress threshold, fraction clamp and transcript assembly live in KurnCore's BatchTranscriptAssembly (tested).",
+      "maxLines": 114
+    },
+    {
+      "pattern": "Kurn/Services/Pipeline/FluidAudioVAD.swift",
+      "reason": "Adapter: drives FluidAudio's Silero VadManager, which needs a downloaded CoreML model. Region normalization lives in KurnCore's SpeechRegionNormalization, the whole-clip fallback in AudioFileDuration (both tested).",
+      "maxLines": 98
+    },
+    {
+      "pattern": "Kurn/Services/FluidAudioModelStore.swift",
+      "reason": "Adapter: locally loads FluidAudio's cached Parakeet models and compiles CoreML/ANE artifacts; downloads occur only through explicit consent. Load-once, coalescing and retry-after-failure live in KurnCore's CoalescedLoader (tested).",
+      "maxLines": 83
+    },
+    {
+      "pattern": "Kurn/Services/FluidAudioASRModelRuntime+Download.swift",
+      "reason": "Adapter: downloads, loads and releases real CoreML model bundles. Backend selection, cache requirements, progress mapping and consent/network policy remain in measured FluidAudioASRModelRuntime, FluidAudioRuntimePolicy and ModelDownloadConsent.",
+      "maxLines": 60
+    },
+    {
+      "pattern": "Kurn/Services/FluidAudioModelTranscriber+Models.swift",
+      "reason": "Adapter: local CoreML model loading and native ASR inference require downloaded weights. Validation, backend selection and result assembly remain in measured FluidAudioRuntimePolicy, FluidAudioModelTranscriber and KurnCore timing types.",
+      "maxLines": 81
+    },
+    {
+      "pattern": "Kurn/Services/FluidAudioAutomaticStreamingRuntime+Models.swift",
+      "reason": "Adapter: locally loads native EOU and multilingual streaming managers. Language, backend choice, complete-cache validation and installation policy remain in measured FluidAudioAutomaticStreamingRuntime and FluidAudioRuntimePolicy.",
+      "maxLines": 30
+    },
+    {
+      "pattern": "Kurn/Services/FluidAudioUnifiedStreamingManager+Models.swift",
+      "reason": "Adapter: constructs and locally loads FluidAudio's native streaming model and drains its native timing buffer. Language/installation gates, buffering and lifecycle are tested in the measured FluidAudioUnifiedStreamingManager.",
+      "maxLines": 27
+    },
+    {
+      "pattern": "Kurn/Services/FluidAudioDiarizationModelRuntime+Models.swift",
+      "reason": "Adapter: loads four real cached CoreML models and constructs the Pyannote model payload. Cache completeness, revision and PLDA decoding are tested in KurnCore's PyannoteDiarizationCache and PyannotePLDAParameters.",
+      "maxLines": 42
+    },
+    {
+      "pattern": "Kurn/Services/FluidAudioDiarizationModelRuntime+Download.swift",
+      "reason": "Adapter: explicit consent-only loading/downloading of Pyannote and Nemotron model bundles. Selection, consent, network policy and progress mapping remain in measured controller, ModelDownloadConsent and runtime metadata types.",
+      "maxLines": 40
+    },
+    {
+      "pattern": "Kurn/Services/FluidAudioNemotronDiarizer+Models.swift",
+      "reason": "Adapter: local CoreML loading, audio decoding and native streaming diarization. Installation, cancellation, failure and fallback policy remain in the measured actor; speaker timelines and budgets are tested in KurnCore.",
+      "maxLines": 60
+    },
+    {
+      "pattern": "Kurn/Services/FluidAudioMultilingualStreamingManager.swift",
+      "reason": "Adapter: forwards the streaming protocol to a downloaded native model. Cache completeness and local-only load requirements live in measured FluidAudioAutomaticStreamingRuntime and FluidAudioRuntimePolicy. Budget grows by seven lines for local-only loading and callback wiring, not new decision logic.",
+      "maxLines": 109
+    },
+    {
+      "pattern": "Kurn/Services/LockScreenRecordingController.swift",
+      "reason": "Adapter: ActivityKit requests and updates a Live Activity only in a signed app on a device or simulator with activities enabled, which no test target can drive. The content state lives in RecordingSurfacePayloads (tested); what remains is the start/end ordering guard around Activity.request.",
+      "maxLines": 165
+    },
+    {
+      "pattern": "Kurn/Services/PhoneSessionController.swift",
+      "reason": "Adapter: WCSession needs a paired Watch. The application context, command decoding and replies live in RecordingSurfacePayloads, command handling in RecordingCommandRouter (both tested).",
+      "maxLines": 116
+    },
+    {
+      "pattern": "Kurn/Services/OnDeviceTranscriber.swift",
+      "reason": "Adapter: drives SpeechAnalyzer/SpeechTranscriber, which need a downloaded Speech locale asset. Result bounds, word validation, the timeline check, progress and the no-speech decision live in KurnCore's AppleSpeechResultAssembly (tested).",
+      "maxLines": 153
+    },
+    {
+      "pattern": "Kurn/Services/SystemLocalAuthenticator.swift",
+      "reason": "Adapter: LAContext presents Face ID/Touch ID/passcode, which needs an enrolled device credential. RecordingAccessGate's coalescing, relock and error mapping are tested through a stub authenticator.",
+      "maxLines": 32
+    },
+    {
+      "pattern": "Kurn/Services/CaptureAudioSession.swift",
+      "reason": "Adapter: configures the shared AVAudioSession, whose inputs and ports need real audio hardware. Input choice, category, polar-pattern order and activation retry live in CaptureInputSelection/SessionActivationRetry (tested).",
+      "maxLines": 113
+    },
+    {
+      "pattern": "Kurn/Services/AVFoundationCaptureEngine.swift",
+      "reason": "Adapter: AVAudioEngine input tap and session notifications need a microphone. Notification decoding and the output file's format and fallback live in AudioCaptureEvent/CaptureOutputFile (tested); the recorder runs against FakeAudioCaptureEngine.",
+      "maxLines": 155
+    },
+    {
+      "pattern": "Kurn/Infrastructure/CrashReporting/DiagnosticsSubscriber.swift",
+      "reason": "Adapter: MetricKit delivers MXDiagnosticPayloads, which a test cannot construct. Consent, the crash/hang split, formatting and saving live in DiagnosticPayloadIntake (tested).",
+      "maxLines": 55
+    },
+    {
+      "pattern": "Kurn/Infrastructure/ModelDownloadConsent+FluidAudio.swift",
+      "reason": "Adapter: fetches and loads FluidAudio's CoreML bundles, which needs a real download and the Neural Engine. Which set downloads, the network policy, progress scaling (ModelDownloadStatus.scaled) and failure mapping (ModelDownloadConsent.downloadFailure) live in ModelDownloadConsent.swift (tested).",
+      "maxLines": 97
+    },
+    {
+      "pattern": "Kurn/Infrastructure/TranscriptionScheduler+BGTask.swift",
+      "reason": "Adapter: registers, submits and completes BGProcessingTasks, which BGTaskScheduler only accepts in a real app launch. What to submit (submissionPlan), whether an opened window may run (windowStart) and the resume pass (BackgroundTranscriptionRunner) live in TranscriptionScheduler.swift (tested).",
+      "maxLines": 118
+    },
+    {
+      "pattern": "Kurn/Services/PhotoCaptureController.swift",
+      "reason": "Adapter: drives AVCaptureSession/AVCapturePhotoOutput, and the simulator has no camera. The flash and timer choices, which lens buttons to offer, the zoom clamp, the exposure mapping and the control rotation live in PhotoFlashMode.swift (PhotoFlashMode, PhotoTimer, PhotoZoom, PhotoExposure, PhotoControlRotation; tested). Budget raised from 153 for lens switching, camera flip and exposure bias, each a thin AVCaptureDevice call.",
+      "maxLines": 270
+    },
+    {
+      "pattern": "Kurn/Services/SherpaOnnx/SherpaOnnxCWrapper.swift",
+      "reason": "Adapter: thin Swift wrapper over sherpa-onnx's C diarization API, which needs the downloaded ONNX model pair. Labeling lives in KurnCore's DiarizerSegmentLabeling, the fallback and time budget in SherpaOnnxDiarizer (tested).",
+      "maxLines": 111
+    }
+  ]
+}

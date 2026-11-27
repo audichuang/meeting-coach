@@ -1,0 +1,30 @@
+# H10 PR 24: grandfathered static-policy findings.
+#
+# Format: <check-name>|<path relative to repo root>|<exact stripped source line>
+# Keyed by line content, not line number, so it survives unrelated edits
+# elsewhere in the file. Generated from the state of the codebase when
+# Tools/check_static_policy.py was introduced (H10 PR 24) — every entry
+# below was reviewed at that point, not auto-approved.
+#
+# A NEW deliberate exception should usually get an inline
+# `// static-policy:allow <check-name> - <reason>` comment on the line
+# instead of an entry here — this file is for retrofitting the check onto
+# code that predates it, not the primary way to add an exception.
+
+# fatal-error: all three are provably-unreachable guards, not
+# data-dependent crash risk — an exhaustive switch's remaining case
+# already handled by an earlier guard (ProviderFactory,
+# ProviderModelsService: ".appleOnDevice", handled above the switch), or
+# a system call whose failure is impossible given a precondition already
+# checked immediately above (STFT: frameSize already validated by
+# supportsDFTSize).
+fatal-error|Kurn/Providers/ProviderFactory.swift|preconditionFailure("handled above")
+fatal-error|Kurn/Providers/ProviderModelsService.swift|preconditionFailure("handled above")
+fatal-error|Kurn/Services/Pipeline/STFT.swift|preconditionFailure("vDSP.DiscreteFourierTransform setup failed for frameSize=\(frameSize)")
+
+# custom-url-session: the app's three sanctioned transport/download
+# seams (CLAUDE.md's "Providers"/"Infrastructure" sections) — the ones
+# a new ad hoc URLSession should route through instead of duplicating.
+custom-url-session|Kurn/Providers/ProviderHTTPTransport.swift|let controlledSession = URLSession(
+custom-url-session|Kurn/Services/ModelFileDownloader.swift|let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+custom-url-session|Kurn/Services/WhisperBackgroundUploader.swift|let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)

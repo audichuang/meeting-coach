@@ -1,0 +1,168 @@
+//
+//  TranscriptIntegrityGate.swift
+//  KurnCore
+//
+//  The final check before one transcription run's output is trusted enough to
+//  replace whatever transcript already exists (CLAUDE.md, "Durability &
+//  recovery", H-I4). Every stage before this one — the ASR
+//  engine, `TranscriptFusion`, an LLM `TranscriptCorrecting` conformer — is
+//  pure and cannot throw, so nothing upstream stops a structurally broken
+//  result from reaching the save path on its own. This is that stop:
+//  `TranscriptionService.transcribe` throws instead of returning `Output` when
+//  it fails, so `TranscriptionViewModel.saveTranscript` — the only place an
+//  existing transcript is deleted — is never reached with bad data. Whatever
+//  transcript existed before this run stays exactly as it was.
+//
+//  Closed vocabulary, the same reason `PipelineStageReason` has one: the
+//  failure is logged and is a diagnostics-export candidate, so a raw
+//  timestamp, speaker name, or transcript text must never reach it.
+//
+
+import Foundation
+
+/// Why the final gate rejected a run's output. Never carries a timestamp,
+/// text, or speaker name — only which invariant broke.
+public enum TranscriptIntegrityFailure: String, Codable, Sendable, CaseIterable {
+    /// The source recording's duration could not be established, so nothing
+    /// about a segment's bounds can be trusted either.
+    case sourceUnreadable
+    /// The engine produced spans, but the fused output is empty. Fusion is
+    /// pure and cannot fail — this is the shape a bug in it (or in the input
+    /// it was given) takes instead of a thrown error.
+    case emptyOutputFromNonEmptyInput
+    /// A segment's timestamps are non-finite, negative, inverted
+    /// (`end < start`), or fall well outside the source recording's duration.
+    case segmentOutOfBounds
+    /// Segments are not in roughly chronological order.
+    case segmentsOutOfOrder
+    /// A segment carries no text, or only whitespace.
+    case emptySegmentText
+    /// A segment carries no speaker attribution at all.
+    case unattributedSpeaker
+    /// A `TranscriptCorrecting` conformer returned a different segment count,
+    /// different ids, a different order, or changed a field other than
+    /// `.text` — violating the contract every caller relies on.
+    case correctionIdentityViolation
+}
+
+public enum TranscriptIntegrityDetail: String, Codable, Sendable, CaseIterable {
+    case sourceDurationNonFinite
+    case sourceDurationNegative
+    case emptyOutputFromNonEmptyInput
+    case nonFiniteStartTime
+    case nonFiniteEndTime
+    case negativeStartTime
+    case negativeEndTime
+    case invertedTimeRange
+    case startBeyondSourceDuration
+    case endBeyondSourceDuration
+    case startOutOfOrder
+    case emptyText
+    case emptySpeaker
+}
+
+public struct TranscriptIntegrityDiagnostic: Codable, Equatable, Sendable {
+    public let failure: TranscriptIntegrityFailure
+    public let segmentIndex: Int?
+    public let detail: TranscriptIntegrityDetail
+}
+
+/// Validates a finished run's fused, corrected segments before they are
+/// allowed to replace an existing transcript. Pure and Linux-buildable like
+/// the rest of `Pipeline/`, so it is testable without the Apple toolchain.
+public enum TranscriptIntegrityGate {
+    /// Same tolerance `TranscriptionCheckpoint.isStructurallyValid` uses, for
+    /// the same reason: a gross-corruption catcher, not an exact
+    /// re-derivation of chunk-boundary rounding or the compacted timeline.
+    public static let boundsSlack: TimeInterval = 30
+
+    /// - Parameters:
+    ///   - hadTranscribedInput: whether the ASR engine produced any spans
+    ///     before fusion. An empty `segments` is only a failure when it lost
+    ///     content that existed — a recording with genuinely no speech is not
+    ///     an integrity failure.
+    public static func validate(
+        segments: [TranscriptSegment],
+        sourceDuration: TimeInterval,
+        hadTranscribedInput: Bool
+    ) -> TranscriptIntegrityFailure? {
+        diagnose(
+            segments: segments,
+            sourceDuration: sourceDuration,
+            hadTranscribedInput: hadTranscribedInput
+        )?.failure
+    }
+
+    public static func diagnose(
+        segments: [TranscriptSegment],
+        sourceDuration: TimeInterval,
+        hadTranscribedInput: Bool
+    ) -> TranscriptIntegrityDiagnostic? {
+        guard sourceDuration.isFinite else {
+            return .init(failure: .sourceUnreadable, segmentIndex: nil, detail: .sourceDurationNonFinite)
+        }
+        guard sourceDuration >= 0 else {
+            return .init(failure: .sourceUnreadable, segmentIndex: nil, detail: .sourceDurationNegative)
+        }
+        guard !segments.isEmpty else {
+            return hadTranscribedInput
+                ? .init(failure: .emptyOutputFromNonEmptyInput, segmentIndex: nil, detail: .emptyOutputFromNonEmptyInput)
+                : nil
+        }
+
+        let upperBound = sourceDuration + boundsSlack
+        var maxStartSoFar: TimeInterval = -boundsSlack
+        for (index, segment) in segments.enumerated() {
+            if let detail = boundsDetail(for: segment, upperBound: upperBound) {
+                return .init(failure: .segmentOutOfBounds, segmentIndex: index, detail: detail)
+            }
+            guard segment.startTime >= maxStartSoFar - boundsSlack else {
+                return .init(failure: .segmentsOutOfOrder, segmentIndex: index, detail: .startOutOfOrder)
+            }
+            maxStartSoFar = max(maxStartSoFar, segment.startTime)
+            guard !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return .init(failure: .emptySegmentText, segmentIndex: index, detail: .emptyText)
+            }
+            guard !segment.speakerLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return .init(failure: .unattributedSpeaker, segmentIndex: index, detail: .emptySpeaker)
+            }
+        }
+        return nil
+    }
+
+    private static func boundsDetail(
+        for segment: TranscriptSegment,
+        upperBound: TimeInterval
+    ) -> TranscriptIntegrityDetail? {
+        guard segment.startTime.isFinite else { return .nonFiniteStartTime }
+        guard segment.endTime.isFinite else { return .nonFiniteEndTime }
+        guard segment.startTime >= 0 else { return .negativeStartTime }
+        guard segment.endTime >= 0 else { return .negativeEndTime }
+        guard segment.endTime >= segment.startTime else { return .invertedTimeRange }
+        guard segment.startTime <= upperBound else { return .startBeyondSourceDuration }
+        guard segment.endTime <= upperBound else { return .endBeyondSourceDuration }
+        return nil
+    }
+
+    /// Whether a `TranscriptCorrecting` conformer honored its documented
+    /// contract (`PipelineStages.swift`): the same count, in the same order,
+    /// same ids, with every field except `.text` unchanged. A conformer that
+    /// violates this is treated as having failed, not as having corrected —
+    /// see `TranscriptionServiceCorrection.correctIfRequested`.
+    public static func correctionPreservedIdentity(
+        original: [TranscriptSegment],
+        corrected: [TranscriptSegment]
+    ) -> Bool {
+        guard original.count == corrected.count else { return false }
+        for (before, after) in zip(original, corrected) {
+            guard before.id == after.id,
+                  before.speakerLabel == after.speakerLabel,
+                  before.startTime == after.startTime,
+                  before.endTime == after.endTime,
+                  before.confidence == after.confidence else {
+                return false
+            }
+        }
+        return true
+    }
+}

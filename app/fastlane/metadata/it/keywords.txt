@@ -1,0 +1,1 @@
+trascrizione,registratore,voce,audio,testo,verbale,riassunto,offline,lezione,intervista,appunti

@@ -1,0 +1,426 @@
+//
+//  ModelStore.swift
+//  Kurn
+//
+//  On-disk management of FluidAudio's downloaded CoreML models. FluidAudio caches
+//  each model under `Application Support/FluidAudio/Models/<repo folder>`; this
+//  lets Settings show how much space each model group uses and delete it to
+//  reclaim storage. Deleted models are re-downloaded on demand the next time the
+//  feature is enabled (the existing consent/toggle flow), so nothing is lost.
+//
+//  Pure `Foundation`/`FileManager` — no `import FluidAudio` — so it compiles and
+//  works whether or not the package is linked.
+//
+
+import Foundation
+import KurnCore
+
+enum ModelStore {
+
+    /// Groups of downloaded models that map to a user-facing feature.
+    enum ModelGroup: String, CaseIterable, Identifiable {
+        case liveTranscription
+        case onDeviceLanguage
+        case diarization
+        case vad
+        case whisperCpp
+        case sherpaOnnxDiarization
+        case fluidAudioASR
+        case nemotronDiarization
+
+        var id: String { rawValue }
+
+        /// Directory the group's folders live under. Everything FluidAudio
+        /// downloads shares its cache; whisper.cpp and sherpa-onnx each keep
+        /// their own root so no downloader can see — or delete — another's
+        /// files.
+        var root: URL {
+            switch self {
+            case .whisperCpp: return WhisperCppModelDownloader.modelsDirectory
+            case .sherpaOnnxDiarization: return SherpaOnnxModelDownloader.modelsDirectory
+            case .liveTranscription, .onDeviceLanguage, .diarization, .vad, .fluidAudioASR, .nemotronDiarization: return ModelStore.modelsDirectory
+            }
+        }
+
+        /// Known historical/current cache folders. These are only a migration
+        /// fallback; newly downloaded folders are discovered and persisted from
+        /// filesystem snapshots so FluidAudio can rename repos without hiding
+        /// models from Settings.
+        var fallbackFolderNames: [String] {
+            switch self {
+            case .liveTranscription:
+                // English-only EOU + multilingual Nemotron streaming.
+                return [
+                    "parakeet-eou-streaming",
+                    "parakeet-realtime-eou-120m-coreml",
+                    "nemotron-multilingual",
+                    "Nemotron-3.5-ASR-Streaming-Multilingual-0.6b-CoreML"
+                ]
+            case .onDeviceLanguage:
+                return [
+                    "parakeet-tdt-0.6b-v3",
+                    "parakeet-tdt-0.6b-v3-coreml"
+                ]
+            case .diarization:
+                return [
+                    "speaker-diarization",
+                    "speaker-diarization-coreml"
+                ]
+            case .vad:
+                return [
+                    "silero-vad",
+                    "silero-vad-coreml"
+                ]
+            case .fluidAudioASR:
+                return FluidAudioASRModel.allCases.filter { $0 != .parakeetV3 }.map(\.folderName)
+            case .nemotronDiarization:
+                return [FluidAudioDiarizationModel.nemotron3.folderName]
+            case .whisperCpp:
+                // Deterministic: the app names these folders itself, so unlike
+                // the FluidAudio groups there is nothing to discover.
+                return WhisperCppModel.allCases.map(\.folderName)
+            case .sherpaOnnxDiarization:
+                // Also deterministic — this app names both folders itself.
+                return SherpaOnnxModelDownloader.folderNames
+            }
+        }
+
+        var displayName: String {
+            switch self {
+            case .liveTranscription:
+                return NSLocalizedString("settings.models.live", comment: "Live transcription models")
+            case .onDeviceLanguage:
+                return NSLocalizedString("settings.models.on_device_language", comment: "On-device language model")
+            case .diarization:
+                return NSLocalizedString("settings.models.diarization", comment: "Diarization models")
+            case .vad:
+                return NSLocalizedString("settings.models.vad", comment: "Voice activity detection model")
+            case .whisperCpp:
+                return NSLocalizedString("settings.models.whisper_cpp", comment: "On-device Whisper models")
+            case .sherpaOnnxDiarization:
+                return NSLocalizedString("settings.models.sherpa_onnx", comment: "Sherpa-ONNX diarization models")
+            case .fluidAudioASR:
+                return "FluidAudio ASR"
+            case .nemotronDiarization:
+                return FluidAudioDiarizationModel.nemotron3.displayName
+            }
+        }
+
+        /// Whether each folder in the group is a model the user can keep or
+        /// delete on its own. whisper.cpp's size variants are independent —
+        /// keeping `small` and dropping `large-v3-turbo` is a reasonable thing
+        /// to want — whereas FluidAudio's folders (and sherpa-onnx's
+        /// segmentation/embedding pair) are parts of one feature that only
+        /// work together, so those stay a single row.
+        var listsFoldersSeparately: Bool { self == .whisperCpp || self == .fluidAudioASR }
+
+        /// Whether this group's own downloader already runs a post-install
+        /// health probe and records its own `ModelVerification` entry
+        /// (`WhisperCppModelDownloader`, `SherpaOnnxModelDownloader` — H7
+        /// PR 16). The four FluidAudio-backed groups have no downloader of
+        /// their own; `ModelDownloadController` records their verification
+        /// once `ModelDownloadConsent.download` returns, since loading the
+        /// model is already an unavoidable part of that call succeeding.
+        var isSelfVerifying: Bool {
+            switch self {
+            case .whisperCpp, .sherpaOnnxDiarization: return true
+            case .liveTranscription, .onDeviceLanguage, .diarization, .vad, .fluidAudioASR, .nemotronDiarization: return false
+            }
+        }
+
+        /// Name for one folder when the group lists its folders separately.
+        func displayName(forFolder folder: String) -> String {
+            if self == .fluidAudioASR {
+                return FluidAudioASRModel.allCases.first { $0 != .parakeetV3 && $0.folderName == folder }?.displayName ?? displayName
+            }
+            guard let model = WhisperCppModel.allCases.first(where: { $0.folderName == folder }) else {
+                return displayName
+            }
+            return "\(displayName) · \(model.displayName)"
+        }
+    }
+
+    struct InstalledModel: Identifiable, Equatable {
+        let id: String
+        let group: ModelGroup?
+        let displayName: String
+        let folderNames: [String]
+        let size: Int64
+        /// H7 PR 16: whether a health probe has proven this model loads, as
+        /// of the last check. `.unverified` for every "other" (unclaimed)
+        /// folder — those have no group, so no probe or record applies.
+        var verificationState: ModelVerificationState = .unverified
+
+        var isOther: Bool { group == nil }
+    }
+
+    struct Snapshot {
+        fileprivate let folders: [String: FolderSignature]
+    }
+
+    fileprivate struct FolderSignature: Equatable {
+        let size: Int64
+        let latestModification: TimeInterval
+    }
+
+    private static let folderRegistryKey = "settings.fluidAudioModelFoldersByGroup"
+
+    /// FluidAudio's model cache directory on iOS:
+    /// `Application Support/FluidAudio/Models`.
+    static var modelsDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent("FluidAudio/Models", isDirectory: true)
+    }
+
+    static func snapshot() -> Snapshot {
+        Snapshot(folders: topLevelFolderSignatures())
+    }
+
+    static func recordDownload(for group: ModelGroup, before: Snapshot) {
+        // Only FluidAudio needs folder discovery — it renames its model repos
+        // between releases. `.whisperCpp` folders are named by this app.
+        guard group.root == modelsDirectory else { return }
+        let after = snapshot()
+        let changed = after.folders.compactMap { name, signature -> String? in
+            before.folders[name] == signature ? nil : name
+        }
+        var registry = folderRegistry()
+        let claimedElsewhere = Set(registry.filter { $0.key != group.rawValue }.flatMap(\.value))
+        let candidates = changed.isEmpty ? existingFallbackFolders(for: group) : changed
+        let discovered = candidates.filter { group.canClaimFolder($0) && !claimedElsewhere.contains($0) }
+        guard !discovered.isEmpty else { return }
+        let existing = Set(registry[group.rawValue] ?? [])
+        registry[group.rawValue] = Array(existing.union(discovered)).sorted()
+        setFolderRegistry(registry)
+    }
+
+    /// Total bytes used on disk by a group's model folders (0 if none present).
+    static func sizeOnDisk(_ group: ModelGroup, folder: String? = nil) -> Int64 {
+        (folder.map { [$0] } ?? folders(for: group)).reduce(Int64(0)) { running, folder in
+            running + directorySize(group.root.appendingPathComponent(folder, isDirectory: true))
+        }
+    }
+
+    /// Whether any of the group's model folders exist on disk.
+    static func isInstalled(_ group: ModelGroup) -> Bool {
+        folders(for: group).contains { folder in
+            FileManager.default.fileExists(atPath: group.root.appendingPathComponent(folder).path)
+        }
+    }
+
+    /// Delete a group's model folders. Missing folders are ignored.
+    static func delete(_ group: ModelGroup) {
+        let targetFolders = folders(for: group)
+        delete(folders: targetFolders, in: group.root)
+        clearVerification(for: group, folders: targetFolders)
+        var registry = folderRegistry()
+        registry[group.rawValue] = nil
+        setFolderRegistry(registry)
+    }
+
+    static func delete(_ model: InstalledModel) {
+        // A `nil` group is the synthetic "other" entry, which only ever covers
+        // unclaimed folders in FluidAudio's cache.
+        delete(folders: model.folderNames, in: model.group?.root ?? modelsDirectory)
+        if let group = model.group {
+            clearVerification(for: group, folders: model.folderNames)
+            var registry = folderRegistry()
+            let remaining = (registry[group.rawValue] ?? []).filter { !model.folderNames.contains($0) }
+            registry[group.rawValue] = remaining.isEmpty ? nil : remaining
+            setFolderRegistry(registry)
+        }
+    }
+
+    /// Drop any `ModelVerification` record(s) for a group's folders, so a
+    /// later re-download starts from `.unverified` instead of comparing
+    /// fresh bytes against a record describing files that no longer exist.
+    private static func clearVerification(for group: ModelGroup, folders: [String]) {
+        guard group.listsFoldersSeparately else {
+            ModelVerification.clear(id: ModelVerification.recordID(for: group))
+            return
+        }
+        for folder in folders {
+            ModelVerification.clear(id: ModelVerification.recordID(for: group, folder: folder))
+        }
+    }
+
+    static func installedModels() -> [InstalledModel] {
+        let topLevel = Set(topLevelFolderSignatures().keys)
+        var claimed = Set<String>()
+        var models: [InstalledModel] = []
+
+        for group in ModelGroup.allCases {
+            let present = group.root == modelsDirectory
+                ? topLevel
+                : Set(topLevelFolderSignatures(in: group.root).keys)
+            let groupFolders = folders(for: group).filter { present.contains($0) }
+            guard !groupFolders.isEmpty else { continue }
+            if group.root == modelsDirectory { claimed.formUnion(groupFolders) }
+            reapplyBackupExclusionIfNeeded(for: group, folders: groupFolders)
+            guard group.listsFoldersSeparately else {
+                let id = ModelVerification.recordID(for: group)
+                let size = sizeOnDisk(group)
+                models.append(
+                    InstalledModel(
+                        id: id,
+                        group: group,
+                        displayName: group.displayName,
+                        folderNames: groupFolders.sorted(),
+                        size: size,
+                        verificationState: ModelVerification.state(id: id, currentSize: size)
+                    )
+                )
+                continue
+            }
+            // One row per folder, each independently deletable.
+            for folder in groupFolders.sorted() {
+                let id = ModelVerification.recordID(for: group, folder: folder)
+                let size = directorySize(group.root.appendingPathComponent(folder, isDirectory: true))
+                models.append(
+                    InstalledModel(
+                        id: id,
+                        group: group,
+                        displayName: group.displayName(forFolder: folder),
+                        folderNames: [folder],
+                        size: size,
+                        verificationState: ModelVerification.state(id: id, currentSize: size)
+                    )
+                )
+            }
+        }
+
+        let otherFolders = topLevel.subtracting(claimed).sorted()
+        let otherSize = otherFolders.reduce(Int64(0)) { running, folder in
+            running + directorySize(modelsDirectory.appendingPathComponent(folder, isDirectory: true))
+        }
+        if otherSize > 0 {
+            models.append(
+                InstalledModel(
+                    id: "other",
+                    group: nil,
+                    displayName: NSLocalizedString("settings.models.other", comment: "Other FluidAudio models"),
+                    folderNames: otherFolders,
+                    size: otherSize
+                )
+            )
+        }
+
+        return models
+    }
+
+    private static func folders(for group: ModelGroup) -> [String] {
+        let registered = folderRegistry()[group.rawValue] ?? []
+        return Array(Set(registered.filter { group.canClaimFolder($0) } + group.fallbackFolderNames)).sorted()
+    }
+
+    private static func existingFallbackFolders(for group: ModelGroup) -> [String] {
+        group.fallbackFolderNames.filter {
+            FileManager.default.fileExists(atPath: group.root.appendingPathComponent($0).path)
+        }
+    }
+
+    private static func delete(folders: [String], in root: URL) {
+        let fm = FileManager.default
+        for folder in folders {
+            try? fm.removeItem(at: root.appendingPathComponent(folder, isDirectory: true))
+        }
+    }
+
+    /// H7 PR 16, item 6's "verify `isExcludedFromBackup` ... during storage
+    /// inventory": `ModelFileDownloader.install` already sets this at
+    /// install time for whisper.cpp/sherpa-onnx, but a storage-inventory
+    /// pass is the place to catch it having been unset some other way
+    /// (iOS itself clearing the flag on a restore, a future code path that
+    /// forgets to) and quietly repair it, the same "verify and fix" shape
+    /// `ModelStoreProtection.applyAndVerify` already uses for the app's
+    /// SwiftData store. FluidAudio's own cache directory is deliberately
+    /// untouched here — this app's code never writes there, so there is
+    /// nothing to verify or fix; see PR 16's stated known gap.
+    private static func reapplyBackupExclusionIfNeeded(for group: ModelGroup, folders: [String]) {
+        guard group == .whisperCpp || group == .sherpaOnnxDiarization else { return }
+        for folder in folders {
+            var url = group.root.appendingPathComponent(folder, isDirectory: true)
+            let excluded = (try? url.resourceValues(forKeys: [.isExcludedFromBackupKey]))?.isExcludedFromBackup
+            guard excluded != true else { continue }
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try? url.setResourceValues(values)
+        }
+    }
+
+    private static func folderRegistry() -> [String: [String]] {
+        UserDefaults.standard.dictionary(forKey: folderRegistryKey) as? [String: [String]] ?? [:]
+    }
+
+    private static func setFolderRegistry(_ registry: [String: [String]]) {
+        UserDefaults.standard.set(registry, forKey: folderRegistryKey)
+    }
+
+    private static func topLevelFolderSignatures(
+        in root: URL = ModelStore.modelsDirectory
+    ) -> [String: FolderSignature] {
+        let fm = FileManager.default
+        guard let urls = try? fm.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [:] }
+
+        var signatures: [String: FolderSignature] = [:]
+        for url in urls {
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
+            guard values?.isDirectory == true else { continue }
+            signatures[url.lastPathComponent] = directorySignature(url)
+        }
+        return signatures
+    }
+
+    private static func directorySignature(_ directory: URL) -> FolderSignature {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey, .contentModificationDateKey],
+            options: []
+        ) else {
+            return FolderSignature(size: 0, latestModification: 0)
+        }
+
+        var total: Int64 = 0
+        var latestModification: TimeInterval = 0
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(
+                forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+            )
+            if values?.isRegularFile == true {
+                total += Int64(values?.fileSize ?? 0)
+            }
+            if let modified = values?.contentModificationDate?.timeIntervalSinceReferenceDate {
+                latestModification = max(latestModification, modified)
+            }
+        }
+        return FolderSignature(size: total, latestModification: latestModification)
+    }
+
+    /// Recursively sum the size of every regular file under `directory`.
+    private static func directorySize(_ directory: URL) -> Int64 {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: directory.path, isDirectory: &isDir), isDir.boolValue else {
+            return 0
+        }
+        guard let enumerator = fm.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+            options: []
+        ) else { return 0 }
+
+        var total: Int64 = 0
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            if values?.isRegularFile == true {
+                total += Int64(values?.fileSize ?? 0)
+            }
+        }
+        return total
+    }
+}

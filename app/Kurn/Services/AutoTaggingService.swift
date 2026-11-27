@@ -1,0 +1,134 @@
+//
+//  AutoTaggingService.swift
+//  Kurn
+//
+//  Suggests existing tags for a meeting by sending a lightweight excerpt of the
+//  transcript + title to the configured summary provider. Off-by-default, gated
+//  in Settings, and always safe to call off the main actor.
+//
+
+import Foundation
+import KurnCore
+
+struct AutoTaggingService: Sendable {
+    private let resolveProvider: ProviderFactory.LLMResolver
+
+    /// Production resolves through `ProviderFactory`, exactly like
+    /// `SummaryService`; tests inject a scripted provider.
+    init(resolveProvider: @escaping ProviderFactory.LLMResolver = ProviderFactory.liveLLM) {
+        self.resolveProvider = resolveProvider
+    }
+
+    /// Lightweight, sendable description of a tag for the prompt.
+    struct TagInput: Sendable {
+        let id: UUID
+        let name: String
+    }
+
+    /// Result of a tag-suggestion request.
+    struct Suggestion: Sendable, Identifiable {
+        let id = UUID()
+        let tagIDs: [UUID]
+        let newTagNames: [String]
+    }
+
+    /// Ask the model to pick the best matching tags from the existing set and
+    /// optionally suggest a few new ones. Returns an empty suggestion when the
+    /// input is empty or no tags are applicable.
+    func suggestTags(
+        meetingTitle: String,
+        transcript: String,
+        availableTags: [TagInput],
+        provider: AIProvider,
+        model: String
+    ) async throws -> Suggestion {
+        let trimmed = String(transcript.trimmingCharacters(in: .whitespacesAndNewlines).prefix(3000, breakingAt: .whitespacesAndNewlines))
+        guard !trimmed.isEmpty else {
+            return Suggestion(tagIDs: [], newTagNames: [])
+        }
+
+        let llm = try resolveProvider(provider, model)
+        let prompt = buildPrompt(
+            title: meetingTitle,
+            transcript: trimmed,
+            availableTags: availableTags
+        )
+        // Tags have their own JSON contract; `summarize` is intentionally not
+        // used because it decodes the different `{sections: [...]}` contract.
+        let text = try await llm.chat(
+            systemPrompt: systemPrompt,
+            messages: [ChatMessage(role: .user, content: prompt)]
+        )
+        return try Self.parseSuggestion(text: text, availableTags: availableTags)
+    }
+
+    private let systemPrompt = """
+    You are a tagging assistant for a meeting app. Given a meeting title and transcript, \
+    pick the most relevant tags from the provided list. You may also suggest up to 2 new \
+    tags that are not in the list. Return ONLY a JSON object with no markdown fences.
+
+    Format:
+    {
+      "existing": ["tag-id-1", "tag-id-2"],
+      "new": ["New Tag Name"]
+    }
+
+    - Use the exact tag IDs from the list for `existing`.
+    - Keep `new` short (1-3 words) and relevant. If none are needed, return an empty array.
+    """
+
+    private func buildPrompt(title: String, transcript: String, availableTags: [TagInput]) -> String {
+        let tagsList = availableTags.map { "\($0.id.uuidString): \($0.name)" }.joined(separator: "\n")
+        return """
+        Meeting title: \(title)
+
+        Available tags:
+        \(tagsList)
+
+        Transcript excerpt:
+        \(transcript)
+        """
+    }
+
+    static func parseSuggestion(text: String, availableTags: [TagInput]) throws -> Suggestion {
+        struct Wire: Decodable {
+            let existing: [String]?
+            let new: [String]?
+        }
+        let wire: Wire
+        do {
+            wire = try JSONDecoder().decode(
+                Wire.self,
+                from: ModelJSON.objectData(from: text)
+            )
+        } catch let error as AppError {
+            throw error
+        } catch {
+            throw AppError.decodingError(error.localizedDescription)
+        }
+        let availableIDs = Set(availableTags.map(\.id))
+        let existingIDs = (wire.existing ?? [])
+            .compactMap { UUID(uuidString: $0) }
+            .filter { availableIDs.contains($0) }
+        let newNames = (wire.new ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return Suggestion(tagIDs: existingIDs, newTagNames: newNames)
+    }
+}
+
+private extension String {
+    /// Truncates to at most `maxLength` characters, breaking at the last
+    /// occurrence of the given character set before the limit so words stay
+    /// intact. Falls back to a hard cut if no break point exists.
+    func prefix(_ maxLength: Int, breakingAt: CharacterSet) -> String {
+        guard count > maxLength else { return self }
+        let index = self.index(startIndex, offsetBy: maxLength)
+        let prefix = self[..<index]
+        if let lastBreak = prefix.unicodeScalars.lastIndex(where: { breakingAt.contains($0) }) {
+            let end = prefix.index(after: lastBreak)
+            return String(prefix[..<end])
+        }
+        return String(prefix)
+    }
+}

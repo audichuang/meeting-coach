@@ -1,0 +1,198 @@
+//
+//  ChunkedTranscriptionRunner.swift
+//  Kurn
+//
+//  Shared chunk loop for the resumable transcription engines (Whisper and Apple
+//  Speech): iterates a chunk plan, offsets each chunk's spans back to the
+//  input's absolute timeline, reports durable progress after every chunk, and
+//  honors cooperative cancellation between chunks. Given the same input file
+//  the chunk plan is deterministic, so a persisted `Progress` from an earlier
+//  interrupted run can seed the loop to skip already-transcribed chunks.
+//
+
+import Foundation
+import KurnCore
+
+enum ChunkedTranscriptionRunner {
+
+    /// Accumulated state of the chunk loop. Persisted (via
+    /// `TranscriptionCheckpoint`) after every chunk so interruption at any
+    /// point loses at most the in-flight chunk.
+    struct Progress: Sendable {
+        var totalChunks: Int
+        var completedChunks: Int
+        var detectedLanguage: String
+        /// SHA-256 over this run's exact chunk plan (`PipelineDigest`). Part of
+        /// H4's fingerprinting: two plans with the same chunk *count* can still
+        /// be cut at different offsets, and resuming into the wrong one would
+        /// silently misalign every completed span's timestamps.
+        var planDigest: String
+        /// Spans of completed chunks, offset to the input file's timeline.
+        var spans: [TranscribedSpan]
+    }
+
+    /// Speaker turns accumulated across chunks this run, offset to the input
+    /// file's timeline. Deliberately *not* part of `Progress` (so it isn't
+    /// persisted in the durable checkpoint): a resumed run therefore only
+    /// carries native diarization for the chunks it actually re-transcribes,
+    /// not ones a prior interrupted run already completed. That is a lesser
+    /// degradation than the one this fixes — every chunk's `speakerTurns`
+    /// being silently dropped, which left `.transcriptionProviderNative`
+    /// permanently falling back to a single synthetic turn in production.
+    private struct SpeakerTurnAccumulator {
+        var turns: [SpeakerTurn] = []
+        var sawAny = false
+
+        mutating func append(_ chunkTurns: [SpeakerTurn]?) {
+            guard let chunkTurns else { return }
+            sawAny = true
+            turns.append(contentsOf: chunkTurns)
+        }
+
+        /// `nil` when no chunk ever returned speaker turns, `[]` distinguished
+        /// from a genuine (if empty) result — same convention as
+        /// `RawTranscript.speakerTurns`.
+        var result: [SpeakerTurn]? { sawAny ? turns : nil }
+    }
+
+    /// Run the chunk loop, optionally resuming from prior progress.
+    /// - Parameters:
+    ///   - chunks: the (re-)derived chunk plan for the input file.
+    ///   - planDigest: `PipelineDigest.sha256Hex(of: chunks.map(\.offset))` —
+    ///     computed by the caller since only it knows how the plan was cut.
+    ///   - resume: progress from an interrupted run; ignored unless its own
+    ///     `planDigest` matches this run's plan exactly.
+    ///   - transcribeChunk: transcribes one chunk (given its zero-based index)
+    ///     into chunk-local spans.
+    ///   - onChunkCompleted: durable-progress sink invoked after each chunk and
+    ///     awaited before the next one starts (H4): a checkpoint is not
+    ///     durable until this returns, so the loop must not risk the next
+    ///     chunk's work — or, for a cloud engine, its cost — on top of
+    ///     progress that was never actually saved. A thrown error stops the
+    ///     run at the last durably-committed chunk instead of continuing.
+    ///   - onProgress: 0...1 fraction of chunks completed, plus the current
+    ///     chunk number and total (the current chunk is clamped to `1...total`).
+    static func run(
+        chunks: [AudioChunker.Chunk],
+        planDigest: String,
+        resume: Progress?,
+        transcribeChunk: @Sendable (AudioChunker.Chunk, Int) async throws -> RawTranscript,
+        onChunkCompleted: (@Sendable (Progress) async throws -> Void)? = nil,
+        onProgress: @Sendable (Double, Int, Int) -> Void = { _, _, _ in }
+    ) async throws -> RawTranscript {
+        let bounds = chunks.map { ChunkTimestampNormalization.Bounds(offset: $0.offset, duration: $0.duration) }
+        try withTimingValidation {
+            try ChunkTimestampNormalization.validate(bounds)
+        }
+        var state = Progress(totalChunks: chunks.count, completedChunks: 0, detectedLanguage: "", planDigest: planDigest, spans: [])
+        if let resume, resume.planDigest == planDigest, resume.totalChunks == chunks.count,
+           (0...chunks.count).contains(resume.completedChunks) {
+            do {
+                let spans = try ChunkTimestampNormalization.normalizeCompletedSpans(
+                    resume.spans,
+                    chunks: Array(bounds.prefix(resume.completedChunks))
+                )
+                state = resume
+                state.spans = spans
+                AppLog.transcription.atNotice.notice("chunked: resuming at chunk \(resume.completedChunks + 1, privacy: .public)/\(chunks.count, privacy: .public)")
+            } catch let failure as ChunkTimestampNormalization.Failure {
+                AppLog.transcription.atNotice.notice("chunked: checkpoint timing invalid, starting over detail=\(failure.rawValue, privacy: .public)")
+            }
+        } else if resume != nil {
+            AppLog.transcription.atNotice.notice("chunked: checkpoint plan mismatch, starting over")
+        }
+        var speakerTurns = SpeakerTurnAccumulator()
+
+        let total = max(1, chunks.count)
+        onProgress(
+            chunks.isEmpty ? 1 : Double(state.completedChunks) / Double(total),
+            max(1, min(total, state.completedChunks + 1)),
+            total
+        )
+
+        for index in state.completedChunks..<chunks.count {
+            try Task.checkCancellation()
+            let chunk = chunks[index]
+            let rawResult = try await transcribeChunk(chunk, index)
+            let result = try withTimingValidation {
+                try ChunkTimestampNormalization.normalize(
+                    rawResult,
+                    duration: chunk.duration,
+                    offset: chunk.offset
+                )
+            }
+            let coveredDuration = result.spans.reduce(0) {
+                $0 + max(0, $1.end - $1.start)
+            }
+            AppLog.transcription.atNotice.notice(
+                "chunked: result \(index + 1, privacy: .public)/\(chunks.count, privacy: .public) spans=\(result.spans.count, privacy: .public) covered=\(String(format: "%.1f", coveredDuration), privacy: .public)s"
+            )
+            if state.detectedLanguage.isEmpty {
+                state.detectedLanguage = result.language
+            }
+            speakerTurns.append(result.speakerTurns)
+            // Offset chunk-local timestamps back to the input's timeline.
+            for span in result.spans {
+                state.spans.append(span)
+            }
+            state.completedChunks = index + 1
+            // Awaited, not fired-and-forgotten: chunk N+1 must not start
+            // before chunk N's progress is durably committed (H4). A thrown
+            // error here propagates out of `run`, stopping the loop with the
+            // in-memory `state` discarded — the caller's last *durable*
+            // checkpoint remains whatever `onChunkCompleted` last returned
+            // from successfully.
+            try await onChunkCompleted?(state)
+            // Advance after each chunk completes so the bar reaches 100% when
+            // the last chunk lands (rather than stalling at (total-1)/total).
+            // The current chunk is the next one in flight (or the last one if
+            // this was the final chunk).
+            let currentChunk = max(1, min(total, index + 2))
+            onProgress(Double(index + 1) / Double(total), currentChunk, total)
+        }
+
+        return RawTranscript(spans: state.spans, language: state.detectedLanguage, speakerTurns: speakerTurns.result)
+    }
+
+    private static func withTimingValidation<Result>(_ operation: () throws -> Result) throws -> Result {
+        do {
+            return try operation()
+        } catch let failure as ChunkTimestampNormalization.Failure {
+            AppLog.transcription.atError.error("chunked: timestamp validation rejected detail=\(failure.rawValue, privacy: .public)")
+            let reason: TranscriptIntegrityFailure = failure == .invalidDuration ? .sourceUnreadable : .segmentOutOfBounds
+            throw AppError.transcriptIntegrityFailed(reason.rawValue)
+        }
+    }
+}
+
+// MARK: - Checkpoint bridging
+
+extension TranscriptionCheckpoint {
+    init(
+        fingerprint: TranscriptionPipelineFingerprint,
+        progress: ChunkedTranscriptionRunner.Progress
+    ) {
+        self.init(
+            fingerprint: fingerprint,
+            chunkPlanDigest: progress.planDigest,
+            totalChunks: progress.totalChunks,
+            completedChunks: progress.completedChunks,
+            detectedLanguage: progress.detectedLanguage,
+            spans: progress.spans.map {
+                Span(text: $0.text, start: $0.start, end: $0.end, confidence: $0.confidence)
+            }
+        )
+    }
+
+    var runnerProgress: ChunkedTranscriptionRunner.Progress {
+        ChunkedTranscriptionRunner.Progress(
+            totalChunks: totalChunks,
+            completedChunks: completedChunks,
+            detectedLanguage: detectedLanguage,
+            planDigest: chunkPlanDigest,
+            spans: spans.map {
+                TranscribedSpan(text: $0.text, start: $0.start, end: $0.end, confidence: $0.confidence)
+            }
+        )
+    }
+}

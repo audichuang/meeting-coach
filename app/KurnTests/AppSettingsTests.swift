@@ -1,0 +1,292 @@
+//
+//  AppSettingsTests.swift
+//  KurnTests
+//
+//  Covers the derived/computed surfaces of AppSettings: the per-stage pipeline
+//  assembly, provider selection fallback, and summary-model fallback, plus the
+//  legacy→engine migration. AppSettings reads/writes `UserDefaults.standard`, so
+//  each test runs inside a scope that clears the relevant keys and restores the
+//  user's real values afterward (no pollution of the app's defaults).
+//
+
+import Foundation
+import Testing
+@testable import Kurn
+
+@MainActor
+struct AppSettingsTests {
+
+    static let keys = [
+        "settings.aiProvider", "settings.aiProviders", "settings.defaultTranscriptionMode",
+        "settings.transcriptionProviderID", "settings.transcriptionModels",
+        "settings.defaultLanguage", "settings.micPickup", "settings.audioQuality",
+        "settings.alwaysUseBuiltInMic",
+        "settings.summaryModels", "settings.summaryTemplates", "settings.lastSummaryTemplate",
+        "settings.templatesSyncEnabled",
+        "settings.liveTranscriptionEnabled", "settings.diarizationEngine", "settings.transcriptionEngine",
+        "settings.diarizationPreprocessingEnabled", "settings.preprocessingEngine",
+        "settings.vadEngine", "settings.languageDetectionEngine",
+        "settings.fluidAudioASRModelsConsented", "settings.fluidAudioBatchASRModelsConsented",
+        "settings.fluidAudioDiarizationModelsConsented", "settings.fluidAudioVADModelsConsented",
+        "settings.whisperCppModel", "settings.whisperCppModelsConsented",
+        "settings.fluidAudioASRModel", "settings.fluidAudioLiveModel", "settings.fluidAudioDiarizationModel",
+        "settings.fluidAudioSegmentationBatchSize", "settings.fluidAudioASRModelConsents",
+        "settings.fluidAudioNemotronModelsConsented", "settings.fluidAudioUnifiedStreamingConsented",
+        "settings.allowsExpensiveNetworkTransfers", "settings.allowsConstrainedNetworkTransfers",
+        "settings.cloudTranscriptionConsentKeys",
+        "settings.logLevel", "settings.meetingsSortOrder", "settings.hideLiveActivityMeetingTitle",
+        AppSettingsKeys.diagnosticReportsConsented, "settings.usageStats"
+    ]
+
+    /// Run `body` against a freshly-defaulted AppSettings, restoring the user's
+    /// real UserDefaults (and `AppLog.minimumLevel`) afterward.
+    private func withScopedDefaults(_ body: (AppSettings) -> Void) {
+        let defaults = UserDefaults.standard
+        let snapshot = Self.keys.reduce(into: [String: Any]()) { acc, key in
+            if let value = defaults.object(forKey: key) { acc[key] = value }
+        }
+        let originalLogLevel = AppLog.minimumLevel
+        defer {
+            for key in Self.keys {
+                if let value = snapshot[key] { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
+            }
+            AppLog.minimumLevel = originalLogLevel
+        }
+        for key in Self.keys { defaults.removeObject(forKey: key) }
+        body(AppSettings())
+    }
+
+    @Test func pipelineConfigurationReflectsIndividualEngineChoices() {
+        withScopedDefaults { settings in
+            settings.preprocessingEngine = .none
+            settings.vadEngine = .fluidAudio
+            settings.languageDetectionEngine = .fluidAudioLID
+            settings.diarizationEngine = .fluidAudio
+            settings.transcriptionEngine = .whisperAPI
+            settings.diarizationPreprocessingEnabled = false
+
+            let config = settings.pipelineConfiguration
+            #expect(config.preprocessing == .none)
+            #expect(config.vad == .fluidAudio)
+            #expect(config.languageDetection == .fluidAudioLID)
+            #expect(config.diarization == .fluidAudio)
+            #expect(config.transcription == .whisperAPI)
+            #expect(config.diarizationPreprocessingEnabled == false)
+        }
+    }
+
+    @Test func pipelineCarriesCloudConsentAndLargeTransferPolicy() {
+        withScopedDefaults { settings in
+            let provider = settings.transcriptionProvider
+            settings.recordCloudTranscriptionConsent(for: provider)
+            settings.allowsExpensiveNetworkTransfers = true
+            settings.allowsConstrainedNetworkTransfers = true
+
+            let config = settings.pipelineConfiguration
+            #expect(config.cloudTranscriptionConsented)
+            #expect(config.largeTransferPolicy.allowsExpensiveAccess)
+            #expect(config.largeTransferPolicy.allowsConstrainedAccess)
+        }
+    }
+
+    @Test func cloudConsentIsInvalidatedWhenProviderDestinationChanges() {
+        withScopedDefaults { settings in
+            let first = AIProvider(
+                id: "custom-test",
+                displayName: "Custom",
+                kind: .openAICompatible,
+                baseURLString: "https://one.example.com/v1"
+            )
+            let changed = AIProvider(
+                id: first.id,
+                displayName: first.displayName,
+                kind: first.kind,
+                baseURLString: "https://two.example.com/v1"
+            )
+
+            settings.recordCloudTranscriptionConsent(for: first)
+            #expect(settings.hasCloudTranscriptionConsent(for: first))
+            #expect(!settings.hasCloudTranscriptionConsent(for: changed))
+        }
+    }
+
+    @Test func cloudEngineSelectionWaitsForDestinationConsent() {
+        withScopedDefaults { settings in
+            let controller = CloudTranscriptionConsentController()
+            let downloads = ModelDownloadController()
+
+            controller.selectEngine(
+                .whisperAPI,
+                settings: settings,
+                providers: [.openAI],
+                downloads: downloads
+            )
+            #expect(controller.isPresented)
+            #expect(settings.transcriptionEngine != .whisperAPI)
+
+            controller.confirm(
+                settings: settings,
+                providers: [.openAI],
+                downloads: downloads
+            )
+            #expect(settings.hasCloudTranscriptionConsent(for: .openAI))
+            #expect(settings.transcriptionEngine == .whisperAPI)
+        }
+    }
+
+    @Test func freshSettingsUseAlwaysAvailablePipeline() {
+        withScopedDefaults { settings in
+            #expect(settings.pipelineConfiguration == PipelineConfiguration())
+        }
+    }
+
+    @Test func pipelineConfigurationCarriesTheSelectedWhisperCppModel() {
+        withScopedDefaults { settings in
+            #expect(settings.whisperCppModel == .small)
+            settings.transcriptionEngine = .whisperCpp
+            settings.whisperCppModel = .largeTurbo
+
+            let config = settings.pipelineConfiguration
+            #expect(config.transcription == .whisperCpp)
+            #expect(config.whisperCppModel == .largeTurbo)
+        }
+    }
+
+    /// Selecting whisper.cpp must not be mistaken for needing FluidAudio's
+    /// batch ASR model — the two have separate consent flags and downloads.
+    @Test func whisperCppDoesNotRequestTheFluidAudioModel() {
+        withScopedDefaults { settings in
+            settings.transcriptionEngine = .whisperCpp
+            settings.fluidAudioBatchASRModelsConsented = true
+            #expect(settings.usesFluidAudioModel == false)
+        }
+    }
+
+    /// A fresh install (no stored `aiProviderID`) must default to the
+    /// on-device provider, not a cloud vendor requiring a key — otherwise a
+    /// user who never opens Settings gets nothing beyond transcription, which
+    /// is the gap F1 exists to close.
+    @Test func aiProviderDefaultsToAppleOnDeviceOnFreshInstall() {
+        withScopedDefaults { settings in
+            #expect(settings.aiProviderID == AIProvider.appleOnDevice.id)
+            #expect(settings.aiProvider.kind == .appleOnDevice)
+        }
+    }
+
+    @Test func aiProviderFallsBackToFirstWhenSelectedIDMissing() {
+        withScopedDefaults { settings in
+            settings.aiProviderID = "no-such-provider"
+            #expect(settings.aiProvider.id == settings.providers.first?.id)
+        }
+    }
+
+    @Test func aiProviderResolvesSelectedID() {
+        withScopedDefaults { settings in
+            settings.aiProviderID = AIProvider.anthropic.id
+            #expect(settings.aiProvider.id == "anthropic")
+        }
+    }
+
+    @Test func summaryModelFallsBackToProviderDefaultThenStored() {
+        withScopedDefaults { settings in
+            #expect(settings.summaryModel(for: .openAI) == AIProvider.openAI.defaultModel)
+            settings.setSummaryModel("custom-model", for: .openAI)
+            #expect(settings.summaryModel(for: .openAI) == "custom-model")
+        }
+    }
+
+    @Test func transcriptionProviderDefaultsToOpenAIAndResolvesSelection() {
+        withScopedDefaults { settings in
+            #expect(settings.transcriptionProvider.id == AIProvider.openAI.id)
+            settings.transcriptionProviderID = AIProvider.groq.id
+            #expect(settings.transcriptionProvider.id == "groq")
+        }
+    }
+
+    @Test func transcriptionProviderFallsBackWhenSelectedCannotTranscribe() {
+        withScopedDefaults { settings in
+            // Anthropic can't transcribe, so it must not be resolved as the
+            // transcription provider even when stored.
+            settings.transcriptionProviderID = AIProvider.anthropic.id
+            #expect(settings.transcriptionProvider.supportsTranscription)
+            #expect(settings.transcriptionProvider.id != AIProvider.anthropic.id)
+        }
+    }
+
+    @Test func transcriptionProviderIDPersists() {
+        withScopedDefaults { settings in
+            settings.transcriptionProviderID = AIProvider.groq.id
+            #expect(AppSettings().transcriptionProviderID == "groq")
+        }
+    }
+
+    @Test func transcriptionModelFallsBackToProviderDefaultThenStored() {
+        withScopedDefaults { settings in
+            #expect(settings.transcriptionModel(for: .openAI) == "whisper-1")
+            #expect(settings.transcriptionModel(for: .groq) == "whisper-large-v3")
+            settings.setTranscriptionModel("whisper-large-v3-turbo", for: .groq)
+            #expect(settings.transcriptionModel(for: .groq) == "whisper-large-v3-turbo")
+        }
+    }
+
+    @Test func pipelineConfigurationCarriesTranscriptionProviderAndModel() {
+        withScopedDefaults { settings in
+            settings.transcriptionEngine = .whisperAPI
+            settings.transcriptionProviderID = AIProvider.groq.id
+            settings.setTranscriptionModel("whisper-large-v3-turbo", for: .groq)
+
+            let config = settings.pipelineConfiguration
+            #expect(config.transcriptionProvider.id == "groq")
+            #expect(config.transcriptionModel == "whisper-large-v3-turbo")
+        }
+    }
+
+    @Test func whisperModeMigratesToWhisperRegardlessOfLanguage() {
+        #expect(
+            AppSettings.migratedTranscriptionEngine(
+                mode: .whisperAPI, language: .portuguese, multilingualConsented: false
+            ) == .whisperAPI
+        )
+    }
+
+    @Test func hideLiveActivityMeetingTitleDefaultsToTrueAndPersists() {
+        withScopedDefaults { settings in
+            #expect(settings.hideLiveActivityMeetingTitle == true)
+            settings.hideLiveActivityMeetingTitle = false
+            #expect(AppSettings().hideLiveActivityMeetingTitle == false)
+        }
+    }
+
+    @Test func diagnosticReportsConsentedDefaultsToFalseAndPersists() {
+        withScopedDefaults { settings in
+            #expect(settings.diagnosticReportsConsented == false)
+            settings.diagnosticReportsConsented = true
+            #expect(AppSettings().diagnosticReportsConsented == true)
+        }
+    }
+
+    @Test func usageStatsIncrementsAndResets() {
+        withScopedDefaults { settings in
+            #expect(settings.usageStatsSnapshot == UsageStats())
+
+            settings.recordRecordingCompleted()
+            settings.recordRecordingCompleted()
+            settings.recordTranscriptionEngineUsed(.appleSpeech)
+            settings.recordTranscriptionEngineUsed(.appleSpeech)
+            settings.recordTranscriptionEngineUsed(.whisperAPI)
+            settings.recordSummaryTemplateUsed(SummaryTemplate.general.id)
+
+            #expect(settings.usageStatsSnapshot.recordingsCompleted == 2)
+            #expect(settings.usageStatsSnapshot.transcriptionEngineUsage["appleSpeech"] == 2)
+            #expect(settings.usageStatsSnapshot.transcriptionEngineUsage["whisperAPI"] == 1)
+            #expect(settings.usageStatsSnapshot.summaryTemplateUsage[SummaryTemplate.general.id] == 1)
+            #expect(settings.usageStatsSnapshot.mostUsedTranscriptionEngine == .appleSpeech)
+
+            // Persists across a fresh instance.
+            #expect(AppSettings().usageStatsSnapshot.recordingsCompleted == 2)
+
+            settings.resetUsageStats()
+            #expect(settings.usageStatsSnapshot == UsageStats())
+        }
+    }
+}
