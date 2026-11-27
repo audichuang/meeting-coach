@@ -50,15 +50,18 @@ extension MeetingDetailView {
 }
 
 /// Compact read-only preview thumbnail of one saved handwritten notes page.
+/// Decodes and renders one bounded thumbnail per note revision rather than
+/// re-decoding or allocating a full-page bitmap on every SwiftUI body pass.
 private struct PaperNotePreviewCard: View {
     let note: PaperNote
     @Environment(\.displayScale) private var displayScale
+    @State private var thumbnailCache = PaperNoteThumbnailCache()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack {
                 Color(uiColor: PaperCanvasContainerView.paperBackgroundColor)
-                if let image = renderedPreview {
+                if let image = thumbnailCache.image(for: note, displayScale: displayScale) {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
@@ -66,7 +69,7 @@ private struct PaperNotePreviewCard: View {
                         .accessibilityHidden(true)
                 }
             }
-            .frame(width: 170, height: 220)
+            .frame(width: PaperNoteThumbnail.cardSize.width, height: PaperNoteThumbnail.cardSize.height)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -82,69 +85,27 @@ private struct PaperNotePreviewCard: View {
             .foregroundStyle(Theme.textSecondary)
             .lineLimit(1)
         }
-        .frame(width: 170, alignment: .leading)
+        .frame(width: PaperNoteThumbnail.cardSize.width, alignment: .leading)
         .contentShape(Rectangle())
-    }
-
-    private var renderedPreview: UIImage? {
-        let drawing = note.loadDrawing()
-        guard !drawing.strokes.isEmpty else { return nil }
-        let pageWidth = max(200, CGFloat(note.pageWidth))
-        let pageHeight = max(
-            PaperCanvasMetrics.minimumPageHeight,
-            drawing.bounds.isNull ? 0 : drawing.bounds.maxY + 120
-        )
-        let rect = CGRect(x: 0, y: 0, width: pageWidth, height: min(pageHeight, pageWidth * 1.5))
-        var rendered: UIImage?
-        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
-            rendered = drawing.image(from: rect, scale: max(1, min(2, displayScale)))
-        }
-        return rendered
     }
 }
 
-/// Full-page read-only viewer for a saved `PaperNote`. Renders the persisted
-/// `PKDrawing` directly via `PKDrawing.image(from:scale:)` onto the opaque
-/// warm-paper page inside a scrollable view so reviewing notes never mutates
-/// them and avoids PencilKit tile-rasterization artifacts inside modal sheets.
+/// Full-page read-only viewer for a saved `PaperNote`. Uses a read-only
+/// `PaperCanvasView` (`PKCanvasView` with scrolling/zooming enabled and
+/// drawing disabled) so arbitrarily tall notes tile natively without ever
+/// allocating a full-height bitmap, and decodes the persisted drawing once.
 struct PaperNoteViewerView: View {
     let note: PaperNote
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.displayScale) private var displayScale
+    @State private var drawingCache = PaperNoteDrawingCache()
 
     var body: some View {
         NavigationStack {
-            GeometryReader { proxy in
-                let drawing = note.loadDrawing()
-                let pageWidth = max(200, CGFloat(note.pageWidth))
-                let drawingMaxY = drawing.bounds.isNull ? 0 : drawing.bounds.maxY
-                let pageHeight = max(
-                    PaperCanvasMetrics.minimumPageHeight,
-                    drawingMaxY + PaperCanvasMetrics.bottomGrowthMargin
-                )
-                let viewportWidth = max(1, proxy.size.width)
-                let aspectHeight = viewportWidth * (pageHeight / pageWidth)
-
-                ScrollView {
-                    ZStack(alignment: .topLeading) {
-                        PaperReadOnlyPageBackground(
-                            pageWidth: pageWidth,
-                            pageHeight: pageHeight
-                        )
-                        if let rendered = renderDrawing(drawing, pageWidth: pageWidth, pageHeight: pageHeight) {
-                            Image(uiImage: rendered)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: viewportWidth, height: aspectHeight, alignment: .topLeading)
-                                .accessibilityHidden(true)
-                        }
-                    }
-                    .frame(width: viewportWidth, height: aspectHeight)
-                }
-                .background(Color(uiColor: PaperCanvasContainerView.paperBackgroundColor))
-                .accessibilityIdentifier("paper.canvas.readonly")
-                .accessibilityLabel(NSLocalizedString("paper.canvas.accessibility", comment: "Handwriting paper"))
-            }
+            PaperCanvasView(
+                drawing: drawingCache.drawing(for: note),
+                pageWidth: max(200, CGFloat(note.pageWidth)),
+                isEditable: false
+            )
             .ignoresSafeArea(edges: .bottom)
             .navigationTitle(NSLocalizedString("paper.notes.title", comment: "Notes"))
             .navigationBarTitleDisplayMode(.inline)
@@ -157,39 +118,5 @@ struct PaperNoteViewerView: View {
             }
         }
         .presentationSizing(.page)
-    }
-
-    private func renderDrawing(_ drawing: PKDrawing, pageWidth: CGFloat, pageHeight: CGFloat) -> UIImage? {
-        guard !drawing.strokes.isEmpty else { return nil }
-        let rect = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
-        var image: UIImage?
-        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
-            image = drawing.image(from: rect, scale: max(1, min(2, displayScale)))
-        }
-        return image
-    }
-}
-
-private struct PaperReadOnlyPageBackground: View {
-    let pageWidth: CGFloat
-    let pageHeight: CGFloat
-
-    var body: some View {
-        Canvas { context, size in
-            let scale = size.width / max(1, pageWidth)
-            let spacing = PaperCanvasMetrics.ruledLineSpacing * scale
-            guard spacing >= 4 else { return }
-            var y = PaperCanvasMetrics.ruledTopMargin * scale
-            let lineColor = Color(uiColor: PaperCanvasContainerView.ruledLineColor)
-            while y <= size.height {
-                var path = Path()
-                path.move(to: CGPoint(x: 24 * scale, y: y))
-                path.addLine(to: CGPoint(x: size.width - 24 * scale, y: y))
-                context.stroke(path, with: .color(lineColor), lineWidth: 0.75)
-                y += spacing
-            }
-        }
-        .background(Color(uiColor: PaperCanvasContainerView.paperBackgroundColor))
-        .accessibilityHidden(true)
     }
 }

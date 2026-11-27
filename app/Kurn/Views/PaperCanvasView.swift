@@ -75,8 +75,11 @@ struct PaperCanvasView: UIViewRepresentable {
         let canvas = container.canvasView
         canvas.delegate = context.coordinator
         canvas.tool = tool
-        canvas.drawingPolicy = Self.defaultDrawingPolicy
+        canvas.drawingPolicy = isEditable ? Self.defaultDrawingPolicy : .pencilOnly
         canvas.drawingGestureRecognizer.isEnabled = isEditable
+        canvas.isRulerActive = false
+        canvas.isUserInteractionEnabled = true
+        canvas.isScrollEnabled = true
         canvas.accessibilityIdentifier = isEditable ? "paper.canvas" : "paper.canvas.readonly"
         canvas.accessibilityLabel = NSLocalizedString("paper.canvas.accessibility", comment: "Handwriting paper")
         context.coordinator.applyExternalDrawing(drawing, to: container)
@@ -88,7 +91,10 @@ struct PaperCanvasView: UIViewRepresentable {
         context.coordinator.parent = self
         container.pageWidth = pageWidth
         let canvas = container.canvasView
+        canvas.drawingPolicy = isEditable ? Self.defaultDrawingPolicy : .pencilOnly
         canvas.drawingGestureRecognizer.isEnabled = isEditable
+        canvas.isUserInteractionEnabled = true
+        canvas.isScrollEnabled = true
         if isEditable {
             canvas.tool = tool
         }

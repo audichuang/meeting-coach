@@ -13,6 +13,7 @@ import Foundation
 import KurnCore
 import PencilKit
 import SwiftData
+import SwiftUI
 import Testing
 import UIKit
 @testable import Kurn
@@ -324,5 +325,108 @@ struct PaperNoteTests {
         #expect(landscapeScale > 0.9)
         let grownHeight = PaperCanvasMetrics.pageHeight(viewportHeight: landscape.height, displayScale: landscapeScale, drawingMaxY: 1_400)
         #expect(grownHeight >= 1_400 + PaperCanvasMetrics.bottomGrowthMargin)
+    }
+
+    // MARK: - Read-only Viewer & Bounded Preview
+
+    private func findSubview<T: UIView>(of type: T.Type, in view: UIView) -> T? {
+        if let match = view as? T { return match }
+        for child in view.subviews {
+            if let found = findSubview(of: type, in: child) { return found }
+        }
+        return nil
+    }
+
+    @Test func tallDrawingViewerUsesReadOnlyCanvasWithoutFullHeightBitmap() async throws {
+        let topStroke = makeSampleDrawing(offsetY: 120)
+        let bottomStroke = makeSampleDrawing(offsetY: 20_000)
+        let tallDrawing = PKDrawing(strokes: topStroke.strokes + bottomStroke.strokes)
+        #expect(tallDrawing.bounds.maxY >= 20_000)
+
+        let note = PaperNote(
+            recordingID: UUID(),
+            drawingData: tallDrawing.dataRepresentation(),
+            pageWidth: PaperNote.defaultPageWidth
+        )
+
+        let hosting = UIHostingController(rootView: PaperNoteViewerView(note: note))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 744, height: 1_000))
+        window.rootViewController = hosting
+        window.makeKeyAndVisible()
+        hosting.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(50))
+        hosting.view.layoutIfNeeded()
+
+        let canvas = try #require(
+            findSubview(of: PKCanvasView.self, in: hosting.view),
+            "PaperNoteViewerView must render via a read-only PKCanvasView instead of allocating a full-height bitmap"
+        )
+        #expect(!canvas.drawingGestureRecognizer.isEnabled)
+        #expect(canvas.isUserInteractionEnabled)
+        #expect(canvas.isScrollEnabled)
+        #expect(canvas.drawing.strokes.count == 2)
+        #expect(canvas.contentSize.height >= 20_000 * max(0.25, canvas.zoomScale))
+
+        window.isHidden = true
+    }
+
+    @Test func previewThumbnailBoundsBitmapSizeAndDecodesOncePerRevision() {
+        let topStroke = makeSampleDrawing(offsetY: 120)
+        let bottomStroke = makeSampleDrawing(offsetY: 20_000)
+        let tallDrawing = PKDrawing(strokes: topStroke.strokes + bottomStroke.strokes)
+        let note = PaperNote(
+            recordingID: UUID(),
+            drawingData: tallDrawing.dataRepresentation(),
+            pageWidth: PaperNote.defaultPageWidth
+        )
+
+        var decodeCount = 0
+        var recordedRects: [CGRect] = []
+        var recordedScales: [CGFloat] = []
+        let cache = PaperNoteThumbnailCache()
+
+        for _ in 0..<5 {
+            let image = cache.image(
+                for: note,
+                displayScale: 2,
+                decode: { item in
+                    decodeCount += 1
+                    return item.loadDrawing()
+                },
+                render: { drawing, rect, scale in
+                    recordedRects.append(rect)
+                    recordedScales.append(scale)
+                    return PaperNoteThumbnail.defaultRender(drawing: drawing, rect: rect, scale: scale)
+                }
+            )
+            #expect(image != nil)
+        }
+
+        #expect(decodeCount == 1)
+        #expect(recordedRects.count == 1)
+        let rect = recordedRects[0]
+        let scale = recordedScales[0]
+        #expect(rect.height <= CGFloat(note.pageWidth) * 1.5)
+        #expect(rect.width * scale <= PaperNoteThumbnail.maxPixelDimension + 1)
+        #expect(rect.height * scale <= PaperNoteThumbnail.maxPixelDimension + 1)
+
+        // Drawing cache also decodes once across repeated reads until updatedAt changes.
+        let drawingCache = PaperNoteDrawingCache()
+        var viewerDecodeCount = 0
+        for _ in 0..<4 {
+            let decoded = drawingCache.drawing(for: note) { item in
+                viewerDecodeCount += 1
+                return item.loadDrawing()
+            }
+            #expect(decoded.strokes.count == 2)
+        }
+        #expect(viewerDecodeCount == 1)
+
+        note.updatedAt = note.updatedAt.addingTimeInterval(5)
+        _ = drawingCache.drawing(for: note) { item in
+            viewerDecodeCount += 1
+            return item.loadDrawing()
+        }
+        #expect(viewerDecodeCount == 2)
     }
 }
