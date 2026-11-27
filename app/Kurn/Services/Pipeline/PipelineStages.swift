@@ -105,6 +105,8 @@ protocol TranscriptCorrecting: Sendable {
 struct CloudTranscriptionTransfer: Sendable, Equatable {
     var consented = false
     var policy: LargeTransferPolicy = .wifiOnly
+    /// Meeting coach's formal transcript: Taiwan Mandarin prompt, output in Traditional Chinese.
+    var taiwanMandarin = false
 }
 
 /// One engine choice per pipeline stage. Built from `AppSettings` and passed to
@@ -132,10 +134,13 @@ struct PipelineConfiguration: Sendable, Equatable {
     var transcriptionModel: String = "whisper-1"
     var cloudTranscriptionConsented = false
     var largeTransferPolicy: LargeTransferPolicy = .wifiOnly
+    /// Set only by the meeting coach's post-meeting run (`MeetingCoachFollowUp`).
+    var taiwanMandarinTranscript = false
     var cloudTransfer: CloudTranscriptionTransfer {
         CloudTranscriptionTransfer(
             consented: cloudTranscriptionConsented,
-            policy: largeTransferPolicy
+            policy: largeTransferPolicy,
+            taiwanMandarin: taiwanMandarinTranscript
         )
     }
     /// Exact number of speakers to pin on the FluidAudio diarizer (`0` = let it

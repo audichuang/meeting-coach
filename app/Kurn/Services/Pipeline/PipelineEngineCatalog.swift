@@ -38,6 +38,8 @@ struct EngineTranscriptionRequest: Sendable {
     /// `0...1` fraction plus chunk position for engines that chunk.
     var onProgress: @Sendable (Double, ChunkProgress?) -> Void
     var fluidAudioASRModel: FluidAudioASRModel = .default
+    /// See `CloudTranscriptionTransfer.taiwanMandarin`; only the `.whisperAPI` engine reads it.
+    var taiwanMandarin = false
 }
 
 /// A transcription engine as the orchestrator sees it: single-pass engines
@@ -180,6 +182,7 @@ extension WhisperTranscriber: PipelineTranscribing {
             provider: request.provider,
             model: request.model,
             transferPolicy: request.transferPolicy,
+            taiwanMandarin: request.taiwanMandarin,
             cutPoints: request.cutPoints,
             resume: request.resume,
             onChunkCompleted: request.onChunkCompleted,

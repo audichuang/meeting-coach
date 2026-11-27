@@ -30,13 +30,7 @@ struct MeetingCoachConfiguration: Sendable {
     @MainActor
     static func resolve(settings: AppSettings) -> MeetingCoachConfiguration? {
         guard settings.meetingCoachEnabled else { return nil }
-        var key = KeychainManager.shared.value(for: AIProvider.openAI.keychainAccount) ?? ""
-        #if DEBUG
-        // Development only: lets a simulator run use a key passed via SIMCTL_CHILD_.
-        if let debugKey = ProcessInfo.processInfo.environment["KURN_DEBUG_OPENAI_API_KEY"], !debugKey.isEmpty {
-            key = debugKey
-        }
-        #endif
+        let key = ProviderFactory.storedAPIKey(for: .openAI)
         guard !key.isEmpty else { return nil }
         let name = settings.coachUserName.trimmingCharacters(in: .whitespacesAndNewlines)
         return MeetingCoachConfiguration(userName: name, budgetUSD: settings.coachBudgetUSD, apiKey: key,
@@ -79,7 +73,7 @@ final class MeetingCoachSession {
     @ObservationIgnored private let modelContext: ModelContext
     @ObservationIgnored private let elapsed: @MainActor () -> TimeInterval
     @ObservationIgnored private var record: CoachRecord?
-    @ObservationIgnored private var recordingID: UUID?
+    @ObservationIgnored private(set) var recordingID: UUID?
     @ObservationIgnored private var triggerLog: [CoachTriggerRecord] = []
     @ObservationIgnored private var pipeline: Task<Void, Never>?
     @ObservationIgnored private var budgetTimer: Task<Void, Never>?

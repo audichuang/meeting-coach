@@ -20,13 +20,19 @@ actor WhisperTranscriber: Transcribing {
     /// Resolves the cloud speech-to-text client for a run. Production resolves
     /// through `ProviderFactory` (key, base URL, transfer policy); tests inject
     /// a scripted provider.
-    typealias ProviderResolver = @Sendable (AIProvider, String, LargeTransferPolicy) throws -> any TranscriptionProvider
+    /// The last argument is the transcription prompt, `nil` for none.
+    typealias ProviderResolver = @Sendable (AIProvider, String, LargeTransferPolicy, String?) throws -> any TranscriptionProvider
+
+    /// Shorter chunks for the Taiwan Mandarin formal transcript: dense Chinese speech
+    /// stays well inside what one request returned in testing (about 8 minutes).
+    static let taiwanMandarinChunkDuration: TimeInterval = 300
+    static let taiwanMandarinPrompt = "台灣華語的會議，夾雜英文術語。請用繁體中文輸出。"
 
     private let chunker = AudioChunker()
     private let resolveProvider: ProviderResolver
 
     init(resolveProvider: @escaping ProviderResolver = {
-        try ProviderFactory.whisperProvider(for: $0, model: $1, transferPolicy: $2)
+        try ProviderFactory.whisperProvider(for: $0, model: $1, transferPolicy: $2, prompt: $3)
     }) {
         self.resolveProvider = resolveProvider
     }
@@ -52,13 +58,16 @@ actor WhisperTranscriber: Transcribing {
         provider transcriptionProvider: AIProvider,
         model: String,
         transferPolicy: LargeTransferPolicy = .wifiOnly,
+        taiwanMandarin: Bool = false,
         cutPoints: [TimeInterval] = [],
         resume: ChunkedTranscriptionRunner.Progress? = nil,
         onChunkCompleted: (@Sendable (ChunkedTranscriptionRunner.Progress) async throws -> Void)? = nil,
         onProgress: @escaping @Sendable (Double, Int, Int) -> Void = { _, _, _ in }
     ) async throws -> RawTranscript {
-        let provider = try resolveProvider(transcriptionProvider, model, transferPolicy)
+        let provider = try resolveProvider(transcriptionProvider, model, transferPolicy,
+                                           taiwanMandarin ? Self.taiwanMandarinPrompt : nil)
         let vendor = transcriptionProvider.displayName
+        let chunker = taiwanMandarin ? AudioChunker(chunkDuration: Self.taiwanMandarinChunkDuration) : self.chunker
         let chunks = try await chunker.chunk(url: url, cutPoints: cutPoints)
         let total = chunks.count
         let planDigest = PipelineDigest.sha256Hex(of: chunks.map(\.offset))
@@ -76,13 +85,15 @@ actor WhisperTranscriber: Transcribing {
                 defer { progressPulse.cancel() }
                 let chunkStart = Date()
                 do {
-                    let result = try await Self.withChunkTimeout(seconds: LLMHTTP.transcriptionTimeout) {
+                    var result = try await Self.withChunkTimeout(seconds: LLMHTTP.transcriptionTimeout) {
                         try await provider.transcribe(
                             audioData: data,
                             fileName: chunk.url.lastPathComponent,
                             language: language
                         )
                     }
+                    // Converted before the checkpoint, so a resumed run never mixes scripts.
+                    if taiwanMandarin { result = Self.traditional(result) }
                     AppLog.transcription.atNotice.notice("whisper: chunk \(index + 1, privacy: .public)/\(total, privacy: .public) done in \(Date().timeIntervalSince(chunkStart), privacy: .public)s, spans=\(result.spans.count, privacy: .public) lang=\(result.language, privacy: .public)")
                     guard Self.hasOnlyUntimedSpans(result) else { return result }
                     let duration = (try? await AVURLAsset(url: chunk.url).load(.duration)).map(CMTimeGetSeconds) ?? 0
@@ -97,6 +108,13 @@ actor WhisperTranscriber: Transcribing {
                 onProgress(progress, currentChunk, total)
             }
         )
+    }
+
+    /// The model answers in Simplified even when asked for Traditional.
+    static func traditional(_ transcript: RawTranscript) -> RawTranscript {
+        var result = transcript
+        for index in result.spans.indices { result.spans[index].text = ChineseText.traditional(result.spans[index].text) }
+        return result
     }
 
     /// Whether every span came back without a time range — what a model that

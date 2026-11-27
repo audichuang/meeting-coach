@@ -40,7 +40,7 @@ struct WhisperTranscriberRoundTripTests {
     private struct UploadFailed: Error {}
 
     @Test func thePlainEntryPointRequiresConsent() async {
-        let transcriber = WhisperTranscriber(resolveProvider: { _, _, _ in
+        let transcriber = WhisperTranscriber(resolveProvider: { _, _, _, _ in
             ScriptedTranscriptionProvider { _ in RawTranscript(spans: [], language: "") }
         })
         do {
@@ -62,7 +62,7 @@ struct WhisperTranscriberRoundTripTests {
         let checkpoints = Recorded<Int>()
         let fractions = Recorded<Double>()
         let resolved = Recorded<String>()
-        let transcriber = WhisperTranscriber(resolveProvider: { vendor, model, _ in
+        let transcriber = WhisperTranscriber(resolveProvider: { vendor, model, _, _ in
             resolved.append("\(vendor.id)/\(model)")
             return provider
         })
@@ -95,7 +95,7 @@ struct WhisperTranscriberRoundTripTests {
                 language: "en"
             )
         }
-        let transcript = try await WhisperTranscriber(resolveProvider: { _, _, _ in provider }).transcribeResumable(
+        let transcript = try await WhisperTranscriber(resolveProvider: { _, _, _, _ in provider }).transcribeResumable(
             url: url, language: .english, provider: .openAI, model: "gpt-4o-transcribe"
         )
         #expect(transcript.spans.map(\.text) == ["one", "two"])
@@ -107,12 +107,45 @@ struct WhisperTranscriberRoundTripTests {
         #expect(second.end > 1.5)
     }
 
+    @Test func taiwanMandarinRunsSendThePromptCutFiveMinuteChunksAndConvertToTraditional() async throws {
+        // No silence in a tone, so the chooser leaves the 300 s boundary where it is.
+        let url = try AudioFixtures.m4aTone(seconds: 420, sampleRate: 16_000, bitRate: nil)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let provider = ScriptedTranscriptionProvider { index in
+            RawTranscript(spans: [TranscribedSpan(text: index == 0 ? "这个数据对吗" : "开会结束", start: 0, end: 0)], language: "zh")
+        }
+        let prompts = Recorded<String>()
+        let transcript = try await WhisperTranscriber(resolveProvider: { _, _, _, prompt in
+            prompts.append(prompt ?? "-")
+            return provider
+        }).transcribeResumable(url: url, language: .chinese, provider: .openAI, model: "gpt-transcribe", taiwanMandarin: true)
+
+        #expect(prompts.values == [WhisperTranscriber.taiwanMandarinPrompt])
+        #expect(provider.uploads.count == 2)
+        #expect(provider.uploads.allSatisfy { $0.language == .chinese })
+        #expect(transcript.spans.map(\.text) == ["這個數據對嗎", "開會結束"])
+        let second = try #require(transcript.spans.last)
+        #expect(abs(second.start - 300) < 1)
+        #expect(abs((transcript.spans.first?.end ?? 0) - second.start) < 1)
+        #expect(second.end > 419)
+    }
+
+    @Test func formalTranscriptConfigurationPinsOpenAIAndKeepsTheUsersOtherStages() {
+        var base = PipelineConfiguration()
+        base.diarization = .heuristic
+        let config = MeetingCoachFollowUp.configuration(from: base)
+        #expect(config.transcription == .whisperAPI)
+        #expect(config.transcriptionModel == "gpt-transcribe")
+        #expect(config.cloudTransfer == CloudTranscriptionTransfer(consented: true, policy: base.largeTransferPolicy, taiwanMandarin: true))
+        #expect(config.diarization == .heuristic)
+    }
+
     @Test func aFailedUploadStopsTheRun() async throws {
         let url = try AudioFixtures.m4aTone(seconds: 1, sampleRate: 16_000, bitRate: nil)
         defer { try? FileManager.default.removeItem(at: url) }
         let provider = ScriptedTranscriptionProvider { _ in throw UploadFailed() }
         await #expect(throws: UploadFailed.self) {
-            _ = try await WhisperTranscriber(resolveProvider: { _, _, _ in provider }).transcribeResumable(
+            _ = try await WhisperTranscriber(resolveProvider: { _, _, _, _ in provider }).transcribeResumable(
                 url: url, language: .portuguese, provider: .openAI, model: "whisper-1"
             )
         }
@@ -120,7 +153,7 @@ struct WhisperTranscriberRoundTripTests {
 
     @Test func aProviderThatCannotBeResolvedFailsBeforeAnyUpload() async {
         await #expect(throws: AppError.self) {
-            _ = try await WhisperTranscriber(resolveProvider: { _, _, _ in throw AppError.noAPIKey(provider: "OpenAI") })
+            _ = try await WhisperTranscriber(resolveProvider: { _, _, _, _ in throw AppError.noAPIKey(provider: "OpenAI") })
                 .transcribeResumable(url: AudioFixtures.tempURL(), language: .english, provider: .openAI, model: "whisper-1")
         }
     }

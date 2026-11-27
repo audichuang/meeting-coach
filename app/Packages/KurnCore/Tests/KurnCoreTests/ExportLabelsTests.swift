@@ -19,6 +19,14 @@ struct ExportLabelsTests {
         #expect(ExportLabels.forLanguage("ES").notes == "Notas")
     }
 
+    @Test func traditionalChineseGetsItsOwnLabels() {
+        #expect(ExportLabels.forLanguage("zh-Hant").transcript == "逐字稿")
+        #expect(ExportLabels.forLanguage("zh-Hant-TW").highlights == "重點")
+        #expect(ExportLabels.forLanguage("zh_TW").notes == "筆記")
+        #expect(ExportLabels.forLanguage("zh-Hans").transcript == "转录")
+        #expect(ExportLabels.forLanguage("zh").transcript == "转录")
+    }
+
     @Test func unknownOrMissingLanguagesFallBackToEnglish() {
         #expect(ExportLabels.forLanguage(nil) == .english)
         #expect(ExportLabels.forLanguage("") == .english)

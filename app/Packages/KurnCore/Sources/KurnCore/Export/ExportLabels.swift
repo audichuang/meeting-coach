@@ -60,8 +60,18 @@ public struct ExportLabels: Equatable, Sendable {
     /// English for anything without a table entry.
     public static func forLanguage(_ tag: String?) -> ExportLabels {
         guard let tag, let base = tag.split(whereSeparator: { $0 == "-" || $0 == "_" }).first else { return .english }
+        // Traditional Chinese has its own glyphs and words (逐字稿, not 转录).
+        let subtags = tag.lowercased().split(whereSeparator: { $0 == "-" || $0 == "_" }).dropFirst()
+        if base.lowercased() == "zh", subtags.contains(where: { ["hant", "tw", "hk", "mo"].contains($0) }) {
+            return .traditionalChinese
+        }
         return table[base.lowercased()] ?? .english
     }
+
+    public static let traditionalChinese = ExportLabels(
+        languageCode: "zh-Hant", notes: "筆記", summary: "摘要", highlights: "重點",
+        transcript: "逐字稿", duration: "時長", segmentFormat: "第 %d 段"
+    )
 
     /// Languages with a table entry: the app's seven localizations plus the
     /// most common other meeting languages.

@@ -79,7 +79,7 @@ struct PipelineEngineCatalogLiveTests {
         let url = try AudioFixtures.m4aTone(seconds: 1, sampleRate: 16_000, bitRate: nil)
         defer { try? FileManager.default.removeItem(at: url) }
         let models = Recorded<String>()
-        let transcriber = WhisperTranscriber(resolveProvider: { provider, model, _ in
+        let transcriber = WhisperTranscriber(resolveProvider: { provider, model, _, _ in
             models.append(model)
             return EchoTranscriptionProvider(provider: provider)
         })

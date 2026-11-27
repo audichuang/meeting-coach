@@ -206,7 +206,8 @@ extension TranscriptionService {
             onProgress: { progress, chunks in
                 onPhase(.transcribing(progress: progress, chunks: chunks))
             },
-            fluidAudioASRModel: fluidAudioASRModel
+            fluidAudioASRModel: fluidAudioASRModel,
+            taiwanMandarin: cloudTransfer.taiwanMandarin
         ))
         try await ResourceGuard.requireTranscriptionHeadroom()
         // The engine either produced spans or threw; no spans at all from a

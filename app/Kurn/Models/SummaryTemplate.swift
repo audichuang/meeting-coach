@@ -225,5 +225,22 @@ struct SummaryTemplate: Codable, Sendable, Identifiable, Hashable {
         isBuiltIn: true
     )
 
+    /// Meeting coach's post-meeting summary (`MeetingCoachFollowUp`). Not in
+    /// `defaultTemplates`: it is chosen by the follow-up, not the picker.
+    static let meetingCoach = SummaryTemplate(
+        id: "meeting_coach",
+        name: "Meeting Coach Recap",
+        iconName: "person.2.wave.2",
+        instructions: """
+        用台灣繁體中文與台灣用語撰寫會後摘要，依序分成四段：共識、分歧、待辦、未解問題。
+        - 共識：只列與會者明確同意的事；沒有人明確同意的，不放這裡。
+        - 分歧：仍有不同意見的議題，簡述各方立場，用逐字稿裡的講者標籤稱呼，不推測身分。
+        - 待辦：用待辦核取方塊；負責人或期限有講到才寫，沒講到就不要補。
+        - 未解問題：會中提出、但沒有答案或沒有結論的問題。
+        不要把提議、討論中或尚未決定的事寫成決議；拿不準的放進分歧或未解問題。某段沒有內容就寫「無」。
+        """,
+        isBuiltIn: true
+    )
+
     static let defaultTemplates: [SummaryTemplate] = [.general, .standup, .interview, .outline]
 }

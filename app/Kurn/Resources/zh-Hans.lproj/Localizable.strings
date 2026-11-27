@@ -1075,3 +1075,5 @@
 "settings.meeting_coach_footer" = "录音时会把声音送到 OpenAI 产生即时逐字稿与建议卡，使用「提供者」里的 OpenAI 密钥；没有密钥就不会送出。";
 "settings.meeting_coach_cooldown" = "At least %d s between automatic cards";
 "settings.meeting_coach_max_cards" = "At most %d automatic cards per 10 minutes";
+"template.meeting_coach.name" = "Meeting Coach Recap";
+"template.meeting_coach.desc" = "Agreements, disagreements, action items and open questions, in Traditional Chinese.";

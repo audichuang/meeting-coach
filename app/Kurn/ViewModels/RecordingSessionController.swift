@@ -35,6 +35,8 @@ final class RecordingSessionController {
     private let modelContext: ModelContext
     private let makeViewModel: @MainActor (Meeting, ModelContext) -> RecorderViewModel
     private let prepare: @MainActor (RecorderViewModel) async -> Void
+    /// Runs the post-meeting work for a saved meeting-coach recording.
+    private let onCoachRecordingSaved: (@MainActor (Meeting, UUID) -> Void)?
     @ObservationIgnored private var startTask: Task<Void, Never>?
 
     /// - Parameters:
@@ -47,9 +49,11 @@ final class RecordingSessionController {
         modelContext: ModelContext,
         settings: AppSettings,
         makeViewModel: (@MainActor (Meeting, ModelContext) -> RecorderViewModel)? = nil,
-        prepare: @escaping @MainActor (RecorderViewModel) async -> Void = { await $0.prepareToRecord() }
+        prepare: @escaping @MainActor (RecorderViewModel) async -> Void = { await $0.prepareToRecord() },
+        onCoachRecordingSaved: (@MainActor (Meeting, UUID) -> Void)? = nil
     ) {
         self.modelContext = modelContext
+        self.onCoachRecordingSaved = onCoachRecordingSaved
         if let makeViewModel {
             self.makeViewModel = makeViewModel
         } else {
@@ -144,6 +148,9 @@ final class RecordingSessionController {
     /// `RecorderViewModel.didSaveRecording`).
     func finishIfSaved() {
         guard viewModel?.didSaveRecording == true else { return }
+        if let meeting, let recordingID = viewModel?.coach?.recordingID {
+            onCoachRecordingSaved?(meeting, recordingID)
+        }
         end()
     }
 

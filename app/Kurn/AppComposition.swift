@@ -78,14 +78,19 @@ final class AppComposition {
             wikiCoordinator: wiki,
             reviewPrompt: reviewPrompt
         )
+        let summaries = SummaryViewModel(modelContext: context, appSettings: settings, reviewPrompt: reviewPrompt)
+        let coachFollowUp = MeetingCoachFollowUp(transcription: transcription, summaries: summaries, settings: settings)
         return AppEnvironment(
             modelContainer: container,
             transcription: transcription,
-            summaries: SummaryViewModel(modelContext: context, appSettings: settings, reviewPrompt: reviewPrompt),
+            summaries: summaries,
             playbackEnhancement: PlaybackEnhancementViewModel(modelContext: context),
             semanticIndex: semanticIndex,
             wiki: wiki,
-            recordingSession: RecordingSessionController(modelContext: context, settings: settings),
+            recordingSession: RecordingSessionController(
+                modelContext: context, settings: settings,
+                onCoachRecordingSaved: { coachFollowUp.start(meeting: $0, recordingID: $1) }
+            ),
             reviewPrompt: reviewPrompt
         )
     }

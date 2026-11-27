@@ -209,22 +209,26 @@ final class TranscriptionCoordinator {
     /// view model. Prefer this over calling `transcribe` directly: it keeps a
     /// task handle so the run can be paused when the background window expires
     /// or the user cancels.
+    /// Returns the run's task (`nil` when nothing was started), for a caller that chains work after it.
+    @discardableResult
     func startTranscription(
         _ recording: Recording,
         language: MeetingLanguage,
         config: PipelineConfiguration
-    ) {
-        guard recording.isReadyForConsumption else { return }
+    ) -> Task<Void, Never>? {
+        guard recording.isReadyForConsumption else { return nil }
         let recordingID = recording.id
         guard transcriptionTasks[recordingID] == nil,
               !transcribingIDs.contains(recordingID) else {
             AppLog.transcription.atInfo.info("VM: start ignored, already in flight id=\(recordingID, privacy: .public)")
-            return
+            return nil
         }
-        transcriptionTasks[recordingID] = Task { [weak self] in
+        let task = Task { [weak self] in
             await self?.transcribe(recording, language: language, config: config)
             self?.transcriptionTasks[recordingID] = nil
         }
+        transcriptionTasks[recordingID] = task
+        return task
     }
 
     /// Cancel an in-flight transcription started via `startTranscription`.

@@ -46,7 +46,7 @@ enum ProviderFactory {
         guard LLMHTTP.isValidBaseURL(provider.baseURLString) else {
             throw AppError.invalidProviderURL
         }
-        let key = KeychainManager.shared.value(for: provider.keychainAccount) ?? ""
+        let key = storedAPIKey(for: provider)
         do {
             try LLMHTTP.requireAPIKey(key, provider: provider)
         } catch {
@@ -79,15 +79,29 @@ enum ProviderFactory {
     /// route, or ElevenLabs via its own Scribe route) can serve this, resolved
     /// independently of the summary provider. Throws `.noAPIKey` when the
     /// chosen provider has no stored key.
+    /// The provider's key from the Keychain. DEBUG builds also accept
+    /// `KURN_DEBUG_OPENAI_API_KEY` for OpenAI, because an unsigned simulator
+    /// build cannot reach the Keychain.
+    static func storedAPIKey(for provider: AIProvider) -> String {
+        #if DEBUG
+        if provider.id == AIProvider.openAI.id,
+           let debugKey = ProcessInfo.processInfo.environment["KURN_DEBUG_OPENAI_API_KEY"], !debugKey.isEmpty {
+            return debugKey
+        }
+        #endif
+        return KeychainManager.shared.value(for: provider.keychainAccount) ?? ""
+    }
+
     static func whisperProvider(
         for provider: AIProvider,
         model: String,
-        transferPolicy: LargeTransferPolicy = .wifiOnly
+        transferPolicy: LargeTransferPolicy = .wifiOnly,
+        prompt: String? = nil
     ) throws -> any TranscriptionProvider {
         guard LLMHTTP.isValidBaseURL(provider.baseURLString) else {
             throw AppError.invalidProviderURL
         }
-        let key = KeychainManager.shared.value(for: provider.keychainAccount) ?? ""
+        let key = storedAPIKey(for: provider)
         do {
             try LLMHTTP.requireAPIKey(key, provider: provider)
         } catch {
@@ -109,6 +123,7 @@ enum ProviderFactory {
                 provider: provider,
                 apiKey: key,
                 transcriptionModel: resolvedModel,
+                transcriptionPrompt: prompt,
                 largeTransferPolicy: transferPolicy
             )
         case .anthropic, .googleGemini, .appleOnDevice:

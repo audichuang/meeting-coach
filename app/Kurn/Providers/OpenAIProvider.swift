@@ -19,6 +19,8 @@ struct OpenAIProvider: LLMProvider, TranscriptionProvider {
     /// Whisper model requested on the transcription route. Configurable because
     /// the model differs per vendor (OpenAI `whisper-1`, Groq `whisper-large-v3`).
     private let transcriptionModel: String
+    /// Optional `prompt` field steering vocabulary and script (meeting coach).
+    private let transcriptionPrompt: String?
     private let largeTransferPolicy: LargeTransferPolicy
 
     init(
@@ -26,6 +28,7 @@ struct OpenAIProvider: LLMProvider, TranscriptionProvider {
         apiKey: String,
         model: String = "gpt-5.4",
         transcriptionModel: String = "whisper-1",
+        transcriptionPrompt: String? = nil,
         session: URLSession = .shared,
         largeTransferPolicy: LargeTransferPolicy = .wifiOnly
     ) {
@@ -33,6 +36,7 @@ struct OpenAIProvider: LLMProvider, TranscriptionProvider {
         self.apiKey = apiKey
         self.chatModel = model
         self.transcriptionModel = transcriptionModel
+        self.transcriptionPrompt = transcriptionPrompt
         self.session = session
         self.largeTransferPolicy = largeTransferPolicy
     }
@@ -138,6 +142,9 @@ struct OpenAIProvider: LLMProvider, TranscriptionProvider {
         ]
         if let code = language.whisperCode {
             fields.append(("language", code))
+        }
+        if let transcriptionPrompt {
+            fields.append(("prompt", transcriptionPrompt))
         }
         if wordTimestamps && supportsVerboseJSON {
             // A repeated field name is how a multipart array is expressed.
