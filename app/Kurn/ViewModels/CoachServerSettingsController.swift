@@ -47,6 +47,8 @@ final class CoachServerSettingsController {
     var serverURLDraft = ""
     var inviteDraft = ""
     private(set) var usage: CoachUsageStatus = .unknown
+    /// Keychain read/write failure surfaced to `RecordingSettingsView`'s `.errorAlert`.
+    var error: AppError?
     @ObservationIgnored private(set) var committedServerURL = ""
     @ObservationIgnored private(set) var committedInvite = ""
     @ObservationIgnored private(set) var usageTask: Task<Void, Never>?
@@ -72,12 +74,17 @@ final class CoachServerSettingsController {
     func load(settings: AppSettings) {
         committedServerURL = settings.coachServerURL
         serverURLDraft = settings.coachServerURL
-        if case .found(let value) = settings.credentials.readKey(for: .meetingCoach) {
+        switch settings.credentials.readKey(for: .meetingCoach) {
+        case .found(let value):
             inviteDraft = value
             committedInvite = value
-        } else {
+        case .absent:
             inviteDraft = ""
             committedInvite = ""
+        case .failed(let reason):
+            inviteDraft = ""
+            committedInvite = ""
+            error = .keychainAccessFailed(reason.rawValue)
         }
         refreshUsage()
     }
@@ -115,9 +122,16 @@ final class CoachServerSettingsController {
         let next = inviteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let changed = next != committedInvite
         inviteDraft = next
-        committedInvite = next
         if changed {
-            settings.credentials.saveKey(next, for: .meetingCoach)
+            let outcome = settings.credentials.saveKey(next, for: .meetingCoach)
+            guard case .success = outcome else {
+                if case .failed(let reason) = outcome {
+                    error = .keychainAccessFailed(reason.rawValue)
+                }
+                return
+            }
+            committedInvite = next
+            error = nil
         }
         guard !hasUncommittedServerURL else { return }
         if changed || forceReload {
@@ -131,8 +145,13 @@ final class CoachServerSettingsController {
         let nextInvite = inviteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         if nextInvite != committedInvite {
             inviteDraft = nextInvite
-            committedInvite = nextInvite
-            settings.credentials.saveKey(nextInvite, for: .meetingCoach)
+            switch settings.credentials.saveKey(nextInvite, for: .meetingCoach) {
+            case .success:
+                committedInvite = nextInvite
+                error = nil
+            case .failed(let reason):
+                error = .keychainAccessFailed(reason.rawValue)
+            }
         }
     }
 

@@ -57,6 +57,7 @@ struct RecordingSettingsView: View {
         }
         .modelDownloadAlerts(downloads, settings: settings) { showingNetworkSettings = true }
         .errorAlert($authError)
+        .errorAlert($coachServer.error)
         .navigationDestination(isPresented: $showingNetworkSettings) {
             TranscriptionSettingsView()
         }
