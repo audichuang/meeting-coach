@@ -1598,8 +1598,28 @@ keyed by `recordingID` (cascade only through `Meeting`), so
 - Spend: `CoachPricing` is the single price table; `CoachBudgetGuard` warns
   at the per-meeting threshold and stops AI processing (not recording) after
   5 minutes without "Continue".
+- Session expiry: about 55 minutes in (or 5 minutes before the session's own
+  `expires_at`), the transcriber opens a second session at the next commit
+  boundary and sends all later audio there; the old socket stays open only
+  until its committed windows come back (30 s at most). Connections overlap,
+  audio does not, so the switch leaves no gap and no duplicate text.
+- Throttle: the cooldown and the per-10-minute limit come from Settings
+  (`coachCooldownSeconds`, `coachMaxCardsPerWindow`); the opening quiet stays
+  120 s, and every card's `policy` string records the values it ran under.
+- After the meeting, `MeetingCoachFollowUp` (ViewModels/, because it drives
+  `SummaryViewModel`) transcribes the whole recording again through the
+  normal pipeline with `gpt-transcribe` (`taiwanMandarinTranscript`: prompt,
+  300 s chunks, output converted to Traditional before each chunk's
+  checkpoint) into the recording's `Transcript` — the formal transcript that
+  summary, detail and export read — and then writes the summary with
+  `gpt-6.1-terra` and `SummaryTemplate.meetingCoach` (agreements,
+  disagreements, action items, open questions). The live transcript stays in
+  `CoachRecord`. Cloud consent is implied for that run because the coach
+  already streamed the audio to OpenAI.
 - DEBUG: `KURN_DEBUG_CAPTURE_FILE` plays a file through
-  `DebugFileCaptureEngine` at 1x; `KURN_DEBUG_OPENAI_API_KEY` supplies a key.
+  `DebugFileCaptureEngine` at 1x; `KURN_DEBUG_OPENAI_API_KEY` supplies the
+  OpenAI key (`ProviderFactory.storedAPIKey`), because an unsigned simulator
+  build cannot reach the Keychain.
 
 ### Providers (`Providers/`)
 
@@ -2550,9 +2570,12 @@ enforced by lint and by a CI audit test, not just convention:
   a `LocalizedError` whose messages come from `NSLocalizedString`. New error cases
   must add a matching localization key.
 - **Localization:** user-facing strings use `NSLocalizedString`; the app ships
-  **seven languages** — English, Brazilian Portuguese, Spanish, French, Italian,
-  German, and Simplified Chinese (`Kurn/Resources/{en,pt-BR,es,fr,it,de,zh-Hans}.lproj/`).
-  Every new user-facing string must be added as a key to **all seven**
+  **nine languages** — English, Brazilian Portuguese, Spanish, French, Italian,
+  German, Simplified Chinese, Traditional Chinese (Taiwan wording) and Japanese
+  (`Kurn/Resources/{en,pt-BR,es,fr,it,de,zh-Hans,zh-Hant,ja}.lproj/`). The
+  last two were added by this fork, which translates its own new strings only
+  into those two and leaves English in the other locales.
+  Every new user-facing string must be added as a key to **all nine**
   `Localizable.strings` files in the same change — none skipped. `displayName` on
   enums is the localization seam. This is **enforced by CI, not by convention**:
   the "Check localization files" step in `.github/workflows/swift.yml` fails the
