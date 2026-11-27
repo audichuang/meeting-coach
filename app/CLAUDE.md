@@ -1574,7 +1574,7 @@ is not a durable word-timing transcript.
 ### Meeting coach (`Application/MeetingCoachSession.swift`)
 
 A fork feature: while recording, a cloud live transcript plus suggestion
-cards. When `AppSettings.meetingCoachEnabled` and an OpenAI key is stored
+cards. When `AppSettings.meetingCoachEnabled` and a backend is configured
 (`MeetingCoachConfiguration.resolve`), `RecorderViewModel` gives
 `LiveTranscriptionService` an `OpenAILiveTranscriber` instead of a FluidAudio
 engine, so the capture, sink and audio-queue path are unchanged. Unlike the
@@ -1616,10 +1616,25 @@ keyed by `recordingID` (cascade only through `Meeting`), so
   disagreements, action items, open questions). The live transcript stays in
   `CoachRecord`. Cloud consent is implied for that run because the coach
   already streamed the audio to OpenAI.
+- Backend (`Providers/CoachBackend.swift`): Release talks only to the
+  project's Worker (`backend/`), with the server URL from Settings and the
+  invite code in the Keychain (`AIProvider.meetingCoach`'s account). Every
+  live (re)connect first fetches a 60 s client secret from
+  `/v1/realtime/session` (the async `SocketFactory`; the connection's outbox
+  queues audio while it opens, so rotation still drops nothing), cards and
+  the summary go to `/v1/responses` (`CoachResponsesClient`,
+  `CoachSummaryProvider`), the formal transcript to
+  `/v1/audio/transcriptions` (`ProviderFactory.whisperProvider` resolves
+  `.meetingCoach` at call time). A 402 (monthly cap) or 401 (invite) stops the
+  AI, not the recording, and says why. The post-meeting run adds its spend to
+  `CoachRecord.costUSD`; the live session only adds its own increments, so
+  either may save first. DEBUG builds without a Worker configured go straight
+  to OpenAI with the stored or `KURN_DEBUG_OPENAI_API_KEY` key.
 - DEBUG: `KURN_DEBUG_CAPTURE_FILE` plays a file through
-  `DebugFileCaptureEngine` at 1x; `KURN_DEBUG_OPENAI_API_KEY` supplies the
-  OpenAI key (`ProviderFactory.storedAPIKey`), because an unsigned simulator
-  build cannot reach the Keychain.
+  `DebugFileCaptureEngine` at 1x; `KURN_DEBUG_OPENAI_API_KEY`,
+  `KURN_DEBUG_COACH_SERVER_URL` and `KURN_DEBUG_COACH_INVITE` stand in for
+  Keychain and Settings values, because an unsigned simulator build cannot
+  reach the Keychain.
 
 ### Providers (`Providers/`)
 
