@@ -229,9 +229,8 @@ final class LiveSpeakerDiarizationService {
                 } catch is CancellationError {
                     return false
                 } catch {
-                    AppLog.transcription.atNotice.notice(
-                        "LiveSpeakerDiarizationService: chunk failed code=\(error.publicLogCode, privacy: .public)"
-                    )
+                    // The engine may have consumed part of the failed audio, so its clock is unknown.
+                    return await giveUp(error.publicLogCode)
                 }
             }
             return false

@@ -96,17 +96,22 @@ private actor TestGate {
 /// Emits one finalized span per non-silent chunk, timed by the samples it has been fed
 /// (like Sortformer's own frame clock). The chunk's first sample encodes the slot: 0.1 -> 0, 0.2 -> 1.
 private actor ClockStubDiarizerEngine: LiveSpeakerDiarizerEngine {
+    struct ProcessFailure: Error {}
+
     private let firstProcessGate: TestGate?
+    private let failingCall: Int?
     private var fedSamples = 0
     private var didGate = false
     private(set) var processedSampleCounts: [Int] = []
 
-    init(firstProcessGate: TestGate? = nil) {
+    init(firstProcessGate: TestGate? = nil, failingCall: Int? = nil) {
         self.firstProcessGate = firstProcessGate
+        self.failingCall = failingCall
     }
 
     func process(samples: [Float], sampleRate: Double) async throws -> LiveDiarizerUpdate? {
         processedSampleCounts.append(samples.count)
+        if processedSampleCounts.count == failingCall { throw ProcessFailure() }
         if let firstProcessGate, !didGate {
             didGate = true
             await firstProcessGate.wait()
@@ -269,6 +274,25 @@ struct MeetingCoachSelfMarkTests {
         #expect(service.dominantSpeaker(from: 35, to: 52) == nil)
         await service.stop()
         #expect(service.dominantSpeaker(from: 0, to: 1) == "A")
+    }
+
+    @Test func liveDiarizerGivesUpAfterAnEngineErrorInsteadOfShiftingTheClock() async throws {
+        let stub = ClockStubDiarizerEngine(failingCall: 2)
+        let service = LiveSpeakerDiarizationService(isInstalled: { true }, engineFactory: { stub })
+        await service.start()
+
+        try appendSeconds(1, slotValue: 0.1, to: service)
+        await waitUntil { service.dominantSpeaker(from: 0, to: 1) != nil }
+        try appendSeconds(1, slotValue: 0.2, to: service)
+        await waitUntil { !service.isAvailable }
+        try appendSeconds(1, slotValue: 0.1, to: service)
+
+        #expect(!service.isAvailable)
+        #expect(await stub.processedSampleCounts == [24_000, 24_000])
+        #expect(service.dominantSpeaker(from: 2, to: 3) == nil)
+        await service.stop()
+        #expect(service.dominantSpeaker(from: 0, to: 1) == "A")
+        #expect(service.dominantSpeaker(from: 1, to: 3) == nil)
     }
 
     @Test func stopKeepsOnlyCoverageTheEngineFinalized() async throws {
