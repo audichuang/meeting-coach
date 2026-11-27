@@ -19,7 +19,8 @@ extension MeetingDetailView {
 
     @ViewBuilder
     var paperNotesSection: some View {
-        if !savedPaperNotes.isEmpty {
+        let notes = savedPaperNotes
+        if !notes.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Divider()
                     .padding(.horizontal, 20)
@@ -30,7 +31,7 @@ extension MeetingDetailView {
                     .padding(.top, 4)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 14) {
-                        ForEach(savedPaperNotes) { note in
+                        ForEach(notes) { note in
                             Button {
                                 presentedPaperNote = note
                             } label: {
@@ -50,18 +51,23 @@ extension MeetingDetailView {
 }
 
 /// Compact read-only preview thumbnail of one saved handwritten notes page.
-/// Decodes and renders one bounded thumbnail per note revision rather than
-/// re-decoding or allocating a full-page bitmap on every SwiftUI body pass.
+/// Decodes and renders one bounded thumbnail per note revision inside `.task`
+/// rather than decoding in SwiftUI `body`.
 private struct PaperNotePreviewCard: View {
     let note: PaperNote
     @Environment(\.displayScale) private var displayScale
     @State private var thumbnailCache = PaperNoteThumbnailCache()
+    @State private var thumbnail: UIImage?
+
+    private var renderKey: String {
+        "\(note.id.uuidString)-\(note.updatedAt.timeIntervalSinceReferenceDate)-\(note.strokeCount)-\(note.drawingData.count)-\(Int((displayScale * 100).rounded()))"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack {
                 Color(uiColor: PaperCanvasContainerView.paperBackgroundColor)
-                if let image = thumbnailCache.image(for: note, displayScale: displayScale) {
+                if let image = thumbnail {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
@@ -87,6 +93,9 @@ private struct PaperNotePreviewCard: View {
         }
         .frame(width: PaperNoteThumbnail.cardSize.width, alignment: .leading)
         .contentShape(Rectangle())
+        .task(id: renderKey) {
+            thumbnail = thumbnailCache.image(for: note, displayScale: displayScale)
+        }
     }
 }
 

@@ -480,6 +480,7 @@ final class PaperNoteSession {
         }
 
         target.drawingData = data
+        target.strokeCount = strokeCount
         target.anchors = anchors
         target.updatedAt = timestamp
 

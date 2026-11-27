@@ -34,6 +34,9 @@ final class PaperNote {
     /// the SQLite store so `ModelStoreBackupManager` backup/restore (which
     /// copies only main/WAL/SHM files) never drops externalized blobs.
     var drawingData: Data = Data()
+    /// Persisted stroke count updated on save so list views can filter
+    /// non-empty notes without decoding `drawingData`.
+    var strokeCount: Int = 0
     /// Logical page width in points that `drawingData` was authored against.
     var pageWidth: Double = PaperNote.defaultPageWidth
     /// JSON-encoded `[PaperStrokeAnchor]` carrying recording time offsets.
@@ -46,6 +49,7 @@ final class PaperNote {
         meeting: Meeting? = nil,
         recordingID: UUID? = nil,
         drawingData: Data = Data(),
+        strokeCount: Int? = nil,
         pageWidth: Double = PaperNote.defaultPageWidth,
         anchors: [PaperStrokeAnchor] = [],
         createdAt: Date = Date(),
@@ -55,6 +59,13 @@ final class PaperNote {
         self.meeting = meeting
         self.recordingID = recordingID
         self.drawingData = drawingData
+        if let strokeCount {
+            self.strokeCount = max(0, strokeCount)
+        } else if drawingData.isEmpty {
+            self.strokeCount = 0
+        } else {
+            self.strokeCount = (try? PKDrawing(data: drawingData))?.strokes.count ?? 0
+        }
         self.pageWidth = pageWidth
         self.anchorsData = JSONStorage.encode(anchors)
         self.createdAt = createdAt
@@ -74,7 +85,8 @@ final class PaperNote {
     }
 
     /// True when the stored drawing contains at least one visible stroke.
+    /// Reads the persisted `strokeCount` without decoding `drawingData`.
     var hasStrokes: Bool {
-        !loadDrawing().strokes.isEmpty
+        strokeCount > 0
     }
 }

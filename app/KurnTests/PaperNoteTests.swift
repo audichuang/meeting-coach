@@ -134,6 +134,7 @@ struct PaperNoteTests {
 
         let reloadedDrawing = saved.loadDrawing()
         #expect(reloadedDrawing.strokes.count == 2)
+        #expect(saved.strokeCount == 2)
         #expect(saved.hasStrokes)
         #expect(abs(reloadedDrawing.bounds.minX - expectedDrawing.bounds.minX) < 1)
     }

@@ -157,7 +157,7 @@ struct MeetingDetailView: View {
             sort: \Recording.recordedAt
         )
         _queriedPaperNotes = Query(
-            filter: #Predicate<PaperNote> { $0.meeting?.id == meetingID },
+            filter: #Predicate<PaperNote> { $0.meeting?.id == meetingID && $0.strokeCount > 0 },
             sort: \PaperNote.createdAt
         )
     }
