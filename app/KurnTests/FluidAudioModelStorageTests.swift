@@ -119,6 +119,8 @@ extension FluidAudioModelIntegrationTests {
         #expect(group.listsFoldersSeparately)
         #expect(!ModelStore.ModelGroup.nemotronDiarization.listsFoldersSeparately)
         #expect(ModelStore.ModelGroup.nemotronDiarization.fallbackFolderNames == [FluidAudioDiarizationModel.nemotron3.folderName])
+        #expect(ModelStore.ModelGroup.streamingDiarization.fallbackFolderNames
+            == [FluidAudioDiarizationModelRuntime.sortformerDirectory.lastPathComponent])
         #expect(ModelStore.ModelGroup.onDeviceLanguage.fallbackFolderNames.contains(FluidAudioASRModel.parakeetV3.folderName))
         for model in FluidAudioASRModel.allCases where model != .parakeetV3 {
             #expect(group.displayName(forFolder: model.folderName).contains(model.displayName))

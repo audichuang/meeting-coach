@@ -79,7 +79,8 @@ enum ModelStore {
             case .nemotronDiarization:
                 return [FluidAudioDiarizationModel.nemotron3.folderName]
             case .streamingDiarization:
-                return ["diar-streaming-sortformer-coreml"]
+                // FluidAudio `Repo.sortformer.folderName`; the storage test pins the two together.
+                return ["sortformer"]
             case .whisperCpp:
                 // Deterministic: the app names these folders itself, so unlike
                 // the FluidAudio groups there is nothing to discover.
