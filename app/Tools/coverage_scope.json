@@ -79,7 +79,7 @@
     {
       "pattern": "Kurn/Services/FluidAudioDiarizationModelRuntime+Sortformer.swift",
       "reason": "Adapter: loads the cached Sortformer CoreML model locally and exposes explicit download. Cache completeness checks remain in measured FluidAudioDiarizationModelRuntime.",
-      "maxLines": 66
+      "maxLines": 72
     },
     {
       "pattern": "Kurn/Services/LiveSpeakerDiarizationService+Sortformer.swift",

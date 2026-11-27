@@ -27,8 +27,14 @@ extension FluidAudioDiarizationModelRuntime {
         let modelURL = sortformerDirectory.appendingPathComponent(sortformerBundleName)
         let started = Date()
         let mlConfig = MLModelConfiguration()
+        #if targetEnvironment(simulator)
+        // The simulator's emulated GPU runs the fp16 model but collapses every
+        // voice into slot 0 (measured on a two-voice file); CPU separates them.
+        mlConfig.computeUnits = .cpuOnly
+        #else
         mlConfig.computeUnits = SortformerModels.recommendedComputeUnits(for: config)
         mlConfig.allowLowPrecisionAccumulationOnGPU = true
+        #endif
         let mainModel = try MLModel(contentsOf: modelURL, configuration: mlConfig)
         let models = try SortformerModels(
             config: config,
