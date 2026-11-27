@@ -107,6 +107,11 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         let socket: Task<any RealtimeSocket, Error>
         let outbox: AsyncStream<String>.Continuation
         let tasks: [Task<Void, Never>]
+        /// Recording offset at which audio began queuing into this connection's outbox.
+        let acceptedFrom: TimeInterval
+        /// Flipped once `session.created` arrives; a connection that dies before
+        /// then never transcribed anything and folds into the ongoing outage gap.
+        var isLive = false
 
         func close() {
             outbox.finish()
@@ -208,15 +213,19 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         if !pending.isEmpty { send(pending); pending.removeAll() }
         finished = true
         reconnectTask?.cancel()
-        if let connection, tracker.commit() {
+        if let connection, connection.isLive, tracker.commit() {
             connection.outbox.yield(#"{"type":"input_audio_buffer.commit"}"#)
         }
         // Bounded wait for the last window's final.
-        for _ in 0..<80 where (connection != nil && tracker.hasOutstanding) || draining != nil {
+        for _ in 0..<80 where (connection?.isLive == true && tracker.hasOutstanding) || draining != nil {
             try? await sleep(.milliseconds(100))
         }
         closeDraining(reportGaps: true)
         closeConnection(reportGaps: true)
+        if let start = gapStart, tracker.now > start {
+            onEvent(.gap(LiveTranscriptGap(start: start, end: tracker.now)))
+            gapStart = nil
+        }
         onEvent(.connection(.stopped))
         return finals.joined()
     }
@@ -232,6 +241,7 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         reconnectTask?.cancel()
         closeDraining(reportGaps: false)
         closeConnection(reportGaps: false)
+        gapStart = nil
         pending.removeAll()
         partialCallback = nil
     }
@@ -281,12 +291,7 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
                 }
             }
         }
-        connection = Connection(id: id, socket: opening, outbox: outbox, tasks: [sender, receiver])
-        // From here audio is queued for this connection (or reported as a gap if it fails).
-        if let start = gapStart {
-            onEvent(.gap(LiveTranscriptGap(start: start, end: tracker.now)))
-            gapStart = nil
-        }
+        connection = Connection(id: id, socket: opening, outbox: outbox, tasks: [sender, receiver], acceptedFrom: tracker.now)
         rotateAt = clock() + rotateAfter
     }
 
@@ -352,8 +357,10 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         let message = #"{"type":"input_audio_buffer.append","audio":""# + data.base64EncodedString() + #""}"#
         if case .dropped = connection.outbox.yield(message) {
             // The socket stopped draining: treat it as lost rather than queue forever.
-            tracker.dropped(samples.count)
+            // Mark the connection lost before advancing `tracker.dropped` so `gapStart`
+            // includes this chunk even when `sentInWindow == 0`.
             connectionLost(connection.id, code: "outbox_full")
+            tracker.dropped(samples.count)
             return
         }
         if tracker.sent(samples.count), tracker.commit() {
@@ -396,6 +403,14 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
 
     private func sessionStarted(expiresAt: TimeInterval?) {
         reconnectAttempt = 0
+        connection?.isLive = true
+        if let start = gapStart {
+            let end = connection?.acceptedFrom ?? tracker.now
+            if end > start {
+                onEvent(.gap(LiveTranscriptGap(start: start, end: end)))
+            }
+            gapStart = nil
+        }
         // Honour a shorter server-side expiry; a stale or missing value keeps the default.
         if let expiresAt, expiresAt - Self.expiryLead > clock() {
             rotateAt = min(rotateAt, expiresAt - Self.expiryLead)
@@ -412,7 +427,7 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         guard id == connection?.id else { return }
         AppLog.transcription.atNotice.notice("OpenAILiveTranscriber: connection lost code=\(code, privacy: .public)")
         closeConnection(reportGaps: true)
-        gapStart = tracker.now
+        if gapStart == nil { gapStart = tracker.now }
         scheduleReconnect()
     }
 
@@ -423,6 +438,12 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         deltas.removeAll()
         partialCallback?("")
         let gaps = tracker.abandonPending() + [tracker.abandonWindow()].compactMap { $0 }
+        if !connection.isLive {
+            // Audio queued while this connection was still opening belongs to
+            // the ongoing outage rather than a separate fragment.
+            if reportGaps, gapStart == nil { gapStart = connection.acceptedFrom }
+            return
+        }
         if reportGaps { gaps.forEach { onEvent(.gap($0)) } }
     }
 

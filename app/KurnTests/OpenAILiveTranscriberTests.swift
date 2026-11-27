@@ -48,6 +48,44 @@ private final class EventLog: @unchecked Sendable {
     private var items: [LiveTranscriptEvent] = []
     func add(_ event: LiveTranscriptEvent) { lock.withLock { items.append(event) } }
     var all: [LiveTranscriptEvent] { lock.withLock { items } }
+    var gaps: [LiveTranscriptGap] {
+        all.compactMap { if case .gap(let gap) = $0 { return gap }; return nil }
+    }
+}
+
+/// Deterministic latch so reconnect tests control exactly when backoff or socket opens resolve.
+private actor SignalGate {
+    private var waiters: [CheckedContinuation<Void, Error>] = []
+    private var permits = 0
+
+    func wait() async throws {
+        if permits > 0 {
+            permits -= 1
+            return
+        }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters.append(continuation)
+            }
+        } onCancel: {
+            Task { await self.cancelAll() }
+        }
+    }
+
+    func release() {
+        if let waiter = waiters.first {
+            waiters.removeFirst()
+            waiter.resume()
+        } else {
+            permits += 1
+        }
+    }
+
+    private func cancelAll() {
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume(throwing: CancellationError()) }
+    }
 }
 
 private func waitUntil(_ condition: () -> Bool) async {
@@ -208,5 +246,167 @@ struct OpenAILiveTranscriberTests {
         #expect(!log.all.contains { if case .gap = $0 { return true }; return false })
         #expect(!log.all.contains(.connection(.reconnecting)))
         await engine.cleanup()
+    }
+
+    @Test func repeatedFailedReconnectsReportOneContinuousGapUntilLiveAgain() async throws {
+        let first = FakeRealtimeSocket()
+        let recovered = FakeRealtimeSocket()
+        let backoffGate = SignalGate()
+        let slowFailGate = SignalGate()
+        let attempts = NSLock()
+        nonisolated(unsafe) var attempt = 0
+        let log = EventLog()
+
+        let engine = OpenAILiveTranscriber(
+            makeSocket: {
+                let current = attempts.withLock { attempt += 1; return attempt }
+                switch current {
+                case 1:
+                    return first
+                case 2:
+                    // Fails only after some audio has been queued during opening.
+                    try await slowFailGate.wait()
+                    throw URLError(.notConnectedToInternet)
+                case 3:
+                    // Fails immediately during reconnect.
+                    throw URLError(.timedOut)
+                default:
+                    return recovered
+                }
+            },
+            sleep: { _ in try await backoffGate.wait() },
+            onEvent: { log.add($0) }
+        )
+        try await engine.loadModels()
+        first.serverSends(#"{"type":"session.created","session":{"expires_at":1}}"#)
+        await waitUntil { log.all.contains(.connection(.live)) }
+
+        try await engine.appendAudio(buffer(seconds: 20))
+        try await engine.processBufferedAudio()
+        await waitUntil { first.sent.contains(#"{"type":"input_audio_buffer.commit"}"#) }
+        first.serverSends(#"{"type":"input_audio_buffer.committed","item_id":"i1"}"#)
+        first.serverSends(#"{"type":"conversation.item.input_audio_transcription.completed","item_id":"i1","transcript":"開場"}"#)
+        await waitUntil { log.all.contains { if case .final = $0 { return true }; return false } }
+
+        // 5 s uncommitted on live socket, then it drops.
+        try await engine.appendAudio(buffer(seconds: 5))
+        try await engine.processBufferedAudio()
+        first.drop()
+        await waitUntil { log.gaps.contains(LiveTranscriptGap(start: 20, end: 25)) }
+
+        // Outage segment 1: 3 s dropped during backoff #1 (25..28), then reconnect #1 starts opening.
+        try await engine.appendAudio(buffer(seconds: 3))
+        try await engine.processBufferedAudio()
+        await backoffGate.release()
+        await waitUntil { attempts.withLock { attempt } == 2 }
+
+        // Outage segment 2: 2 s queued while reconnect #1 is opening (28..30), then open fails.
+        try await engine.appendAudio(buffer(seconds: 2))
+        try await engine.processBufferedAudio()
+        await slowFailGate.release()
+        await waitUntil { log.all.filter { $0 == .connection(.reconnecting) }.count >= 3 }
+
+        // Outage segment 3: 4 s dropped during backoff #2 (30..34), reconnect #2 fails immediately.
+        try await engine.appendAudio(buffer(seconds: 4))
+        try await engine.processBufferedAudio()
+        await backoffGate.release()
+        await waitUntil { attempts.withLock { attempt } == 3 }
+        await waitUntil { log.all.filter { $0 == .connection(.reconnecting) }.count >= 5 }
+
+        // Outage segment 4: 6 s dropped during backoff #3 (34..40), reconnect #3 succeeds.
+        try await engine.appendAudio(buffer(seconds: 6))
+        try await engine.processBufferedAudio()
+        await backoffGate.release()
+        await waitUntil { attempts.withLock { attempt } == 4 && !recovered.sent.isEmpty }
+        recovered.serverSends(#"{"type":"session.created","session":{"expires_at":2}}"#)
+        await waitUntil { log.all.filter { $0 == .connection(.live) }.count == 2 }
+
+        // Expect the dead socket's uncommitted tail [20, 25] plus ONE continuous gap [25, 40].
+        #expect(log.gaps == [
+            LiveTranscriptGap(start: 20, end: 25),
+            LiveTranscriptGap(start: 25, end: 40)
+        ])
+
+        // Audio after recovery aligns cleanly at 40..60.
+        try await engine.appendAudio(buffer(seconds: 20))
+        try await engine.processBufferedAudio()
+        await waitUntil { recovered.sent.contains(#"{"type":"input_audio_buffer.commit"}"#) }
+        recovered.serverSends(#"{"type":"input_audio_buffer.committed","item_id":"i2"}"#)
+        recovered.serverSends(#"{"type":"conversation.item.input_audio_transcription.completed","item_id":"i2","transcript":"回來"}"#)
+        let resumed = LiveTranscriptSegment(start: 40, end: 60, text: "回來", arrivedAt: 60)
+        await waitUntil { log.all.contains(.final(resumed)) }
+        #expect(log.all.contains(.final(resumed)))
+        await engine.cleanup()
+    }
+
+    @Test func stoppingWhileDisconnectedReportsGapUntilStop() async throws {
+        let first = FakeRealtimeSocket()
+        let backoffGate = SignalGate()
+        let attempts = NSLock()
+        nonisolated(unsafe) var attempt = 0
+        let log = EventLog()
+
+        let engine = OpenAILiveTranscriber(
+            makeSocket: {
+                let current = attempts.withLock { attempt += 1; return attempt }
+                if current == 1 { return first }
+                throw URLError(.notConnectedToInternet)
+            },
+            sleep: { _ in try await backoffGate.wait() },
+            onEvent: { log.add($0) }
+        )
+        try await engine.loadModels()
+        first.serverSends(#"{"type":"session.created","session":{"expires_at":1}}"#)
+        await waitUntil { log.all.contains(.connection(.live)) }
+
+        try await engine.appendAudio(buffer(seconds: 20))
+        try await engine.processBufferedAudio()
+        await waitUntil { first.sent.contains(#"{"type":"input_audio_buffer.commit"}"#) }
+        first.serverSends(#"{"type":"input_audio_buffer.committed","item_id":"i1"}"#)
+        first.serverSends(#"{"type":"conversation.item.input_audio_transcription.completed","item_id":"i1","transcript":"前半"}"#)
+        await waitUntil { log.all.contains { if case .final = $0 { return true }; return false } }
+
+        // 5 s sent then socket drops -> [20, 25] gap.
+        try await engine.appendAudio(buffer(seconds: 5))
+        try await engine.processBufferedAudio()
+        first.drop()
+        await waitUntil { log.gaps.contains(LiveTranscriptGap(start: 20, end: 25)) }
+
+        // 3 s offline, one failed reconnect, then 7 s more offline, then stop while disconnected.
+        try await engine.appendAudio(buffer(seconds: 3))
+        try await engine.processBufferedAudio()
+        await backoffGate.release()
+        await waitUntil { attempts.withLock { attempt } == 2 }
+        await waitUntil { log.all.filter { $0 == .connection(.reconnecting) }.count >= 3 }
+
+        try await engine.appendAudio(buffer(seconds: 7))
+        try await engine.processBufferedAudio()
+        _ = try await engine.finish()
+
+        #expect(log.gaps == [
+            LiveTranscriptGap(start: 20, end: 25),
+            LiveTranscriptGap(start: 25, end: 35)
+        ])
+        #expect(log.all.last == .connection(.stopped))
+    }
+
+    @Test func stoppingWhileNeverConnectedReportsOneContinuousGapFromStart() async throws {
+        let backoffGate = SignalGate()
+        let log = EventLog()
+
+        let engine = OpenAILiveTranscriber(
+            makeSocket: { throw URLError(.notConnectedToInternet) },
+            sleep: { _ in try await backoffGate.wait() },
+            onEvent: { log.add($0) }
+        )
+        try await engine.loadModels()
+        await waitUntil { log.all.contains(.connection(.reconnecting)) }
+
+        try await engine.appendAudio(buffer(seconds: 12))
+        try await engine.processBufferedAudio()
+        _ = try await engine.finish()
+
+        #expect(log.gaps == [LiveTranscriptGap(start: 0, end: 12)])
+        #expect(log.all.last == .connection(.stopped))
     }
 }
