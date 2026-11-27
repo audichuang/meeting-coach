@@ -65,6 +65,17 @@ final class SummaryViewModel {
     /// `SummaryViewModel+Translation.swift` needs it.
     var translationTask: Task<Void, Never>?
 
+    /// Coach recap requests that arrived while another summary was in flight,
+    /// coalesced by meeting id so each pending meeting runs once with its latest transcripts.
+    private struct QueuedCoachSummary {
+        let meetingID: UUID
+        let provider: AIProvider
+        let model: String
+        let template: SummaryTemplate
+        let resolveProvider: ProviderFactory.LLMResolver?
+    }
+    private var pendingCoachSummaries: [QueuedCoachSummary] = []
+
     /// Not `private` — `SummaryViewModel+Translation.swift` needs these.
     let modelContext: ModelContext
     let summaryService: SummaryService
@@ -102,6 +113,57 @@ final class SummaryViewModel {
         resolveProvider: ProviderFactory.LLMResolver? = nil
     ) {
         guard !isSummarizing else { return }
+        beginSummary(
+            for: meeting,
+            provider: provider,
+            model: model,
+            template: template,
+            resolveProvider: resolveProvider
+        )
+    }
+
+    /// Starts a coach recap immediately when idle, or queues it behind the
+    /// in-flight summary so automatic recaps are never silently dropped.
+    /// Multiple queued requests for the same meeting coalesce into one run
+    /// using the latest transcripts when its turn arrives.
+    func enqueueCoachSummary(
+        for meeting: Meeting,
+        provider: AIProvider,
+        model: String,
+        template: SummaryTemplate,
+        resolveProvider: ProviderFactory.LLMResolver? = nil
+    ) {
+        guard isSummarizing else {
+            beginSummary(
+                for: meeting,
+                provider: provider,
+                model: model,
+                template: template,
+                resolveProvider: resolveProvider
+            )
+            return
+        }
+        let queued = QueuedCoachSummary(
+            meetingID: meeting.id,
+            provider: provider,
+            model: model,
+            template: template,
+            resolveProvider: resolveProvider
+        )
+        if let index = pendingCoachSummaries.firstIndex(where: { $0.meetingID == meeting.id }) {
+            pendingCoachSummaries[index] = queued
+        } else {
+            pendingCoachSummaries.append(queued)
+        }
+    }
+
+    private func beginSummary(
+        for meeting: Meeting,
+        provider: AIProvider,
+        model: String,
+        template: SummaryTemplate,
+        resolveProvider: ProviderFactory.LLMResolver?
+    ) {
         isSummarizing = true
         isCancellingSummary = false
         summaryProgress = nil
@@ -115,6 +177,23 @@ final class SummaryViewModel {
                 template: template,
                 service: resolveProvider.map { SummaryService(resolveProvider: $0) }
             )
+        }
+    }
+
+    private func drainNextCoachSummaryIfNeeded() {
+        while !pendingCoachSummaries.isEmpty {
+            let next = pendingCoachSummaries.removeFirst()
+            let meetingID = next.meetingID
+            let descriptor = FetchDescriptor<Meeting>(predicate: #Predicate { $0.id == meetingID })
+            guard let meeting = try? modelContext.fetch(descriptor).first else { continue }
+            beginSummary(
+                for: meeting,
+                provider: next.provider,
+                model: next.model,
+                template: next.template,
+                resolveProvider: next.resolveProvider
+            )
+            return
         }
     }
 
@@ -148,6 +227,7 @@ final class SummaryViewModel {
             summaryProgress = nil
             resetSummaryDraft()
             summaryTask = nil
+            drainNextCoachSummaryIfNeeded()
         }
 
         guard !transcriptText.isEmpty else {

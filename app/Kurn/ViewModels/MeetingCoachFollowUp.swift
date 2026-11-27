@@ -81,7 +81,7 @@ final class MeetingCoachFollowUp {
                 Task { await recordSpend(meter.totalUSD) }
             }
         }
-        summaries.startSummary(
+        summaries.enqueueCoachSummary(
             for: meeting, provider: .meetingCoach, model: CoachPricing.cardModel, template: .meetingCoach,
             resolveProvider: resolver
         )
