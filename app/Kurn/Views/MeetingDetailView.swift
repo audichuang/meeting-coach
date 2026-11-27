@@ -304,6 +304,12 @@ struct MeetingDetailView: View {
                     metaDot
                     Text(totalDuration.clockDisplay)
                 }
+                // Live transcript, cards and the post-meeting transcript and summary.
+                let coachCost = meeting.coachRecords.reduce(0) { $0 + $1.costUSD }
+                if coachCost > 0 {
+                    metaDot
+                    Text(String(format: NSLocalizedString("detail.coach_cost", comment: "Meeting coach spend for this meeting"), coachCost))
+                }
             }
             .font(Theme.footnote)
             .foregroundStyle(Theme.textSecondary)

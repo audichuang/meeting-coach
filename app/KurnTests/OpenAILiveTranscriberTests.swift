@@ -119,6 +119,37 @@ struct OpenAILiveTranscriberTests {
         await engine.cleanup()
     }
 
+    @Test func audioQueuesWhileTheSocketIsStillOpeningAndAFailedOpenReconnects() async throws {
+        let socket = FakeRealtimeSocket()
+        let attempts = NSLock()
+        nonisolated(unsafe) var count = 0
+        let log = EventLog()
+        let engine = OpenAILiveTranscriber(
+            makeSocket: {
+                // First open fails (e.g. the Worker could not mint a key), the second is slow.
+                let attempt = attempts.withLock { count += 1; return count }
+                if attempt == 1 { throw URLError(.timedOut) }
+                try await Task.sleep(for: .milliseconds(300))
+                return socket
+            },
+            sleep: { _ in },
+            onEvent: { log.add($0) }
+        )
+        try await engine.loadModels()
+        await waitUntil { attempts.withLock { count } == 2 }
+        // Appended while the second open is still in flight.
+        try await engine.appendAudio(buffer(seconds: 20))
+        try await engine.processBufferedAudio()
+        await waitUntil { socket.sent.contains(#"{"type":"input_audio_buffer.commit"}"#) }
+        #expect(socket.sent.first?.contains("session.update") == true)
+        #expect(socket.sent.filter { $0.contains("input_audio_buffer.append") }.count == 200)
+        // Nothing was dropped: the only "gap" is the empty one between the failed open and the retry.
+        socket.serverSends(#"{"type":"session.created","session":{}}"#)
+        await waitUntil { log.all.contains(.connection(.live)) }
+        #expect(!log.all.contains { if case .gap(let gap) = $0 { return gap.end > 0 }; return false })
+        await engine.cleanup()
+    }
+
     @Test func rotatesToAFreshSessionBeforeExpiryWithoutLosingAudio() async throws {
         let sockets = [FakeRealtimeSocket(), FakeRealtimeSocket()]
         let counter = NSLock()
@@ -159,6 +190,8 @@ struct OpenAILiveTranscriberTests {
         old.serverSends(#"{"type":"input_audio_buffer.committed","item_id":"i2"}"#)
         old.serverSends(#"{"type":"conversation.item.input_audio_transcription.completed","item_id":"i1","transcript":"一"}"#)
         old.serverSends(#"{"type":"conversation.item.input_audio_transcription.completed","item_id":"i2","transcript":"二"}"#)
+        // The two sockets are read by separate tasks; let the old session's finals land first so the order is fixed.
+        await waitUntil { log.all.filter { if case .final = $0 { return true }; return false }.count == 2 }
         next.serverSends(#"{"type":"session.created","session":{}}"#)
         next.serverSends(#"{"type":"input_audio_buffer.committed","item_id":"j1"}"#)
         next.serverSends(#"{"type":"conversation.item.input_audio_transcription.completed","item_id":"j1","transcript":"三"}"#)

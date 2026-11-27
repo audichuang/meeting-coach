@@ -5,6 +5,8 @@
 //  The meeting coach's text-model calls (judge, card, wrap-up): one OpenAI
 //  Responses request with a function tool, shaped exactly like the spike's
 //  `llm_cards.call` (reasoning effort low, tool_choice auto or forced).
+//  `CoachSummaryProvider` sends the post-meeting summary the same way, because
+//  the Worker proxies only `/v1/responses` (no streaming, no Chat Completions).
 //
 
 import Foundation
@@ -32,11 +34,10 @@ protocol CoachLLM: Sendable {
 }
 
 struct CoachResponsesClient: CoachLLM {
-    let apiKey: String
+    let backend: CoachBackend
     var session: URLSession = .shared
 
     func call(model: String, instructions: String, input: String, tools: [CoachTool], force: String?) async throws -> CoachCallResult {
-        guard let url = URL(string: "https://api.openai.com/v1/responses") else { throw AppError.invalidProviderURL }
         var body: [String: Any] = [
             "model": model,
             "instructions": instructions,
@@ -48,14 +49,23 @@ struct CoachResponsesClient: CoachLLM {
             }
         ]
         body["tool_choice"] = force.map { ["type": "function", "name": $0] as [String: Any] } ?? "auto"
-        var request = URLRequest(url: url)
+        return try Self.parse(await send(body, timeout: 60))
+    }
+
+    func send(_ body: [String: Any], timeout: TimeInterval) async throws -> Data {
+        var request = URLRequest(url: backend.baseURL.appending(path: "responses"))
         request.httpMethod = "POST"
-        request.timeoutInterval = 60
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = timeout
+        request.setValue("Bearer \(backend.token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, _) = try await LLMHTTP.sendValidated(request, session: session)
-        return try Self.parse(data)
+        return try await LLMHTTP.sendValidated(request, session: session).0
+    }
+
+    static func usage(_ root: [String: Any]) -> CoachTokenUsage {
+        let usage = root["usage"] as? [String: Any] ?? [:]
+        let cached = (usage["input_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int ?? 0
+        return CoachTokenUsage(input: usage["input_tokens"] as? Int ?? 0, cached: cached, output: usage["output_tokens"] as? Int ?? 0)
     }
 
     static func parse(_ data: Data) throws -> CoachCallResult {
@@ -68,10 +78,44 @@ struct CoachResponsesClient: CoachLLM {
                   let args = item["arguments"] as? String else { return nil }
             return CoachToolCall(name: name, arguments: Data(args.utf8))
         }
-        let usage = root["usage"] as? [String: Any] ?? [:]
-        let cached = (usage["input_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int ?? 0
-        return CoachCallResult(calls: calls, usage: CoachTokenUsage(
-            input: usage["input_tokens"] as? Int ?? 0, cached: cached, output: usage["output_tokens"] as? Int ?? 0
-        ))
+        return CoachCallResult(calls: calls, usage: usage(root))
+    }
+}
+
+/// The post-meeting summary over Responses, reporting each call's usage so the
+/// coach's per-meeting spend includes it. Chat is not offered for this provider.
+struct CoachSummaryProvider: LLMProvider {
+    let client: CoachResponsesClient
+    let model: String
+    let onUsage: @Sendable (CoachTokenUsage) -> Void
+
+    var provider: AIProvider { client.backend.provider }
+
+    func summarize(systemPrompt: String, userPrompt: String) async throws -> SummaryResult {
+        let data = try await client.send([
+            "model": model,
+            "instructions": systemPrompt,
+            "input": userPrompt,
+            "max_output_tokens": LLMHTTP.summaryMaxOutputTokens
+        ], timeout: LLMHTTP.summaryTimeout)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AppError.decodingError("invalid response")
+        }
+        onUsage(CoachResponsesClient.usage(root))
+        if root["status"] as? String == "incomplete" { throw AppError.summaryTruncated }
+        return try LLMHTTP.summaryResult(streamedText: Self.outputText(root), truncated: false, emptyMessage: "empty response")
+    }
+
+    func chat(systemPrompt: String, messages: [ChatMessage], options: TextGenerationOptions) async throws -> String {
+        throw AppError.summarizationUnsupported(provider: provider.displayName)
+    }
+
+    static func outputText(_ root: [String: Any]) -> String {
+        let output = root["output"] as? [[String: Any]] ?? []
+        return output.filter { $0["type"] as? String == "message" }
+            .flatMap { $0["content"] as? [[String: Any]] ?? [] }
+            .filter { $0["type"] as? String == "output_text" }
+            .compactMap { $0["text"] as? String }
+            .joined()
     }
 }

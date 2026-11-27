@@ -78,7 +78,12 @@ struct MeetingCoachPanel: View {
     }
 
     private var statusText: String {
-        if coach.isAIStopped { return NSLocalizedString("coach.status.stopped", comment: "AI stopped (budget)") }
+        switch coach.stopReason {
+        case .budget: return NSLocalizedString("coach.status.stopped", comment: "AI stopped (budget)")
+        case .quota: return NSLocalizedString("coach.status.quota", comment: "AI stopped: this month's allowance is used up")
+        case .unauthorized: return NSLocalizedString("coach.status.unauthorized", comment: "AI stopped: invite code rejected")
+        case nil: break
+        }
         switch coach.connection {
         case .live: return NSLocalizedString("coach.status.live", comment: "Live")
         case .connecting: return NSLocalizedString("coach.status.connecting", comment: "Connecting")

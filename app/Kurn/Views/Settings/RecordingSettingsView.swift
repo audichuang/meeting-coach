@@ -23,6 +23,9 @@ struct RecordingSettingsView: View {
     /// re-authentication prompt.
     @State private var authError: AppError?
     private let authorizer = SensitiveActionAuthorizer()
+    /// The invite code being edited; written to the Keychain as it changes.
+    @State private var inviteDraft = ""
+    @State private var coachUsage: CoachUsageStatus = .unknown
 
     var body: some View {
         Form {
@@ -103,6 +106,28 @@ struct RecordingSettingsView: View {
                 NSLocalizedString("settings.meeting_coach", comment: "Meeting coach"),
                 isOn: Binding(get: { settings.meetingCoachEnabled }, set: { settings.meetingCoachEnabled = $0 })
             )
+            LabeledContent(NSLocalizedString("settings.meeting_coach_server", comment: "Server URL for the coach")) {
+                TextField(
+                    "https://",
+                    text: Binding(get: { settings.coachServerURL }, set: { settings.coachServerURL = $0 })
+                )
+                .multilineTextAlignment(.trailing)
+                .keyboardType(.URL)
+                .textContentType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityLabel(NSLocalizedString("settings.meeting_coach_server", comment: "Server URL for the coach"))
+            }
+            LabeledContent(NSLocalizedString("settings.meeting_coach_invite", comment: "Invite code for the coach server")) {
+                SecureField(NSLocalizedString("settings.meeting_coach_invite", comment: "Invite code for the coach server"), text: $inviteDraft)
+                    .multilineTextAlignment(.trailing)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onChange(of: inviteDraft) { _, newValue in settings.credentials.saveKey(newValue, for: .meetingCoach) }
+            }
+            if let usageText = coachUsage.text {
+                LabeledContent(NSLocalizedString("settings.meeting_coach_usage", comment: "This month's coach spend"), value: usageText)
+            }
             LabeledContent(NSLocalizedString("settings.meeting_coach_name", comment: "Your name, used by the coach")) {
                 TextField(
                     NSLocalizedString("settings.meeting_coach_name", comment: "Your name, used by the coach"),
@@ -137,7 +162,16 @@ struct RecordingSettingsView: View {
         } header: {
             Text(NSLocalizedString("settings.meeting_coach", comment: "Meeting coach"))
         } footer: {
-            Text(NSLocalizedString("settings.meeting_coach_footer", comment: "Explains the coach uses the OpenAI key and sends audio"))
+            Text(NSLocalizedString("settings.meeting_coach_footer", comment: "Explains the coach sends audio through the server"))
+        }
+        .onAppear {
+            if case .found(let value) = settings.credentials.readKey(for: .meetingCoach) { inviteDraft = value }
+        }
+        .task(id: "\(settings.coachServerURL)|\(settings.credentials.revision)") {
+            // Debounces typing in either field before asking the server.
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            coachUsage = await CoachUsageStatus.load()
         }
     }
 
@@ -232,6 +266,34 @@ struct RecordingSettingsView: View {
             case .cancelled: break
             case .denied(let error): authError = error
             }
+        }
+    }
+}
+
+/// The Settings row for the Worker's `GET /v1/usage`.
+enum CoachUsageStatus: Equatable {
+    case unknown
+    case loaded(CoachBackend.Usage)
+    case unauthorized
+    case failed
+
+    static func load() async -> CoachUsageStatus {
+        guard let backend = CoachBackend.current(), backend.viaWorker else { return .unknown }
+        do {
+            return .loaded(try await backend.usage())
+        } catch {
+            return error.isCoachUnauthorized ? .unauthorized : .failed
+        }
+    }
+
+    var text: String? {
+        switch self {
+        case .unknown: return nil
+        case .loaded(let usage):
+            return String(format: NSLocalizedString("settings.meeting_coach_usage_value", comment: "Spent of cap, USD"),
+                          usage.month.usd, usage.monthlyCapUSD)
+        case .unauthorized: return NSLocalizedString("settings.meeting_coach_invite_invalid", comment: "Invite code rejected")
+        case .failed: return NSLocalizedString("settings.meeting_coach_usage_failed", comment: "Usage could not be loaded")
         }
     }
 }

@@ -98,10 +98,19 @@ enum ProviderFactory {
         transferPolicy: LargeTransferPolicy = .wifiOnly,
         prompt: String? = nil
     ) throws -> any TranscriptionProvider {
+        var provider = provider
+        var key = ""
+        if provider.id == AIProvider.meetingCoach.id {
+            // The coach's formal transcript goes wherever the coach does now (Worker or, in DEBUG, OpenAI).
+            let backend = CoachBackend.current()
+            provider = backend?.provider ?? AIProvider.openAI
+            key = backend?.token ?? ""
+        } else {
+            key = storedAPIKey(for: provider)
+        }
         guard LLMHTTP.isValidBaseURL(provider.baseURLString) else {
             throw AppError.invalidProviderURL
         }
-        let key = storedAPIKey(for: provider)
         do {
             try LLMHTTP.requireAPIKey(key, provider: provider)
         } catch {

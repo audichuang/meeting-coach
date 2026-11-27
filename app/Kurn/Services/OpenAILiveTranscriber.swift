@@ -61,7 +61,8 @@ final class URLSessionRealtimeSocket: RealtimeSocket, @unchecked Sendable {
 }
 
 actor OpenAILiveTranscriber: StreamingAsrManager {
-    typealias SocketFactory = @Sendable () throws -> any RealtimeSocket
+    /// Async because the Worker path first fetches a short-lived client secret.
+    typealias SocketFactory = @Sendable () async throws -> any RealtimeSocket
 
     static let model = CoachPricing.liveTranscribeModel
     static let sampleRate = 24_000.0
@@ -102,14 +103,17 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
 
     private struct Connection {
         let id: Int
-        let socket: any RealtimeSocket
+        /// Still opening while the outbox already queues audio, so a planned hand-over never drops any.
+        let socket: Task<any RealtimeSocket, Error>
         let outbox: AsyncStream<String>.Continuation
         let tasks: [Task<Void, Never>]
 
         func close() {
             outbox.finish()
             tasks.forEach { $0.cancel() }
-            socket.close()
+            socket.cancel()
+            let socket = socket
+            Task { try? await socket.value.close() }
         }
     }
 
@@ -134,15 +138,31 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         self.onEvent = onEvent
     }
 
-    static func socketFactory(apiKey: String) -> SocketFactory {
+    /// Direct: the OpenAI key opens the socket. Worker: every (re)connect first asks
+    /// `POST /v1/realtime/session` for a 60-second client secret, which only gates opening.
+    static func socketFactory(backend: CoachBackend, session: URLSession = .shared) -> SocketFactory {
         {
             guard let url = URL(string: "wss://api.openai.com/v1/realtime?intent=transcription") else {
                 throw AppError.invalidProviderURL
             }
+            let key = backend.viaWorker ? try await mintClientSecret(backend: backend, session: session) : backend.token
             var request = URLRequest(url: url)
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
             return URLSessionRealtimeSocket(request: request)
         }
+    }
+
+    static func mintClientSecret(backend: CoachBackend, session: URLSession) async throws -> String {
+        var request = URLRequest(url: backend.baseURL.appending(path: "realtime/session"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.setValue("Bearer \(backend.token)", forHTTPHeaderField: "Authorization")
+        let (data, _) = try await LLMHTTP.sendValidated(request, session: session)
+        let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let value = root?["value"] as? String, !value.isEmpty else {
+            throw AppError.apiError(statusCode: 0, message: "invalid realtime session")
+        }
+        return value
     }
 
     static var sessionUpdate: String {
@@ -230,17 +250,18 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         generation += 1
         let id = generation
         if !rotating { onEvent(.connection(reconnectAttempt == 0 ? .connecting : .reconnecting)) }
-        let socket: any RealtimeSocket
-        do {
-            socket = try makeSocket()
-        } catch {
-            AppLog.transcription.atError.error("OpenAILiveTranscriber: socket creation failed code=\(error.publicLogCode, privacy: .public)")
-            scheduleReconnect()
-            return
-        }
+        let opening = Task { [makeSocket] in try await makeSocket() }
         let (stream, outbox) = AsyncStream.makeStream(of: String.self, bufferingPolicy: .bufferingOldest(Self.outboxLimit))
         outbox.yield(Self.sessionUpdate)
         let sender = Task { [weak self] in
+            let socket: any RealtimeSocket
+            do {
+                socket = try await opening.value
+            } catch {
+                AppLog.transcription.atError.error("OpenAILiveTranscriber: socket creation failed code=\(error.publicLogCode, privacy: .public)")
+                await self?.connectionLost(id, code: error.publicLogCode)
+                return
+            }
             for await message in stream {
                 do { try await socket.send(message) } catch {
                     await self?.connectionLost(id, code: error.publicLogCode)
@@ -249,6 +270,7 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
             }
         }
         let receiver = Task { [weak self] in
+            guard let socket = try? await opening.value else { return }
             while !Task.isCancelled {
                 do {
                     let text = try await socket.receive()
@@ -259,7 +281,12 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
                 }
             }
         }
-        connection = Connection(id: id, socket: socket, outbox: outbox, tasks: [sender, receiver])
+        connection = Connection(id: id, socket: opening, outbox: outbox, tasks: [sender, receiver])
+        // From here audio is queued for this connection (or reported as a gap if it fails).
+        if let start = gapStart {
+            onEvent(.gap(LiveTranscriptGap(start: start, end: tracker.now)))
+            gapStart = nil
+        }
         rotateAt = clock() + rotateAfter
     }
 
@@ -372,10 +399,6 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         // Honour a shorter server-side expiry; a stale or missing value keeps the default.
         if let expiresAt, expiresAt - Self.expiryLead > clock() {
             rotateAt = min(rotateAt, expiresAt - Self.expiryLead)
-        }
-        if let start = gapStart {
-            onEvent(.gap(LiveTranscriptGap(start: start, end: tracker.now)))
-            gapStart = nil
         }
         onEvent(.connection(.live))
     }

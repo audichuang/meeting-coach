@@ -9,6 +9,10 @@
 //  then write the post-meeting summary with the card model. The live
 //  transcript stays in `CoachRecord` as the original.
 //
+//  Both calls run under `AIProvider.meetingCoach`, i.e. through the Worker
+//  (or, in DEBUG, straight to OpenAI), and their spend is added to the
+//  recording's `CoachRecord.costUSD` so the meeting's coach spend is complete.
+//
 //  It lives in ViewModels/ because it drives `SummaryViewModel`, which owns
 //  summary persistence and the Summary tab's progress state.
 //
@@ -18,7 +22,7 @@ import KurnCore
 
 @MainActor
 final class MeetingCoachFollowUp {
-    nonisolated static let transcriptionModel = "gpt-transcribe"
+    nonisolated static let transcriptionModel = CoachPricing.transcribeModel
 
     private let transcription: TranscriptionCoordinator
     private let summaries: SummaryViewModel
@@ -31,12 +35,12 @@ final class MeetingCoachFollowUp {
     }
 
     /// The pipeline for the formal transcript: the user's own stages, with the
-    /// transcription step pinned to OpenAI. Cloud consent is implied — the coach
+    /// transcription step pinned to the coach's backend. Cloud consent is implied — the coach
     /// already streamed this audio to OpenAI while recording.
     nonisolated static func configuration(from base: PipelineConfiguration) -> PipelineConfiguration {
         var config = base
         config.transcription = .whisperAPI
-        config.transcriptionProvider = .openAI
+        config.transcriptionProvider = .meetingCoach
         config.transcriptionModel = transcriptionModel
         config.cloudTranscriptionConsented = true
         config.taiwanMandarinTranscript = true
@@ -67,7 +71,32 @@ final class MeetingCoachFollowUp {
         Task { @MainActor in
             await task.value
             guard recording.transcript?.segments.isEmpty == false else { return }
-            summaries.startSummary(for: meeting, provider: .openAI, model: CoachPricing.cardModel, template: .meetingCoach)
+            let record = meeting.coachRecords.first { $0.recordingID == recording.id }
+            // shortcut: bills the whole recording at the list price; a resumed run that skipped
+            // chunks is overcounted. Upgrade by summing the `usage.seconds` each chunk reports.
+            let recordSpend: @MainActor (Double) -> Void = { addSpend($0, to: record) }
+            recordSpend(recording.duration / 60 * CoachPricing.transcribePerMinute)
+            summaries.startSummary(
+                for: meeting, provider: .meetingCoach, model: CoachPricing.cardModel, template: .meetingCoach,
+                resolveProvider: { _, model in
+                    let backend = CoachBackend.current()
+                    try LLMHTTP.requireAPIKey(backend?.token ?? "", provider: .meetingCoach)
+                    guard let backend else { throw AppError.invalidProviderURL }
+                    return CoachSummaryProvider(client: CoachResponsesClient(backend: backend), model: model) { usage in
+                        var meter = CoachCostMeter()
+                        meter.addTokens(model: model, usage: usage)
+                        Task { await recordSpend(meter.totalUSD) }
+                    }
+                }
+            )
+        }
+    }
+
+    private static func addSpend(_ usd: Double, to record: CoachRecord?) {
+        guard let record, usd > 0 else { return }
+        record.costUSD += usd
+        if let failure = record.modelContext?.saveOrError() {
+            AppLog.persistence.atError.error("MeetingCoachFollowUp: spend save failed code=\(failure.logCode, privacy: .public)")
         }
     }
 }

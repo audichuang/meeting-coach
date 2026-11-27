@@ -1072,7 +1072,16 @@
 "settings.meeting_coach" = "Meeting coach";
 "settings.meeting_coach_name" = "Your name";
 "settings.meeting_coach_budget" = "Warn when a meeting's AI spend passes US$%.0f";
-"settings.meeting_coach_footer" = "While recording, audio is sent to OpenAI for a live transcript and suggestion cards, using the OpenAI key in Providers. Without a key nothing is sent.";
+"settings.meeting_coach_footer" = "While recording, audio is sent to OpenAI through the server above for a live transcript and suggestion cards. Without a server URL and invite code nothing is sent.";
+"coach.status.quota" = "This month's allowance is used up; AI stopped";
+"coach.status.unauthorized" = "Invite code rejected; check it in Settings";
+"settings.meeting_coach_server" = "Server URL";
+"settings.meeting_coach_invite" = "Invite code";
+"settings.meeting_coach_usage" = "This month";
+"settings.meeting_coach_usage_value" = "US$%.2f of US$%.0f";
+"settings.meeting_coach_invite_invalid" = "Invite code rejected";
+"settings.meeting_coach_usage_failed" = "Could not load usage";
+"detail.coach_cost" = "Coach US$%.2f";
 "settings.meeting_coach_cooldown" = "At least %d s between automatic cards";
 "settings.meeting_coach_max_cards" = "At most %d automatic cards per 10 minutes";
 "template.meeting_coach.name" = "Meeting Coach Recap";

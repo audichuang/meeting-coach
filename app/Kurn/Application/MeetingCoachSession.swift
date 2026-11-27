@@ -21,19 +21,17 @@ import SwiftData
 struct MeetingCoachConfiguration: Sendable {
     var userName: String
     var budgetUSD: Double
-    var apiKey: String
+    var backend: CoachBackend
     /// Automatic-card throttle (decisions: 90 s gap, at most 3 per 10 minutes, adjustable).
     var cooldownSeconds: Double = 90
     var maxCardsPerWindow = 3
 
-    /// `nil` when the coach is off or no OpenAI key is stored (nothing is sent).
+    /// `nil` when the coach is off or has no backend configured (nothing is sent).
     @MainActor
     static func resolve(settings: AppSettings) -> MeetingCoachConfiguration? {
-        guard settings.meetingCoachEnabled else { return nil }
-        let key = ProviderFactory.storedAPIKey(for: .openAI)
-        guard !key.isEmpty else { return nil }
+        guard settings.meetingCoachEnabled, let backend = CoachBackend.current() else { return nil }
         let name = settings.coachUserName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return MeetingCoachConfiguration(userName: name, budgetUSD: settings.coachBudgetUSD, apiKey: key,
+        return MeetingCoachConfiguration(userName: name, budgetUSD: settings.coachBudgetUSD, backend: backend,
                                          cooldownSeconds: settings.coachCooldownSeconds,
                                          maxCardsPerWindow: settings.coachMaxCardsPerWindow)
     }
@@ -42,6 +40,16 @@ struct MeetingCoachConfiguration: Sendable {
 @MainActor
 @Observable
 final class MeetingCoachSession {
+    /// Why AI processing stopped while the recording goes on.
+    enum StopReason: Equatable {
+        /// The per-meeting spend warning went unanswered.
+        case budget
+        /// The Worker's monthly cap is spent (HTTP 402).
+        case quota
+        /// The Worker rejected the invite code (HTTP 401).
+        case unauthorized
+    }
+
     static let promptVersion = "spike-r4"
 
     private(set) var segments: [LiveTranscriptSegment] = []
@@ -49,7 +57,8 @@ final class MeetingCoachSession {
     private(set) var connection: LiveConnectionState = .connecting
     private(set) var cost = CoachCostMeter()
     private(set) var budget: CoachBudgetGuard
-    private(set) var isAIStopped = false
+    private(set) var stopReason: StopReason?
+    var isAIStopped: Bool { stopReason != nil }
     private(set) var ledgers: [CoachLedgerRecord] = []
     /// The one card currently on screen.
     private(set) var currentCardID: UUID?
@@ -62,7 +71,10 @@ final class MeetingCoachSession {
     @ObservationIgnored let events: AsyncStream<LiveTranscriptEvent>
     @ObservationIgnored let eventSink: AsyncStream<LiveTranscriptEvent>.Continuation
     @ObservationIgnored private let llm: any CoachLLM
-    @ObservationIgnored private let apiKey: String
+    @ObservationIgnored private let backend: CoachBackend
+    /// The live meter's total as last written, so `save()` adds only new live
+    /// spend to `CoachRecord.costUSD`, which the post-meeting run also adds to.
+    @ObservationIgnored private var savedLiveCost = 0.0
     @ObservationIgnored private var trigger: any SuggestionTriggerStrategy
     @ObservationIgnored private let throttle: SuggestionThrottle
     /// Stamped on every automatic card, so the ledger records the throttle it ran under.
@@ -93,11 +105,11 @@ final class MeetingCoachSession {
         self.modelContext = modelContext
         // No name configured: prompts say "使用者" and the named-user event is off.
         self.userName = configuration.userName.isEmpty ? "使用者" : configuration.userName
-        self.apiKey = configuration.apiKey
+        self.backend = configuration.backend
         self.budget = CoachBudgetGuard(threshold: configuration.budgetUSD)
         self.throttle = SuggestionThrottle(minimumGap: max(0, configuration.cooldownSeconds), window: 600,
                                            maximumInWindow: max(1, configuration.maxCardsPerWindow), openingQuiet: 120)
-        self.llm = llm ?? CoachResponsesClient(apiKey: configuration.apiKey)
+        self.llm = llm ?? CoachResponsesClient(backend: configuration.backend)
         self.trigger = trigger ?? EventSuggestionTrigger(mentionsUser: ChineseText.nameMatcher(for: configuration.userName))
         self.elapsed = elapsed
         (events, eventSink) = AsyncStream.makeStream(of: LiveTranscriptEvent.self)
@@ -108,7 +120,15 @@ final class MeetingCoachSession {
     /// guard halts AI processing without touching the recording.
     func makeLiveTranscription() -> LiveTranscriptionService {
         let sink = eventSink
-        let socket = OpenAILiveTranscriber.socketFactory(apiKey: apiKey)
+        let open = OpenAILiveTranscriber.socketFactory(backend: backend)
+        let socket: OpenAILiveTranscriber.SocketFactory = { [weak self] in
+            do {
+                return try await open()
+            } catch {
+                await self?.handleServiceError(error)
+                throw error
+            }
+        }
         let live = LiveTranscriptionService(engineFactory: { _, _ in
             let engine = OpenAILiveTranscriber(makeSocket: socket) { sink.yield($0) }
             try await engine.loadModels()
@@ -215,14 +235,14 @@ final class MeetingCoachSession {
                     try? await Task.sleep(for: .seconds(5))
                     guard let self else { return }
                     if self.budget.update(cost: self.cost.totalUSD, now: Date()) == .stopped {
-                        self.stopAI()
+                        self.stopAI(.budget)
                         return
                     }
                     if case .normal = self.budget.state { self.budgetTimer = nil; return }
                 }
             }
         }
-        if state == .stopped { stopAI() }
+        if state == .stopped { stopAI(.budget) }
     }
 
     func continueAfterBudgetWarning() {
@@ -231,13 +251,22 @@ final class MeetingCoachSession {
         budgetTimer = nil
     }
 
-    private func stopAI() {
+    private func stopAI(_ reason: StopReason) {
         guard !isAIStopped else { return }
-        isAIStopped = true
+        stopReason = reason
         aiStoppedAt = elapsed()
         pipeline?.cancel()
         onStopAI?()
-        AppLog.generation.atNotice.notice("MeetingCoachSession: budget guard stopped AI processing")
+        AppLog.generation.atNotice.notice("MeetingCoachSession: AI processing stopped reason=\(String(describing: reason), privacy: .public)")
+    }
+
+    /// A Worker refusal no retry can fix stops the AI (recording continues); anything else is left to the caller.
+    private func handleServiceError(_ error: Error) {
+        if error.isCoachQuotaExhausted {
+            stopAI(.quota)
+        } else if error.isCoachUnauthorized {
+            stopAI(.unauthorized)
+        }
     }
 
     // MARK: Suggestions
@@ -285,6 +314,7 @@ final class MeetingCoachSession {
             try addCandidate(args, evidence: segment, policy: policyVersion, gated: true)
         } catch {
             lastError = error.localizedDescription
+            handleServiceError(error)
             logTrigger(offset: segment.arrivedAt, labels: labels, decision: "error", reason: error.publicLogCode)
             AppLog.generation.atError.error("MeetingCoachSession: pipeline failed code=\(error.publicLogCode, privacy: .public)")
         }
@@ -304,6 +334,7 @@ final class MeetingCoachSession {
             try addCandidate(args, evidence: last, policy: "ask", gated: false)
         } catch {
             lastError = error.localizedDescription
+            handleServiceError(error)
             AppLog.generation.atError.error("MeetingCoachSession: ask failed code=\(error.publicLogCode, privacy: .public)")
         }
     }
@@ -322,6 +353,7 @@ final class MeetingCoachSession {
             save()
         } catch {
             lastError = error.localizedDescription
+            handleServiceError(error)
             AppLog.generation.atError.error("MeetingCoachSession: wrap-up failed code=\(error.publicLogCode, privacy: .public)")
         }
     }
@@ -404,7 +436,8 @@ final class MeetingCoachSession {
         record.gaps = gaps
         record.ledgers = ledgers
         record.triggerLog = triggerLog
-        record.costUSD = cost.totalUSD
+        record.costUSD += cost.totalUSD - savedLiveCost
+        savedLiveCost = cost.totalUSD
         record.transcribedSeconds = cost.transcribedSeconds
         if let failure = modelContext.saveOrError() {
             AppLog.persistence.atError.error("MeetingCoachSession: save failed code=\(failure.logCode, privacy: .public)")

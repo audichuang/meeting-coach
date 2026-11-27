@@ -98,7 +98,8 @@ final class SummaryViewModel {
         for meeting: Meeting,
         provider: AIProvider,
         model: String,
-        template: SummaryTemplate
+        template: SummaryTemplate,
+        resolveProvider: ProviderFactory.LLMResolver? = nil
     ) {
         guard !isSummarizing else { return }
         isSummarizing = true
@@ -111,7 +112,8 @@ final class SummaryViewModel {
                 for: meeting,
                 provider: provider,
                 model: model,
-                template: template
+                template: template,
+                service: resolveProvider.map { SummaryService(resolveProvider: $0) }
             )
         }
     }
@@ -126,7 +128,8 @@ final class SummaryViewModel {
         for meeting: Meeting,
         provider: AIProvider,
         model: String,
-        template: SummaryTemplate
+        template: SummaryTemplate,
+        service: SummaryService? = nil
     ) async {
         // Assemble the prompt text on the main actor (reads SwiftData): the
         // transcript on one chronological timeline across every recording,
@@ -162,7 +165,7 @@ final class SummaryViewModel {
 
         AppLog.transcription.atNotice.notice("VM: summary start provider=\(provider.rawValue, privacy: .public) chars=\(transcriptText.count, privacy: .public)")
         do {
-            let result = try await summaryService.generate(
+            let result = try await (service ?? summaryService).generate(
                 transcriptText: transcriptText,
                 meetingTitle: title,
                 provider: provider,

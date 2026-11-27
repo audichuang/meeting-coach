@@ -10,6 +10,11 @@ public enum CoachPricing {
     /// `gpt-live-transcribe`: USD per audio minute.
     public static let liveTranscribePerMinute = 0.017
 
+    /// Post-meeting formal transcript.
+    public static let transcribeModel = "gpt-transcribe"
+    /// `gpt-transcribe`: USD per audio minute (no per-token rate is listed).
+    public static let transcribePerMinute = 0.0045
+
     /// USD per 1M tokens; output includes reasoning tokens.
     public struct TokenRates: Sendable {
         public let input: Double

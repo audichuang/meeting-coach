@@ -1072,7 +1072,16 @@
 "settings.meeting_coach" = "會議教練";
 "settings.meeting_coach_name" = "你的名字";
 "settings.meeting_coach_budget" = "單場 AI 花費超過 US$%.0f 時警告";
-"settings.meeting_coach_footer" = "錄音時會把聲音送到 OpenAI 產生即時逐字稿與建議卡，使用「AI 供應商」裡的 OpenAI 金鑰；沒有金鑰就不會送出。";
+"settings.meeting_coach_footer" = "錄音時會經由上方的伺服器把聲音送到 OpenAI，產生即時逐字稿與建議卡；沒有填伺服器網址與邀請碼就不會送出。";
+"coach.status.quota" = "本月額度已用完，AI 已停止";
+"coach.status.unauthorized" = "邀請碼無效，請到設定檢查";
+"settings.meeting_coach_server" = "伺服器網址";
+"settings.meeting_coach_invite" = "邀請碼";
+"settings.meeting_coach_usage" = "本月用量";
+"settings.meeting_coach_usage_value" = "US$%.2f／上限 US$%.0f";
+"settings.meeting_coach_invite_invalid" = "邀請碼無效";
+"settings.meeting_coach_usage_failed" = "無法取得用量";
+"detail.coach_cost" = "會議教練 US$%.2f";
 "settings.meeting_coach_cooldown" = "自動建議卡至少間隔 %d 秒";
 "settings.meeting_coach_max_cards" = "每 10 分鐘最多 %d 張自動建議卡";
 "template.meeting_coach.name" = "會議教練會後摘要";

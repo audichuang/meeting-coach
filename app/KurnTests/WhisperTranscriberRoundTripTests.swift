@@ -132,12 +132,13 @@ struct WhisperTranscriberRoundTripTests {
         #expect(last.end > 419)
     }
 
-    @Test func formalTranscriptConfigurationPinsOpenAIAndKeepsTheUsersOtherStages() {
+    @Test func formalTranscriptConfigurationPinsTheCoachBackendAndKeepsTheUsersOtherStages() {
         var base = PipelineConfiguration()
         base.diarization = .heuristic
         let config = MeetingCoachFollowUp.configuration(from: base)
         #expect(config.transcription == .whisperAPI)
         #expect(config.transcriptionModel == "gpt-transcribe")
+        #expect(config.transcriptionProvider == .meetingCoach)
         #expect(config.cloudTransfer == CloudTranscriptionTransfer(consented: true, policy: base.largeTransferPolicy, taiwanMandarin: true))
         #expect(config.diarization == .heuristic)
     }

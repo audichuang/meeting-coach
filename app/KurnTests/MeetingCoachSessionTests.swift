@@ -19,6 +19,18 @@ private struct ScriptedCoachLLM: CoachLLM {
     }
 }
 
+/// Fails every call the way the Worker refuses it.
+private struct RefusingCoachLLM: CoachLLM {
+    let status: Int
+    func call(model: String, instructions: String, input: String, tools: [CoachTool], force: String?) async throws -> CoachCallResult {
+        throw AppError.apiError(statusCode: status, message: "refused")
+    }
+}
+
+extension CoachBackend {
+    static let test = CoachBackend(baseURL: URL(string: "https://worker.test/v1")!, token: "mc_test", viaWorker: true)
+}
+
 @MainActor
 struct MeetingCoachSessionTests {
     private final class Clock { var now: TimeInterval = 0 }
@@ -35,7 +47,7 @@ struct MeetingCoachSessionTests {
         let clock = Clock()
         let coach = MeetingCoachSession(
             meeting: meeting, modelContext: context,
-            configuration: MeetingCoachConfiguration(userName: "志明", budgetUSD: 10, apiKey: "test"),
+            configuration: MeetingCoachConfiguration(userName: "志明", budgetUSD: 10, backend: .test),
             llm: ScriptedCoachLLM(), elapsed: { clock.now }
         )
         let recordingID = UUID()
@@ -88,7 +100,7 @@ struct MeetingCoachSessionTests {
         let clock = Clock()
         let coach = MeetingCoachSession(
             meeting: meeting, modelContext: context,
-            configuration: MeetingCoachConfiguration(userName: "志明", budgetUSD: 10, apiKey: "test",
+            configuration: MeetingCoachConfiguration(userName: "志明", budgetUSD: 10, backend: .test,
                                                      cooldownSeconds: 30, maxCardsPerWindow: 1),
             llm: ScriptedCoachLLM(), elapsed: { clock.now }
         )
@@ -114,12 +126,69 @@ struct MeetingCoachSessionTests {
         context.insert(meeting)
         let coach = MeetingCoachSession(
             meeting: meeting, modelContext: context,
-            configuration: MeetingCoachConfiguration(userName: "我", budgetUSD: 10, apiKey: "test"),
+            configuration: MeetingCoachConfiguration(userName: "我", budgetUSD: 10, backend: .test),
             llm: ScriptedCoachLLM(), elapsed: { 0 }
         )
         coach.begin(recordingID: UUID())
         await coach.finish(at: 1, discarding: true)
         #expect(try context.fetch(FetchDescriptor<CoachRecord>()).isEmpty)
+    }
+
+    @Test(arguments: [(402, MeetingCoachSession.StopReason.quota), (401, .unauthorized)])
+    func workerRefusalStopsTheAIButKeepsTheSession(status: Int, reason: MeetingCoachSession.StopReason) async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "我", budgetUSD: 10, backend: .test),
+            llm: RefusingCoachLLM(status: status), elapsed: { 200 }
+        )
+        nonisolated(unsafe) var stopped = false
+        coach.onStopAI = { stopped = true }
+        coach.begin(recordingID: UUID())
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 0, end: 20, text: "大家好", arrivedAt: 20)))
+        await waitUntil { coach.transcriptAvailable }
+        await coach.askForCard()
+        #expect(coach.stopReason == reason)
+        #expect(stopped)
+        // The transcript received so far is still kept.
+        await coach.finish(at: 210)
+        #expect(try context.fetch(FetchDescriptor<CoachRecord>()).first?.segments.count == 1)
+    }
+
+    @Test func liveSpendIsAddedToWhatThePostMeetingRunAlreadyRecorded() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let clock = Clock()
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "我", budgetUSD: 10, backend: .test),
+            llm: ScriptedCoachLLM(), elapsed: { clock.now }
+        )
+        coach.begin(recordingID: UUID())
+        let record = try #require(try context.fetch(FetchDescriptor<CoachRecord>()).first)
+        record.costUSD += 1   // e.g. the follow-up's transcription landed first
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 0, end: 20, text: "大家好", arrivedAt: 20)))
+        await waitUntil { coach.transcriptAvailable }
+        await coach.askForCard()
+        await coach.finish(at: 30)
+        #expect(abs(record.costUSD - (1 + coach.cost.totalUSD)) < 1e-9)
+    }
+
+    @Test func workerBaseURLAndSummaryOutput() throws {
+        #expect(CoachBackend.workerBaseURL("https://api.example.com/")?.absoluteString == "https://api.example.com/v1")
+        #expect(CoachBackend.workerBaseURL(" https://api.example.com/v1 ")?.absoluteString == "https://api.example.com/v1")
+        #expect(CoachBackend.workerBaseURL("http://api.example.com") == nil)
+        #expect(CoachBackend.workerBaseURL("") == nil)
+        let root: [String: Any] = ["output": [
+            ["type": "reasoning", "summary": []],
+            ["type": "message", "content": [["type": "output_text", "text": "## 共識\n"], ["type": "output_text", "text": "- 上線"]]]
+        ]]
+        #expect(CoachSummaryProvider.outputText(root) == "## 共識\n- 上線")
     }
 
     @Test func nameMatcherAcceptsHomophones() {
