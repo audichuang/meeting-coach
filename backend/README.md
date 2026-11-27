@@ -41,7 +41,7 @@ Setup (account of the Worker, `cf` CLI, `CLOUDFLARE_ACCOUNT_ID` set):
 1. `cf zero-trust access service-tokens create --name meeting-coach-ipad-app --duration 8760h`. The secret is shown once; pipe it straight into the password manager.
 2. `cf zero-trust access applications create --body <json>`: `type: self_hosted`, the Worker host in `domain` and `destinations`, `service_auth_401_redirect: true` (401 instead of a login redirect), one policy with `decision: non_identity` and `include: [{service_token: {token_id}}]`.
 
-Build the App with the token: copy `app/Config/Secrets.example.xcconfig` to `app/Config/Secrets.xcconfig` (gitignored) and fill both values; they reach Info.plist and are sent to the Worker only, never to OpenAI.
+Build the App with the token and the Worker address: copy `app/Config/Secrets.example.xcconfig` to `app/Config/Secrets.xcconfig` (gitignored) and fill `COACH_WORKER_HOST` (host only; xcconfig reads `//` as a comment) and the two token values. They reach Info.plist; the App talks to that host only (Settings has no server field) and sends the token to it only, never to OpenAI.
 
 Rotate (the token expires after one year, `expires_at` in `cf zero-trust access service-tokens list`): `cf zero-trust access service-tokens rotate <id>` (or refresh in the dashboard) issues a new secret with the same client id and keeps the old one valid for a grace period you choose. Update the password manager and `Secrets.xcconfig`, ship a new App build, and let the old secret lapse. Installed builds stop working when it does, so ship the build first. If the token leaks, rotate with no grace period.
 

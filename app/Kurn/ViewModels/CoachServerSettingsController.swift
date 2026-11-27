@@ -3,7 +3,7 @@
 //  Kurn
 //
 //  Owns the editable drafts and usage-loading lifecycle for the meeting
-//  coach's server URL and invite code in Recording Settings.
+//  coach's invite code in Recording Settings. The Worker address is fixed at build time.
 //
 
 import Foundation
@@ -44,20 +44,18 @@ enum CoachUsageStatus: Equatable, Sendable {
 @MainActor
 @Observable
 final class CoachServerSettingsController {
-    var serverURLDraft = ""
     var inviteDraft = ""
     private(set) var usage: CoachUsageStatus = .unknown
     /// Keychain read/write failure surfaced to `RecordingSettingsView`'s `.errorAlert`.
     var error: AppError?
-    @ObservationIgnored private(set) var committedServerURL = ""
     @ObservationIgnored private(set) var committedInvite = ""
     @ObservationIgnored private(set) var usageTask: Task<Void, Never>?
-    @ObservationIgnored private let resolveBackend: @Sendable (String, String) -> CoachBackend?
+    @ObservationIgnored private let resolveBackend: @Sendable (String) -> CoachBackend?
     @ObservationIgnored private let loadUsage: @Sendable (CoachBackend) async -> CoachUsageStatus
 
     init(
-        resolveBackend: @escaping @Sendable (String, String) -> CoachBackend? = { serverURL, invite in
-            CoachBackend.workerBackend(serverURL: serverURL, invite: invite)
+        resolveBackend: @escaping @Sendable (String) -> CoachBackend? = { invite in
+            CoachBackend.workerBackend(invite: invite)
         },
         loadUsage: @escaping @Sendable (CoachBackend) async -> CoachUsageStatus = { backend in
             await CoachUsageStatus.load(backend: { backend })
@@ -67,13 +65,7 @@ final class CoachServerSettingsController {
         self.loadUsage = loadUsage
     }
 
-    var hasUncommittedServerURL: Bool {
-        serverURLDraft.trimmingCharacters(in: .whitespacesAndNewlines) != committedServerURL
-    }
-
     func load(settings: AppSettings) {
-        committedServerURL = settings.coachServerURL
-        serverURLDraft = settings.coachServerURL
         switch settings.credentials.readKey(for: .meetingCoach) {
         case .found(let value):
             inviteDraft = value
@@ -87,27 +79,6 @@ final class CoachServerSettingsController {
             error = .keychainAccessFailed(reason.rawValue)
         }
         refreshUsage()
-    }
-
-    func editServerURL(_ text: String) {
-        serverURLDraft = text
-        if hasUncommittedServerURL {
-            usageTask?.cancel()
-            usageTask = nil
-        }
-    }
-
-    func commitServerURL(settings: AppSettings, forceReload: Bool = false) {
-        let next = serverURLDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let changed = next != committedServerURL
-        serverURLDraft = next
-        committedServerURL = next
-        if settings.coachServerURL != next {
-            settings.coachServerURL = next
-        }
-        if changed || forceReload {
-            refreshUsage()
-        }
     }
 
     func editInvite(_ text: String) {
@@ -133,7 +104,6 @@ final class CoachServerSettingsController {
             committedInvite = next
             error = nil
         }
-        guard !hasUncommittedServerURL else { return }
         if changed || forceReload {
             refreshUsage()
         }
@@ -158,8 +128,7 @@ final class CoachServerSettingsController {
     private func refreshUsage() {
         usageTask?.cancel()
         usageTask = nil
-        guard !hasUncommittedServerURL else { return }
-        guard let backend = resolveBackend(committedServerURL, committedInvite), backend.viaWorker else {
+        guard let backend = resolveBackend(committedInvite), backend.viaWorker else {
             usage = .unknown
             return
         }

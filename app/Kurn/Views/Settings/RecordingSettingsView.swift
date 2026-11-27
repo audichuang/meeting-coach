@@ -23,12 +23,11 @@ struct RecordingSettingsView: View {
     /// re-authentication prompt.
     @State private var authError: AppError?
     private let authorizer = SensitiveActionAuthorizer()
-    /// The invite code and server URL drafts plus monthly usage status.
+    /// The invite code draft plus monthly usage status.
     @State private var coachServer = CoachServerSettingsController()
     @FocusState private var focusedField: CoachField?
 
     private enum CoachField: Hashable {
-        case serverURL
         case invite
     }
 
@@ -45,9 +44,6 @@ struct RecordingSettingsView: View {
             coachServer.load(settings: settings)
         }
         .onChange(of: focusedField) { previous, current in
-            if previous == .serverURL, current != .serverURL {
-                coachServer.commitServerURL(settings: settings)
-            }
             if previous == .invite, current != .invite {
                 coachServer.commitInvite(settings: settings)
             }
@@ -126,23 +122,6 @@ struct RecordingSettingsView: View {
                 NSLocalizedString("settings.meeting_coach", comment: "Meeting coach"),
                 isOn: Binding(get: { settings.meetingCoachEnabled }, set: { settings.meetingCoachEnabled = $0 })
             )
-            LabeledContent(NSLocalizedString("settings.meeting_coach_server", comment: "Server URL for the coach")) {
-                TextField(
-                    "https://",
-                    text: Binding(
-                        get: { coachServer.serverURLDraft },
-                        set: { coachServer.editServerURL($0) }
-                    )
-                )
-                .multilineTextAlignment(.trailing)
-                .keyboardType(.URL)
-                .textContentType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .focused($focusedField, equals: .serverURL)
-                .onSubmit { coachServer.commitServerURL(settings: settings, forceReload: true) }
-                .accessibilityLabel(NSLocalizedString("settings.meeting_coach_server", comment: "Server URL for the coach"))
-            }
             LabeledContent(NSLocalizedString("settings.meeting_coach_invite", comment: "Invite code for the coach server")) {
                 SecureField(
                     NSLocalizedString("settings.meeting_coach_invite", comment: "Invite code for the coach server"),

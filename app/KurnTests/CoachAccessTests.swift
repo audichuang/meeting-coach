@@ -51,6 +51,42 @@ struct CoachAccessTests {
         #expect(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "CF-Access-Client-Secret") == nil)
     }
 
+    @Test func workerAddressAndAccessCredentialsComeFromTheBuild() throws {
+        let info: [String: Any] = [
+            "CoachWorkerHost": "coach.example.test",
+            "CoachAccessClientID": "id.access", "CoachAccessClientSecret": "secret"
+        ]
+        let config = try #require(CoachAccess.config(info: info))
+        #expect(config.baseURL.absoluteString == "https://coach.example.test/v1")
+        #expect(config.headers == Self.access)
+
+        // Any of the three missing, or an unexpanded build setting, means not configured.
+        for key in info.keys {
+            var broken = info
+            broken[key] = nil
+            #expect(CoachAccess.config(info: broken) == nil)
+            broken[key] = "$(COACH_X)"
+            #expect(CoachAccess.config(info: broken) == nil)
+        }
+    }
+
+    @Test func accessHeadersGoOnlyToTheBuildOrigin() throws {
+        let config = CoachAccess.Config(baseURL: URL(string: "https://coach.example.test/v1")!, headers: Self.access)
+        let built = try #require(CoachBackend.workerBackend(invite: "inv", config: config, serverOverride: nil))
+        #expect(built.baseURL == config.baseURL)
+        #expect(built.accessHeaders == Self.access)
+
+        let sameOrigin = try #require(CoachBackend.workerBackend(invite: "inv", config: config, serverOverride: "https://coach.example.test/other"))
+        #expect(sameOrigin.accessHeaders == Self.access)
+
+        let elsewhere = try #require(CoachBackend.workerBackend(invite: "inv", config: config, serverOverride: "https://other.example.test"))
+        #expect(elsewhere.baseURL.host == "other.example.test")
+        #expect(elsewhere.accessHeaders.isEmpty)
+
+        #expect(CoachBackend.workerBackend(invite: "", config: config, serverOverride: nil) == nil)
+        #expect(CoachBackend.workerBackend(invite: "inv", config: nil, serverOverride: nil) == nil)
+    }
+
     @Test func directBackendSendsOnlyTheBearerKey() {
         let direct = CoachBackend(baseURL: URL(string: "https://api.openai.com/v1")!, token: "sk-test", viaWorker: false)
         var request = URLRequest(url: direct.baseURL)

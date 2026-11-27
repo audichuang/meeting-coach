@@ -3,8 +3,9 @@
 //  Kurn
 //
 //  Where the meeting coach's OpenAI traffic goes. Release builds only talk to
-//  the project's Cloudflare Worker (backend/), authenticated with an invite
-//  code; the Worker holds the OpenAI key, meters spend and refuses calls past
+//  the project's Cloudflare Worker (backend/), whose address and Cloudflare
+//  Access service token are fixed at build time (Config/Secrets.xcconfig) and
+//  authenticated per person with an invite code; the Worker holds the OpenAI key, meters spend and refuses calls past
 //  the monthly cap (HTTP 402). DEBUG builds may instead go straight to OpenAI
 //  with a pasted key, which is how simulator tests run without a Worker.
 //
@@ -21,16 +22,12 @@ struct CoachBackend: Sendable, Equatable {
     /// Cloudflare Access headers the Worker's front door requires; empty when direct.
     var accessHeaders: [String: String] = [:]
 
-    /// `UserDefaults` key of the server URL the user entered in Settings.
-    static let serverURLKey = "settings.coachServerURL"
-
     /// The configured backend, or `nil` when the coach has nowhere to send audio.
-    /// Read off the main actor too (ProviderFactory), so it reads `UserDefaults`
-    /// and the Keychain directly rather than `AppSettings`.
-    static func current(defaults: UserDefaults = .standard) -> CoachBackend? {
-        let server = defaults.string(forKey: serverURLKey) ?? ""
-        let invite = KeychainManager.shared.value(for: AIProvider.meetingCoach.keychainAccount) ?? ""
-        if let worker = workerBackend(serverURL: server, invite: invite) {
+    /// Read off the main actor too (ProviderFactory), so it reads the Keychain directly rather than `AppSettings`.
+    static func current() -> CoachBackend? {
+        let invite = debugOverride("KURN_DEBUG_COACH_INVITE")
+            ?? KeychainManager.shared.value(for: AIProvider.meetingCoach.keychainAccount) ?? ""
+        if let worker = workerBackend(invite: invite) {
             return worker
         }
         #if DEBUG
@@ -42,13 +39,17 @@ struct CoachBackend: Sendable, Equatable {
         return nil
     }
 
-    /// Resolves a Worker backend from explicit server URL and invite strings,
-    /// applying the existing HTTPS/host validation and DEBUG env overrides.
-    static func workerBackend(serverURL: String, invite: String) -> CoachBackend? {
-        let server = debugOverride("KURN_DEBUG_COACH_SERVER_URL") ?? serverURL
+    /// The Worker backend for an invite code. The address is the build's; only DEBUG builds may
+    /// override it (`serverOverride`), and the Access headers go only to the build's own origin.
+    static func workerBackend(
+        invite: String,
+        config: CoachAccess.Config? = CoachAccess.config(),
+        serverOverride: String? = debugOverride("KURN_DEBUG_COACH_SERVER_URL")
+    ) -> CoachBackend? {
         let token = debugOverride("KURN_DEBUG_COACH_INVITE") ?? invite
-        guard let base = workerBaseURL(server), !token.isEmpty else { return nil }
-        return CoachBackend(baseURL: base, token: token, viaWorker: true, accessHeaders: CoachAccess.headers())
+        guard let base = serverOverride.flatMap(workerBaseURL) ?? config?.baseURL, !token.isEmpty else { return nil }
+        let headers = config.flatMap { CoachAccess.sameOrigin($0.baseURL, base) ? $0.headers : nil } ?? [:]
+        return CoachBackend(baseURL: base, token: token, viaWorker: true, accessHeaders: headers)
     }
 
     /// DEBUG only: an unsigned simulator build cannot reach the Keychain.
@@ -65,10 +66,6 @@ struct CoachBackend: Sendable, Equatable {
             return AppError.apiError(statusCode: 402, message: NSLocalizedString("coach.error.quota", comment: "Monthly allowance used up"))
         }
         if error.isCoachUnauthorized {
-            // Access answers 401 before the Worker sees the invite code; a build without the token can only hit that.
-            if CoachAccess.headers().isEmpty {
-                return AppError.apiError(statusCode: 401, message: NSLocalizedString("coach.error.accessMissing", comment: "Build lacks the Cloudflare Access token"))
-            }
             return AppError.apiError(statusCode: 401, message: NSLocalizedString("coach.error.unauthorized", comment: "Invite code rejected"))
         }
         return error
@@ -117,17 +114,30 @@ struct CoachBackend: Sendable, Equatable {
     }
 }
 
-/// The Cloudflare Access service token in front of the Worker. Both values come from
-/// `app/Config/Secrets.xcconfig` (gitignored) through Info.plist, so the public repo never holds them.
+/// The Worker's address and the Cloudflare Access service token in front of it. All three
+/// values come from `app/Config/Secrets.xcconfig` (gitignored) through Info.plist, so the
+/// public repo never holds them.
 enum CoachAccess {
-    static func headers(bundle: Bundle = .main) -> [String: String] {
+    struct Config: Equatable, Sendable {
+        /// Ends in `/v1`.
+        let baseURL: URL
+        let headers: [String: String]
+    }
+
+    /// `nil` unless the host and both credentials are present.
+    static func config(info: [String: Any]? = Bundle.main.infoDictionary) -> Config? {
         func value(_ key: String) -> String {
-            let text = (bundle.object(forInfoDictionaryKey: key) as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let text = (info?[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return text.hasPrefix("$(") ? "" : text // an unset build setting can survive as a literal
         }
-        let id = value("CoachAccessClientID"), secret = value("CoachAccessClientSecret")
-        guard !id.isEmpty, !secret.isEmpty else { return [:] }
-        return ["CF-Access-Client-Id": id, "CF-Access-Client-Secret": secret]
+        let host = value("CoachWorkerHost"), id = value("CoachAccessClientID"), secret = value("CoachAccessClientSecret")
+        guard !host.isEmpty, !id.isEmpty, !secret.isEmpty,
+              let base = CoachBackend.workerBaseURL("https://" + host) else { return nil }
+        return Config(baseURL: base, headers: ["CF-Access-Client-Id": id, "CF-Access-Client-Secret": secret])
+    }
+
+    static func sameOrigin(_ a: URL, _ b: URL) -> Bool {
+        a.scheme == b.scheme && a.host() == b.host() && (a.port ?? 443) == (b.port ?? 443)
     }
 }
 

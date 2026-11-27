@@ -45,6 +45,8 @@
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
+	<key>CoachWorkerHost</key>
+	<string>$(COACH_WORKER_HOST)</string>
 	<key>CoachAccessClientID</key>
 	<string>$(COACH_ACCESS_CLIENT_ID)</string>
 	<key>CoachAccessClientSecret</key>

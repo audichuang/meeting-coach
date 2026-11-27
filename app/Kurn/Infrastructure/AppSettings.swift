@@ -40,7 +40,6 @@ final class AppSettings {
         static let coachBudgetUSD = "settings.coachBudgetUSD"
         static let coachCooldownSeconds = "settings.coachCooldownSeconds"
         static let coachMaxCardsPerWindow = "settings.coachMaxCardsPerWindow"
-        static let coachServerURL = CoachBackend.serverURLKey
         static let diarizationEngine = "settings.diarizationEngine"
         static let fluidAudioSpeakerCount = "settings.fluidAudioSpeakerCount"
         /// Superseded by `fluidAudioSpeakerCount`; read once at init to migrate.
@@ -188,11 +187,6 @@ final class AppSettings {
     /// Minimum gap between two automatic suggestion cards, in seconds.
     var coachCooldownSeconds: Double {
         didSet { defaults.set(coachCooldownSeconds, forKey: Keys.coachCooldownSeconds) }
-    }
-
-    /// The meeting-coach Worker's address (not secret; the invite code is in the Keychain).
-    var coachServerURL: String {
-        didSet { defaults.set(coachServerURL, forKey: Keys.coachServerURL) }
     }
 
     /// Most automatic suggestion cards shown in any 10-minute window.
@@ -684,7 +678,6 @@ final class AppSettings {
         coachBudgetUSD = (defaults.object(forKey: Keys.coachBudgetUSD) as? Double) ?? 10
         coachCooldownSeconds = (defaults.object(forKey: Keys.coachCooldownSeconds) as? Double) ?? 90
         coachMaxCardsPerWindow = (defaults.object(forKey: Keys.coachMaxCardsPerWindow) as? Int) ?? 3
-        coachServerURL = defaults.string(forKey: Keys.coachServerURL) ?? ""
         semanticSearchEnabled = defaults.bool(forKey: Keys.semanticSearchEnabled, default: true)
         // Off by default: wiki generation makes paid cloud LLM calls, so it is an
         // explicit opt-in.

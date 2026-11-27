@@ -1617,7 +1617,11 @@ keyed by `recordingID` (cascade only through `Meeting`), so
   `CoachRecord`. Cloud consent is implied for that run because the coach
   already streamed the audio to OpenAI.
 - Backend (`Providers/CoachBackend.swift`): Release talks only to the
-  project's Worker (`backend/`), with the server URL from Settings and the
+  project's Worker (`backend/`), at the address and with the Cloudflare
+  Access service token baked in from the gitignored
+  `Config/Secrets.xcconfig` (Info.plist `CoachWorkerHost`,
+  `CoachAccessClientID`, `CoachAccessClientSecret`; Settings has no server
+  field; the Access headers go only to that origin, never to OpenAI), and the
   invite code in the Keychain (`AIProvider.meetingCoach`'s account). Every
   live (re)connect first fetches a 60 s client secret from
   `/v1/realtime/session` (the async `SocketFactory`; the connection's outbox
@@ -1632,8 +1636,8 @@ keyed by `recordingID` (cascade only through `Meeting`), so
   to OpenAI with the stored or `KURN_DEBUG_OPENAI_API_KEY` key.
 - DEBUG: `KURN_DEBUG_CAPTURE_FILE` plays a file through
   `DebugFileCaptureEngine` at 1x; `KURN_DEBUG_OPENAI_API_KEY`,
-  `KURN_DEBUG_COACH_SERVER_URL` and `KURN_DEBUG_COACH_INVITE` stand in for
-  Keychain and Settings values, because an unsigned simulator build cannot
+  `KURN_DEBUG_COACH_SERVER_URL` (DEBUG only; replaces the build's Worker
+  address) and `KURN_DEBUG_COACH_INVITE` stand in for Keychain values, because an unsigned simulator build cannot
   reach the Keychain.
 
 ### Providers (`Providers/`)
