@@ -17,7 +17,7 @@
 "settings.network.large_transfers_footer" = "預設情況下，音訊上傳和模型下載會等待不受限的 Wi-Fi 連線。";
 "settings.cloud_upload.title" = "雲端音訊上傳";
 "settings.cloud_upload.allow" = "允許雲端上傳";
-"settings.cloud_upload.message" = "音訊將上傳到 %1$@（%2$@）。按當前錄音品質估算，一小時約為 %3$@。傳輸將遵循您的大型傳輸網路策略。";
+"settings.cloud_upload.message" = "音訊將上傳到 %1$@（%2$@）。按目前錄音品質估算，一小時約為 %3$@。傳輸將遵循您的大型傳輸網路策略。";
 "error.transcription" = "轉寫失敗：%@";
 "error.audio" = "音訊錯誤：%@";
 "error.decoding" = "無法讀取響應：%@";
@@ -45,7 +45,7 @@
 "error.whisper_cpp_load_failed" = "無法載入裝置端 Whisper 模型。請在“儲存”中刪除後重新下載。";
 "error.whisper_cpp_failed" = "裝置端 Whisper 轉寫失敗。";
 "error.resource_unavailable" = "無法繼續：%@";
-"error.resource_low_storage" = "請在繼續前釋放至少 %@ 的儲存空間。當前可用：%@。";
+"error.resource_low_storage" = "請在繼續前釋放至少 %@ 的儲存空間。目前可用：%@。";
 "error.resource_disk_full" = "裝置儲存空間已滿。";
 "error.resource_memory_pressure" = "裝置記憶體不足。請關閉其他 App 或釋放空間後重試。";
 "error.authentication_required" = "存取您的錄音需要進行身份驗證。";
@@ -72,14 +72,14 @@
 "transcription.fluid_parakeet" = "FluidAudio（裝置端）";
 "settings.fluid_audio.asr_model" = "轉寫模型";
 "settings.fluid_audio.model_size" = "%@ · 約 %@";
-"settings.fluid_audio.asr_english_only" = "Bark 3.0、Bark 3.0 Clean、Phonon-2 和 Nemotron 3.5 Transcribe Lite 需要在下方明確選擇英語，不支援自動檢測語言。";
-"settings.fluid_audio.asr_language_footer" = "在下方選擇模型支援的預設語言以啟用該模型。Parakeet TDT v3 和 Nemotron Unified 支援自動檢測語言和葡萄牙語。";
+"settings.fluid_audio.asr_english_only" = "Bark 3.0、Bark 3.0 Clean、Phonon-2 和 Nemotron 3.5 Transcribe Lite 需要在下方明確選擇英語，不支援自動偵測語言。";
+"settings.fluid_audio.asr_language_footer" = "在下方選擇模型支援的預設語言以啟用該模型。Parakeet TDT v3 和 Nemotron Unified 支援自動偵測語言和葡萄牙語。";
 "settings.fluid_audio.asr_language_unavailable" = "此模型不支援所選的預設語言。請在轉寫前選擇相容的模型或語言。";
 "settings.fluid_audio.diarization_model" = "講者分離模型";
 "settings.fluid_audio.segmentation_batch" = "分段批次大小";
 "settings.fluid_audio.batch_recommended" = "%d（推薦）";
 "settings.fluid_audio.segmentation_batch_footer" = "較小的批次可降低 Pyannote 分段時的峰值記憶體佔用。預設值為 32；建議選擇 8 以減少記憶體佔用。";
-"settings.fluid_audio.nemotron_diarization_footer" = "Nemotron 3 最多支援 8 位講者，並自動檢測人數。它沒有相容的聲紋。重新處理後請核對講者名稱：編號標籤不能確認聲音的身份。";
+"settings.fluid_audio.nemotron_diarization_footer" = "Nemotron 3 最多支援 8 位講者，並自動偵測人數。它沒有相容的聲紋。重新處理後請核對講者名稱：編號標籤不能確認聲音的身份。";
 "settings.fluid_audio.live_model" = "即時預覽模型";
 "settings.fluid_audio.live_automatic" = "自動（%@）";
 "settings.fluid_audio.live_model_footer" = "此模型僅用於錄製時的即時預覽。其選擇和下載獨立於“轉寫”設定中的最終轉寫模型。";
@@ -95,18 +95,18 @@
 "vad.energy" = "能量閾值";
 "vad.fluid_audio" = "FluidAudio（Silero）";
 "langdetect.by_transcriber" = "由轉寫器判斷";
-"langdetect.fluid_lid" = "FluidAudio 檢測";
+"langdetect.fluid_lid" = "FluidAudio 偵測";
 
 /* 流水線階段顯示名稱 */
 "pipeline.stage.preprocessing" = "預處理";
-"pipeline.stage.language_detection" = "語言檢測";
-"pipeline.stage.voice_activity_detection" = "語音檢測";
+"pipeline.stage.language_detection" = "語言偵測";
+"pipeline.stage.voice_activity_detection" = "語音偵測";
 "pipeline.stage.compaction" = "靜音移除";
 "pipeline.stage.diarization" = "講者分離";
 "pipeline.stage.fusion" = "轉寫整合";
 
 /* 語言 */
-"lang.auto" = "自動檢測";
+"lang.auto" = "自動偵測";
 "lang.pt" = "葡萄牙語";
 "lang.en" = "英語";
 "lang.es" = "西班牙語";
@@ -210,14 +210,14 @@
 
 /* 錄音 */
 "recorder.route_changed" = "錄音已暫停：音訊裝置發生變化（例如耳機被拔出）。";
-"recorder.engine_stalled" = "錄音已暫停：系統停止了音訊採集。點選恢復以繼續。";
+"recorder.engine_stalled" = "錄音已暫停：系統停止了收音。點選「繼續」接著錄音。";
 "recorder.already_active" = "錄音正在啟動或已有錄音進行中。";
-"recorder.meeting_unavailable" = "該會議已不在當前資料庫中。";
+"recorder.meeting_unavailable" = "該會議已不在目前資料庫中。";
 "recorder.write_failed" = "錄音已暫停，因為無法儲存音訊。請檢查可用儲存空間，然後停止錄音以保留部分錄音。";
 "recorder.capture_stalled" = "錄音已暫停，因為音訊不再寫入檔案。輕點“繼續”重試，或輕點“停止”保留部分錄音。";
 "recorder.storage_unknown" = "無法檢查可用儲存空間。錄音將繼續；請留意裝置儲存空間。";
-"recorder.storage_low" = "預計剩餘錄音時間：%@。請釋放空間或停止錄音以保留當前內容。";
-"recorder.partial_saved" = "音訊採集失敗後已儲存部分錄音。再次錄音前請檢查可用儲存空間。";
+"recorder.storage_low" = "預計剩餘錄音時間：%@。請釋放空間或停止錄音以保留目前內容。";
+"recorder.partial_saved" = "收音失敗後已儲存部分錄音。再次錄音前請檢查可用儲存空間。";
 "recorder.recovery_failed" = "錄音仍不可用。音訊已保留，您可以再次嘗試恢復。";
 "recorder.title" = "新增錄音";
 "recorder.discard" = "放棄錄音";
@@ -225,7 +225,7 @@
 "recorder.accessibility.timer_with_highlights" = "%1$@，%2$d 個標記";
 "recorder.add_title" = "新增標題…";
 "recorder.pause" = "暫停";
-"recorder.resume" = "恢復";
+"recorder.resume" = "繼續";
 "recorder.stop" = "停止";
 "recorder.highlight" = "標記重點";
 "recorder.photo" = "照片";
@@ -287,15 +287,15 @@
 "meetings.sort.duration_shortest" = "時長最短優先";
 "meetings.favorite" = "收藏";
 "meetings.unfavorite" = "取消收藏";
-"meetings.archive" = "歸檔";
-"meetings.unarchive" = "取消歸檔";
+"meetings.archive" = "封存";
+"meetings.unarchive" = "取消封存";
 "meetings.summary_count.one" = "%d 個摘要";
 "meetings.summary_count.other" = "%d 個摘要";
 "meetings.bucket" = "資料庫";
 "meetings.bucket.all" = "全部";
 "meetings.bucket.inbox" = "收件箱";
 "meetings.bucket.favorites" = "收藏";
-"meetings.bucket.archive" = "歸檔";
+"meetings.bucket.archive" = "封存";
 "folder.section.library" = "資料庫";
 "folder.section.folders" = "資料夾";
 "folder.new" = "新增資料夾";
@@ -376,7 +376,7 @@
 "tag.auto_suggest" = "推薦標籤";
 "tag.auto_suggest.empty" = "沒有推薦的標籤。";
 "tag.auto_suggest.error" = "無法推薦標籤。";
-"tag.auto_suggest.disclaimer" = "AI 推薦的標籤可能不準確，應用前請先檢查。";
+"tag.auto_suggest.disclaimer" = "AI 推薦的標籤可能不準確，套用前請先檢查。";
 "tag.auto_suggest.selection_hint" = "選擇要套用的標籤。";
 "tag.suggested_new" = "新增";
 "tag.merge" = "合併";
@@ -416,8 +416,8 @@
 /* 轉錄階段 */
 "phase.preparing" = "正在準備…";
 "phase.preprocessing" = "正在清理音訊…";
-"phase.detecting_language" = "正在檢測語言…";
-"phase.detecting_speech" = "正在檢測語音…";
+"phase.detecting_language" = "正在偵測語言…";
+"phase.detecting_speech" = "正在偵測語音…";
 "phase.transcribing" = "正在轉寫…";
 "phase.transcribing_progress" = "正在轉寫… %d%%";
 "phase.transcribing_chunk_progress" = "正在轉寫… %d%%（第 %d / %d 塊）";
@@ -465,7 +465,7 @@
 "detail.transcribe" = "轉寫";
 "detail.transcript" = "逐字稿";
 "detail.speakers" = "講者";
-"detail.speakers.note" = "講者為自動檢測，可能需要更正。點選姓名即可重新命名。";
+"detail.speakers.note" = "講者為自動偵測，可能需要更正。點選姓名即可重新命名。";
 "detail.summary" = "摘要";
 "detail.summarizing" = "正在產生摘要…";
 "detail.summary.needs_transcript" = "至少轉寫一段錄音才能產生摘要。";
@@ -476,13 +476,13 @@
 "detail.summary.generate" = "產生摘要";
 "detail.summary.cancel" = "取消摘要";
 "detail.summary.cancelling" = "正在取消摘要…";
-"detail.summary.cancelling.subtitle" = "正在停止當前請求，已產生的摘要將被保留。";
+"detail.summary.cancelling.subtitle" = "正在停止目前請求，已產生的摘要將被保留。";
 "detail.summary.progress.subtitle" = "正在分段處理逐字稿。您可以讓此頁面保持開啟，或取消本次產生。";
 "detail.summary.progress.single.subtitle" = "正在請求所選模型撰寫摘要，這可能需要一點時間。";
 "detail.summary.progress.streaming" = "模型正在撰寫，目前約 %d 個詞。";
 "detail.summary.draft.title" = "草稿 — 完成後排版";
 "detail.summary.delete_confirm.title" = "刪除此摘要？";
-"detail.summary.delete_confirm.message" = "此操作無法撤銷。";
+"detail.summary.delete_confirm.message" = "此操作無法復原。";
 "detail.share" = "分享";
 "detail.more_options" = "更多選項";
 "detail.segment_count" = "%d 個片段";
@@ -501,24 +501,24 @@
 "warning.diarization_requires_native_provider" = "講者分離正在使用基礎引擎。請在使用 Whisper 引擎的同時選擇支援原生講者分離的轉寫供應商（例如 ElevenLabs）以啟用此功能。";
 "speaker.cross_meeting_match.title" = "熟悉的聲音";
 "speaker.cross_meeting_match.message" = "這聽起來像是「%2$@」中的 %1$@。套用此名稱嗎？";
-"speaker.cross_meeting_match.disclaimer" = "基於聲音匹配。應用前請核實——可透過編輯講者姓名撤銷。";
+"speaker.cross_meeting_match.disclaimer" = "依聲音比對。套用前請確認——可透過編輯講者姓名復原。";
 "speaker.cross_meeting_match.confirm" = "是的，是 %@";
 "speaker.cross_meeting_match.dismiss" = "暫不";
 "detail.add_segment" = "新增片段";
 "detail.retranscribe" = "重新轉寫";
 "detail.retry_correction" = "重試校正";
 "detail.retranscribe.confirm.title" = "重新轉寫這段錄音？";
-"detail.retranscribe.confirm.message" = "這將用根據原始音訊重新產生的逐字稿替換現有轉寫，此操作無法撤銷。";
+"detail.retranscribe.confirm.message" = "這將用根據原始音訊重新產生的逐字稿替換現有轉寫，此操作無法復原。";
 "detail.retranscribe_all" = "重新轉寫全部";
 "detail.retranscribe_all.confirm.action" = "全部重新轉寫";
 "detail.retranscribe_all.confirm.title" = "重新轉寫所有錄音？";
-"detail.retranscribe_all.confirm.message" = "這將依次用根據原始音訊重新產生的逐字稿替換所有現有轉寫，此操作無法撤銷。";
+"detail.retranscribe_all.confirm.message" = "這將依序用根據原始音訊重新產生的逐字稿替換所有現有轉寫，此操作無法復原。";
 "detail.transcript.empty.title" = "尚無逐字稿";
 "detail.transcript.empty.subtitle" = "轉寫一段錄音即可在此檢視對話內容。";
 "detail.transcript.failed.title" = "轉寫失敗";
 "detail.transcript.failed.subtitle" = "請在「錄音」標籤頁重試。";
-"detail.transcript.no_speech.title" = "未檢測到語音";
-"detail.transcript.no_speech.subtitle" = "此錄音未包含可檢測到的語音。";
+"detail.transcript.no_speech.title" = "未偵測到語音";
+"detail.transcript.no_speech.subtitle" = "此錄音未包含可偵測到的語音。";
 "detail.transcript.corrupted.title" = "逐字稿無法讀取";
 "detail.transcript.corrupted.subtitle" = "已儲存的逐字稿似乎已損壞。重新轉寫此錄音將替換它。";
 "detail.transcript.corrupted_banner" = "此錄音的逐字稿似乎已損壞，無法載入。";
@@ -555,13 +555,13 @@
 "settings.templates_footer" = "範本決定逐字稿的摘要方式。每次產生摘要時選擇一個範本。";
 "settings.add_template" = "新增範本";
 "settings.templates_sync" = "透過 iCloud 同步範本";
-"settings.templates_sync_footer" = "你建立的自訂範本會透過 iCloud 同步，更換裝置後依然可用。內建範本始終自行保持最新，無需同步。";
+"settings.templates_sync_footer" = "你建立的自訂範本會透過 iCloud 同步，更換裝置後依然可用。內建範本會自動保持最新，無需同步。";
 "settings.template_name" = "名稱";
 "settings.template_description" = "描述";
 "settings.template_description_placeholder" = "在範本清單中顯示的一行文字";
 "settings.template_description_footer" = "顯示在名稱下方，便於區分範本。留空則使用說明的第一句話。";
 "settings.template_instructions" = "指示";
-"settings.template_instructions_footer" = "描述摘要的重點和語氣，以及你想要的分節（例如：已完成、下一步、阻礙）。模型始終使用逐字稿所用的語言回覆。";
+"settings.template_instructions_footer" = "描述摘要的重點和語氣，以及你想要的分節（例如：已完成、下一步、阻礙）。模型一律以逐字稿的語言回覆。";
 "settings.template.builtin" = "預設";
 "settings.template.custom" = "自訂";
 "settings.delete_template" = "刪除範本";
@@ -569,7 +569,7 @@
 "template.general.name" = "常規會議";
 "template.general.desc" = "為未參會者準備的回顧：討論了什麼、決定了什麼、由誰負責。";
 "template.standup.name" = "每日站會";
-"template.standup.desc" = "一目瞭然地檢視每個人的進展、下一步計劃和阻礙。";
+"template.standup.desc" = "一目瞭然地檢視每個人的進展、下一步計畫和阻礙。";
 "template.interview.name" = "面試";
 "template.interview.desc" = "候選人表現如何：關鍵回答、優勢、顧慮和總體結論。";
 "template.outline.name" = "會議大綱";
@@ -593,9 +593,9 @@
 "pipeline.transcription_engine" = "轉寫引擎";
 "pipeline.preprocessing" = "音訊清理";
 "pipeline.preprocessing_footer" = "在轉寫前降噪並正規化音量。";
-"pipeline.vad" = "語音活動檢測";
-"pipeline.vad_footer" = "檢測語音與靜音，以減少傳送給轉寫器的內容。";
-"pipeline.language_detection" = "語言檢測";
+"pipeline.vad" = "語音活動偵測";
+"pipeline.vad_footer" = "偵測語音與靜音，以減少傳送給轉寫器的內容。";
+"pipeline.language_detection" = "語言偵測";
 "pipeline.language_detection_footer" = "自動判斷所說的語言，而不是依賴轉寫器的猜測。";
 "settings.transcription_provider" = "轉寫供應商";
 "settings.whisper_provider_key_footer" = "轉寫使用上方選定的供應商，與摘要供應商相互獨立。可使用任何支援轉寫的已設定供應商（如 OpenAI、Groq 或 ElevenLabs）。";
@@ -635,18 +635,18 @@
 "settings.language_support_footer" = "⚠ = 所選轉寫引擎可能不支援。";
 "lang.unsupported_a11y" = "所選轉寫引擎可能不支援";
 "settings.mic_pickup" = "麥克風";
-"settings.mic_pickup_footer" = "全房間可採集所有人的聲音；聚焦講者更偏向正前方的人。";
+"settings.mic_pickup_footer" = "全房間可收到所有人的聲音；聚焦講者更偏向正前方的人。";
 "micpickup.whole_room" = "全房間";
 "micpickup.focus_speaker" = "聚焦講者";
-"settings.always_use_built_in_mic" = "始終使用 iPhone 麥克風";
-"settings.always_use_built_in_mic_footer" = "始終使用 iPhone 內建麥克風錄製，即使已連線藍芽配件。";
+"settings.always_use_built_in_mic" = "一律使用 iPhone 麥克風";
+"settings.always_use_built_in_mic_footer" = "一律使用 iPhone 內建麥克風錄音，即使已連線藍芽配件。";
 "settings.diagnostics" = "診斷";
-"settings.log_level" = "日誌記錄";
-"settings.log_level_footer" = "「關閉」將完全禁用日誌；「詳盡」會新增對報告問題有用的細節。";
-"settings.export_logs" = "匯出日誌";
-"settings.export_logs_footer" = "將最近 24 小時的日誌以文字檔案形式分享。";
-"settings.view_logs" = "檢視最近日誌";
-"settings.view_logs.empty" = "過去24小時內沒有日誌條目";
+"settings.log_level" = "記錄檔";
+"settings.log_level_footer" = "「關閉」將完全停用記錄檔；「詳盡」會新增對報告問題有用的細節。";
+"settings.export_logs" = "匯出記錄檔";
+"settings.export_logs_footer" = "將最近 24 小時的記錄檔以文字檔案形式分享。";
+"settings.view_logs" = "檢視最近記錄檔";
+"settings.view_logs.empty" = "過去24小時內沒有記錄檔項目";
 "settings.diagnostic_reports" = "診斷報告";
 "settings.diagnostic_reports_footer" = "儲存在本裝置上捕獲的崩潰和卡死報告。";
 "settings.diagnostic_reports_share_footer" = "不會自動傳送到任何地方——只有當你點選某條報告的「分享」時，報告才會離開裝置。";
@@ -677,11 +677,11 @@
 "settings.compact" = "壓縮錄音";
 "settings.compact.preview" = "可釋放約 %@";
 "settings.compact.confirm" = "壓縮錄音？";
-"settings.compact.message" = "此操作會按當前音訊品質重新編碼 %d 個已轉寫的錄音，可釋放約 %@。操作無法撤銷。轉寫、摘要、講者和搜尋均不受影響。";
+"settings.compact.message" = "此操作會按目前音訊品質重新編碼 %d 個已轉寫的錄音，可釋放約 %@。操作無法復原。轉寫、摘要、講者和搜尋均不受影響。";
 "settings.compact.running" = "正在壓縮錄音…";
 "settings.compact.done" = "錄音已壓縮";
 "settings.compact.result" = "已釋放 %@。";
-"settings.compact_footer" = "只有已完成轉寫且大於當前品質設定的錄音才會被重新編碼。已經足夠小的錄音保持不變。";
+"settings.compact_footer" = "只有已完成轉寫且大於目前品質設定的錄音才會被重新編碼。已經足夠小的錄音保持不變。";
 "settings.largest_recordings" = "最大的錄音";
 "settings.largest_recordings_footer" = "從資料庫中刪除會議即可回收其音訊。";
 "settings.clear_cache" = "清除臨時檔案";
@@ -692,7 +692,7 @@
 "settings.clear_cache.result" = "已移除 %d 個檔案（%@）。";
 "settings.delete_all" = "刪除所有資料";
 "settings.delete_all.confirm" = "刪除所有會議和錄音？";
-"settings.delete_all.message" = "這將永久刪除所有會議、逐字稿、音訊檔案、照片、聊天和產生的文件，包括恢復副本。標籤和資料夾將保留。此操作無法撤銷。";
+"settings.delete_all.message" = "這將永久刪除所有會議、逐字稿、音訊檔案、照片、聊天和產生的文件，包括恢復副本。標籤和資料夾將保留。此操作無法復原。";
 "settings.delete_all.residual" = "%d 個音訊檔案無法刪除，仍保留在裝置上。請重試或釋放空間後再試。";
 "settings.diarization_engine" = "講者分離引擎";
 "settings.diarization_engine_footer" = "神經網路引擎更準確但需要下載；啟發式引擎可立即離線使用。";
@@ -710,9 +710,9 @@
 "settings.storage.enhanced_audio" = "增強音訊";
 "settings.storage.enhanced_audio_delete" = "刪除增強音訊";
 "settings.storage.enhanced_audio_message" = "刪除所有產生的增強音訊副本？原始錄音將會保留。";
-"settings.on_device_auto_language" = "裝置端語言檢測（自動）";
+"settings.on_device_auto_language" = "裝置端語言偵測（自動）";
 "settings.live_transcription" = "即時轉寫預覽";
-"settings.live_transcription_footer" = "在錄製過程中於裝置上即時預覽逐字稿。它絕不會替代錄制結束後產生的最終轉寫。";
+"settings.live_transcription_footer" = "在錄製過程中於裝置上即時預覽逐字稿。它絕不會替代錄製結束後產生的最終轉寫。";
 "settings.model_download.title" = "一次性模型下載";
 "settings.model_download.message" = "此功能會從 Hugging Face 下載 FluidAudio 裝置端模型。根據功能不同，一次性下載最多約為 1 GB，之後會儲存在裝置上。";
 "settings.model_download.allow" = "允許並下載";
@@ -737,15 +737,15 @@
 "settings.about" = "關於";
 "settings.acknowledgements" = "致謝";
 "settings.sponsor" = "贊助 Kurn";
-"ack.intro" = "裝置端語音辨識、講者分離和語音活動檢測由 Fluid Inference 與 whisper.cpp 提供支援。Kurn 使用下列軟體包，並按需下載其機器學習模型。每個元件均在各自的許可協議下使用。";
+"ack.intro" = "裝置端語音辨識、講者分離和語音活動偵測由 Fluid Inference 與 whisper.cpp 提供支援。Kurn 使用下列套件，並按需下載其機器學習模型。每個元件均在各自的授權條款下使用。";
 "ack.packages" = "Swift 包";
 "ack.models" = "機器學習模型";
-"ack.footer" = "模型按需下載，並未內建於應用中。點選某一項可開啟其專案頁面及完整許可協議。涵蓋 Sortformer 的 NVIDIA Open Model License 有其自身條款。";
+"ack.footer" = "模型按需下載，並未內建於 App 中。點選某一項可開啟其專案頁面及完整授權條款。涵蓋 Sortformer 的 NVIDIA Open Model License 有其自身條款。";
 "settings.models.none" = "尚未下載任何模型";
 "settings.models.live" = "即時轉寫";
-"settings.models.on_device_language" = "裝置端語言檢測";
+"settings.models.on_device_language" = "裝置端語言偵測";
 "settings.models.diarization" = "講者分離";
-"settings.models.vad" = "語音活動檢測";
+"settings.models.vad" = "語音活動偵測";
 "settings.models.other" = "其他 FluidAudio 模型";
 "settings.models.whisper_cpp" = "裝置端 Whisper";
 "settings.models.sherpa_onnx" = "Sherpa-ONNX 講者分離";
@@ -758,7 +758,7 @@
 /* 錄音安全 */
 "settings.require_auth_for_recordings" = "需要身份驗證";
 "settings.require_auth_for_recordings_footer" = "每次開啟 App 時一次 Face ID、Touch ID 或裝置密碼驗證。";
-"settings.recording_section_privacy_footer" = "無論這些設定如何，音訊檔案始終使用裝置密碼在磁碟上加密。";
+"settings.recording_section_privacy_footer" = "無論這些設定如何，音訊檔案一律以裝置密碼在磁碟上加密。";
 "settings.hide_live_activity_meeting_title" = "在鎖定畫面上隱藏會議標題";
 "settings.hide_live_activity_meeting_title_footer" = "錄音時，在鎖定畫面、動態島和已配對的 Apple Watch 上顯示通用的「正在錄音…」標籤，而非真實的會議標題。";
 "recordings.locked_title" = "錄音已鎖定";
@@ -771,7 +771,7 @@
 "error.auto_tagging" = "無法推薦標籤：%@";
 "error.summary_truncated" = "由於達到模型的輸出上限，摘要被截斷。請嘗試使用分節較少的範本，或使用輸出上限更大的模型。";
 "error.generation_truncated" = "響應已達到模型的輸出上限。請嘗試縮短請求或選擇更少的轉寫。";
-"error.log_export" = "無法匯出日誌：%@";
+"error.log_export" = "無法匯出記錄檔：%@";
 "detail.summarizing.progress" = "正在摘要第 %1$d 部分，共 %2$d 部分…";
 
 /* Usage insights ("我的資料") */
@@ -784,7 +784,7 @@
 "usage_insights.empty" = "尚無資料";
 "usage_insights.clear" = "清除我的資料";
 "usage_insights.clear_confirm" = "清除使用資料？";
-"usage_insights.clear_message" = "這將清除你本地的使用計數（已完成的錄音、引擎和範本使用情況）。僅影響本裝置上的資料，且無法撤銷。";
+"usage_insights.clear_message" = "這將清除你本機的使用計數（已完成的錄音、引擎和範本使用情況）。僅影響本裝置上的資料，且無法復原。";
 "usage_insights.footer" = "使用計數僅儲存在本裝置上，絕不會傳輸到任何地方。";
 
 /* Share selection */
@@ -931,9 +931,9 @@
 "health.all_clear" = "一切正常，無需處理";
 "health.untitled_meeting" = "未命名會議";
 "health.recovery_needed" = "待恢復項";
-"health.recovery_needed_footer" = "在 Kurn 寫入完成前採集被中斷的錄音。重試會執行 Kurn 在啟動時已自動嘗試的相同恢復流程。";
+"health.recovery_needed_footer" = "在 Kurn 寫入完成前收音就被中斷的錄音。重試會執行 Kurn 在啟動時已自動嘗試的相同恢復流程。";
 "health.stalled_transcriptions" = "失敗或延遲的轉寫";
-"health.stalled_transcriptions_footer" = "轉寫失敗或尚未開始的錄音。重試會用當前設定重新開始轉寫。";
+"health.stalled_transcriptions_footer" = "轉寫失敗或尚未開始的錄音。重試會用目前設定重新開始轉寫。";
 "health.degraded_transcripts" = "已完成但有警告";
 "health.degraded_transcripts_footer" = "某個處理階段降級或回退的轉寫記錄。重試僅適用於支援該操作的階段。";
 "health.model_verification" = "模型驗證";
@@ -957,17 +957,17 @@
 "store_recovery.retry" = "重試";
 "store_recovery.reason_protected_data_unavailable" = "裝置已鎖定。請解鎖後重試。";
 "store_recovery.reason_storage_full" = "裝置儲存空間不足。請清理空間後重試。";
-"store_recovery.reason_migration_incompatible" = "此版本的 Kurn 無法讀取你現有的資料。請更新應用或聯絡支援。";
+"store_recovery.reason_migration_incompatible" = "此版本的 Kurn 無法讀取你現有的資料。請更新 App 或聯絡支援。";
 "store_recovery.reason_corrupt_or_unknown" = "開啟資料時出現問題。你的錄音未被刪除。";
 "store_launch.opening" = "正在開啟";
 
 /* Store recovery: backup, restore, salvage, fresh start (H2 PR 4) */
 "store_recovery.reason_protection_verification_failed" = "Kurn 無法確認你的資料已進行靜態加密。";
-"store_recovery.reason_application_support_unavailable" = "Kurn 在此裝置上找不到安全的位置來儲存你的資料。請重新啟動應用後重試。";
+"store_recovery.reason_application_support_unavailable" = "Kurn 在此裝置上找不到安全的位置來儲存你的資料。請重新啟動 App 後重試。";
 "store_recovery.backups_title" = "從備份恢復";
 "store_recovery.restore_button" = "恢復";
 "store_recovery.restore_confirm_title" = "恢復此備份?";
-"store_recovery.restore_confirm_message" = "你當前的資料將被移至一旁而非刪除,並替換為此備份。";
+"store_recovery.restore_confirm_message" = "你目前的資料將被移至一旁而非刪除,並替換為此備份。";
 "store_recovery.salvage_button" = "嘗試資料恢復";
 "store_recovery.salvage_result_recovered" = "已恢復 %d 個會議。點按“分享”以儲存它們。";
 "store_recovery.salvage_result_none" = "未能恢復任何資料。";
@@ -984,7 +984,7 @@
 "quarantine.export" = "匯出錄音";
 "quarantine.delete" = "刪除錄音";
 "quarantine.delete_confirm" = "刪除此保留的錄音？";
-"quarantine.delete_message" = "此音訊檔案將被永久刪除。此操作無法撤銷。";
+"quarantine.delete_message" = "此音訊檔案將被永久刪除。此操作無法復原。";
 "quarantine.recover_unreadable" = "無法讀取此保留的音訊檔案。它已被保留在原處。";
 "quarantine.recovered_meeting_title" = "已恢復的錄音";
 "quarantine.reason.unparsable" = "無法辨識的檔名";
@@ -1015,7 +1015,7 @@
 "settings.read_aloud.title" = "朗讀";
 "settings.read_aloud.voice_section" = "語音";
 "settings.read_aloud.voice" = "語音";
-"settings.read_aloud.voice_automatic" = "自動（匹配文字語言）";
+"settings.read_aloud.voice_automatic" = "自動（配合文字語言）";
 "settings.read_aloud.custom_voice" = "自訂語音 ID";
 "settings.read_aloud.custom_model" = "自訂模型";
 "settings.read_aloud.on_device_footer" = "裝置端語音可離線使用，任何內容都不會離開你的 iPhone。可在 iOS 設定 › 輔助功能 › 朗讀內容 › 聲音 中下載更高品質的語音。";
