@@ -79,7 +79,8 @@ struct MeetingExportTests {
         #expect(!markdown.contains("General recap"))
     }
 
-    @Test func markdownUsesSpeakerDisplayNameInTranscript() {
+    /// The fork shows only anonymous speaker labels, so a stored name never reaches the export.
+    @Test func markdownUsesAnonymousSpeakerLabelInTranscript() {
         let context = makeContext()
         let meeting = Meeting(title: "Sprint Planning")
         context.insert(meeting)
@@ -97,7 +98,8 @@ struct MeetingExportTests {
 
         let markdown = MeetingExport.markdown(for: meeting, summary: nil)
         #expect(markdown.contains("## Transcript"))
-        #expect(markdown.contains("Carlos:"))
+        #expect(markdown.contains("Speaker 1:"))
+        #expect(!markdown.contains("Carlos"))
         #expect(markdown.contains("Let's begin"))
     }
 
@@ -502,7 +504,7 @@ struct MeetingExportTests {
         #expect(markdown.contains("title: \"Say \\\"hi\\\" to Q3\""))
     }
 
-    @Test func obsidianStyleMarkdownWrapsSpeakerNamesAsWikilinks() {
+    @Test func obsidianStyleMarkdownWrapsAnonymousSpeakerLabelsAsWikilinks() {
         let context = makeContext()
         let meeting = Meeting(title: "Sprint Planning")
         context.insert(meeting)
@@ -519,11 +521,12 @@ struct MeetingExportTests {
         recording.transcript = transcript
 
         let markdown = MeetingExport.markdown(for: meeting, summary: nil, obsidianStyle: true)
-        #expect(markdown.contains("[[Carlos]]:"))
+        #expect(markdown.contains("[[Speaker 1]]:"))
+        #expect(!markdown.contains("Carlos"))
 
         let plainMarkdown = MeetingExport.markdown(for: meeting, summary: nil, obsidianStyle: false)
-        #expect(!plainMarkdown.contains("[[Carlos]]"))
-        #expect(plainMarkdown.contains("Carlos:"))
+        #expect(!plainMarkdown.contains("[[Speaker 1]]"))
+        #expect(plainMarkdown.contains("Speaker 1:"))
     }
 
     @Test func transcriptAndSummaryMarkdownSupportObsidianStyleToo() {
