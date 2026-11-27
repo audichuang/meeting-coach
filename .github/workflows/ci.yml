@@ -54,7 +54,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: xcodebuild -version
+      # The image defaults to Xcode 27.1; match the local 27.2. Booting first avoids
+      # xcodebuild timing out on the simulator's lockdown service (hung a run on 2026-11-27).
+      - name: Select Xcode and boot simulator
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.2.app
+          xcodebuild -version
+          xcrun simctl boot 'iPad mini (A20 Pro)' || true
+          xcrun simctl bootstatus 'iPad mini (A20 Pro)' -b
       # Package sources only (not build products), keyed on what pins them; same idea
       # as upstream's app/.github/actions/cache-spm-packages.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
