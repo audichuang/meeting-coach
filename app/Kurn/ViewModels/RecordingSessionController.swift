@@ -168,8 +168,14 @@ final class RecordingSessionController {
     ) -> RecorderViewModel {
         #if DEBUG
         let recorder = DebugFileCaptureEngine.recorderIfRequested() ?? AudioRecorderService()
+        let debugPreview = DebugCoachPreview.makeIfRequested(
+            meeting: meeting,
+            modelContext: modelContext,
+            elapsed: { [weak recorder] in recorder?.elapsed ?? 0 }
+        )
         #else
         let recorder = AudioRecorderService()
+        let debugPreview: (session: MeetingCoachSession, liveTranscription: LiveTranscriptionService)? = nil
         #endif
         return RecorderViewModel(
             meeting: meeting,
@@ -184,9 +190,11 @@ final class RecordingSessionController {
                 largeTransferPolicy: settings.largeTransferPolicy,
                 hideLiveActivityMeetingTitle: settings.hideLiveActivityMeetingTitle,
                 liveTranscriptionModel: settings.fluidAudioLiveModel,
-                coach: MeetingCoachConfiguration.resolve(settings: settings)
+                coach: debugPreview == nil ? MeetingCoachConfiguration.resolve(settings: settings) : nil
             ),
             recorder: recorder,
+            liveTranscription: debugPreview?.liveTranscription,
+            coachSession: debugPreview?.session,
             onRecordingSaved: { [weak settings] in settings?.recordRecordingCompleted() }
         )
     }
