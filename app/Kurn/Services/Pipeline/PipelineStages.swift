@@ -136,6 +136,19 @@ struct PipelineConfiguration: Sendable, Equatable {
     var largeTransferPolicy: LargeTransferPolicy = .wifiOnly
     /// Set only by the meeting coach's post-meeting run (`MeetingCoachFollowUp`).
     var taiwanMandarinTranscript = false
+    /// The pipeline for the meeting coach's formal transcript: the user's own
+    /// stages, with the transcription step pinned to the coach's backend. Cloud
+    /// consent is implied — the coach already streamed this audio while recording.
+    var forMeetingCoach: PipelineConfiguration {
+        var config = self
+        config.transcription = .whisperAPI
+        config.transcriptionProvider = .meetingCoach
+        config.transcriptionModel = CoachPricing.transcribeModel
+        config.cloudTranscriptionConsented = true
+        config.taiwanMandarinTranscript = true
+        config.correction = .none
+        return config
+    }
     var cloudTransfer: CloudTranscriptionTransfer {
         CloudTranscriptionTransfer(
             consented: cloudTranscriptionConsented,

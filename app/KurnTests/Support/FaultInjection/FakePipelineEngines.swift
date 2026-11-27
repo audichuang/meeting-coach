@@ -119,6 +119,7 @@ final class FakeTranscriber: PipelineTranscribing {
     /// Park after the first chunk's checkpoint until the run is cancelled, so
     /// a test can observe the "half done" state and then cancel or stop it.
     func holdAfterFirstChunk() { state.write { $0.holdsAfterFirstChunk = true } }
+    func clearHold() { state.write { $0.holdsAfterFirstChunk = false } }
 
     func transcribe(_ request: EngineTranscriptionRequest) async throws -> RawTranscript {
         let (spans, speakerTurns, failure, holds) = state.read {

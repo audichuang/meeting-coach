@@ -129,6 +129,9 @@ final class TranscriptionCoordinator {
     /// Told about each finished transcript, to time the App Store rating
     /// request. `nil` only in tests.
     let reviewPrompt: ReviewPromptCoordinator?
+    /// Invoked after a coach recording commits a non-empty formal transcript,
+    /// including when that happens later via resume or retry.
+    let onCoachTranscriptCommitted: (@MainActor (Meeting, Recording) -> Void)?
 
     init(
         modelContext: ModelContext,
@@ -137,7 +140,8 @@ final class TranscriptionCoordinator {
         wikiCoordinator: WikiCoordinator? = nil,
         reviewPrompt: ReviewPromptCoordinator? = nil,
         aiTitleCoordinator: AITitleCoordinator = AITitleCoordinator(),
-        transcriptionService: TranscriptionService = TranscriptionService()
+        transcriptionService: TranscriptionService = TranscriptionService(),
+        onCoachTranscriptCommitted: (@MainActor (Meeting, Recording) -> Void)? = nil
     ) {
         self.modelContext = modelContext
         self.appSettings = appSettings
@@ -146,6 +150,7 @@ final class TranscriptionCoordinator {
         self.reviewPrompt = reviewPrompt
         self.aiTitleCoordinator = aiTitleCoordinator
         self.transcriptionService = transcriptionService
+        self.onCoachTranscriptCommitted = onCoachTranscriptCommitted
     }
 
     /// Persist pending model changes, surfacing failures instead of dropping
@@ -278,13 +283,16 @@ final class TranscriptionCoordinator {
               !transcribingIDs.contains(recording.id) else { return }
 
         let recordingID = recording.id
+        let isCoach = isCoachRecording(recording)
+        let effectiveLanguage = isCoach ? .chinese : language
+        let effectiveConfig = isCoach ? config.forMeetingCoach : config
         // H9 PR 22, item 5: one id correlates every `ReliabilityEvent` this
         // attempt produces (started through its terminal outcome), the same
         // "operation run" grouping `DocumentGenerationViewModel` already
         // established for its own operation.
         let runID = OperationID()
         let startedAt = Date()
-        AppLog.transcription.atNotice.notice("VM: transcribe requested id=\(recordingID, privacy: .public) engine=\(config.transcription.rawValue, privacy: .public)")
+        AppLog.transcription.atNotice.notice("VM: transcribe requested id=\(recordingID, privacy: .public) engine=\(effectiveConfig.transcription.rawValue, privacy: .public)")
         ReliabilityLog.record(ReliabilityEvent(operationID: runID, operation: "transcription", outcome: .started))
 
         cancelPostTranscriptionWork(for: recording.meeting?.id)
@@ -298,13 +306,13 @@ final class TranscriptionCoordinator {
             cancellingIDs.remove(recordingID)
         }
         recording.transcriptionStatus = .inProgress
-        recording.transcriptionMode = config.transcription.storageMode
+        recording.transcriptionMode = effectiveConfig.transcription.storageMode
         persist()
 
         // Only the Apple Speech engine uses `SFSpeechRecognizer`; the FluidAudio
         // and Whisper engines don't, so don't gate them on (or block them by a
         // denial of) the Speech authorization.
-        let usesAppleSpeech = config.transcription == .appleSpeech
+        let usesAppleSpeech = effectiveConfig.transcription == .appleSpeech
         if usesAppleSpeech {
             let authorized = await ensureSpeechAuthorization()
             guard authorized else {
@@ -402,8 +410,8 @@ final class TranscriptionCoordinator {
             let output = try await transcriptionService.transcribe(
                 fileURL: fileURL,
                 fileName: fileName,
-                language: language,
-                config: config,
+                language: effectiveLanguage,
+                config: effectiveConfig,
                 checkpoint: checkpoint,
                 onPhase: { continuation.yield(.phase($0)) },
                 onDiarizationWarning: { continuation.yield(.diarizationWarning($0)) },
@@ -417,16 +425,19 @@ final class TranscriptionCoordinator {
             )
             await drainEvents()
 
-            try saveTranscript(output, for: recording)
+            let committed = try saveTranscript(output, for: recording)
             AppLog.transcription.atNotice.notice("VM: transcribe succeeded id=\(recordingID, privacy: .public) segments=\(output.segments.count, privacy: .public)")
             ReliabilityLog.record(ReliabilityEvent(
                 operationID: runID, operation: "transcription", outcome: .succeeded,
                 elapsedSeconds: Date().timeIntervalSince(startedAt)
             ))
-            appSettings?.recordTranscriptionEngineUsed(config.transcription)
+            appSettings?.recordTranscriptionEngineUsed(effectiveConfig.transcription)
             reviewPrompt?.noteSuccessfulMoment()
             if let settings = appSettings {
                 startPostTranscriptionWork(for: recording, settings: settings)
+            }
+            if committed, isCoach, !output.segments.isEmpty, let meeting = recording.meeting {
+                onCoachTranscriptCommitted?(meeting, recording)
             }
         } catch is CancellationError {
             await drainEvents()
@@ -570,7 +581,19 @@ final class TranscriptionCoordinator {
     /// Throws if the new segments can't be encoded (`JSONStorage.
     /// encodeAuthoritative`), checked before touching the existing
     /// transcript so a bad result can't destroy a still-valid one.
-    private func saveTranscript(_ output: TranscriptionService.Output, for recording: Recording) throws {
+    /// Whether `recording` was made with the meeting coach, so every start,
+    /// retry, re-transcription, and resume uses the coach pipeline.
+    private func isCoachRecording(_ recording: Recording) -> Bool {
+        let recordingID = recording.id
+        var descriptor = FetchDescriptor<CoachRecord>(predicate: #Predicate { $0.recordingID == recordingID })
+        descriptor.fetchLimit = 1
+        if let records = try? modelContext.fetch(descriptor), !records.isEmpty {
+            return true
+        }
+        return recording.meeting?.coachRecords.contains { $0.recordingID == recordingID } ?? false
+    }
+
+    private func saveTranscript(_ output: TranscriptionService.Output, for recording: Recording) throws -> Bool {
         guard let segmentsData = JSONStorage.encodeAuthoritative(output.segments) else {
             throw AppError.persistenceFailed(NSLocalizedString("error.transcript_encode_failed", comment: "Encode failed"))
         }
@@ -608,7 +631,11 @@ final class TranscriptionCoordinator {
         // This clears this recording's previous vectors on retranscription.
         recording.speakerVoiceprints = SpeakerPrivacyPolicy.voiceprintsForStorage(output.speakerVoiceprints)
         syncSpeakers(for: recording.meeting)
-        persist()
+        if let failure = modelContext.saveOrError() {
+            self.error = failure
+            return false
+        }
+        return true
     }
 
     /// Whether an `AppError` should pause transcription (→ `.pending`) rather

@@ -71,15 +71,22 @@ final class AppComposition {
         let semanticIndex = SemanticIndexCoordinator(modelContext: context, appSettings: settings)
         let wiki = WikiCoordinator(modelContext: context, appSettings: settings)
         let reviewPrompt = ReviewPromptCoordinator()
+        let summaries = SummaryViewModel(modelContext: context, appSettings: settings, reviewPrompt: reviewPrompt)
         let transcription = TranscriptionCoordinator(
             modelContext: context,
             appSettings: settings,
             semanticIndexCoordinator: semanticIndex,
             wikiCoordinator: wiki,
-            reviewPrompt: reviewPrompt
+            reviewPrompt: reviewPrompt,
+            onCoachTranscriptCommitted: { meeting, recording in
+                MeetingCoachFollowUp.finishAfterTranscript(
+                    meeting: meeting,
+                    recording: recording,
+                    summaries: summaries
+                )
+            }
         )
-        let summaries = SummaryViewModel(modelContext: context, appSettings: settings, reviewPrompt: reviewPrompt)
-        let coachFollowUp = MeetingCoachFollowUp(transcription: transcription, summaries: summaries, settings: settings)
+        let coachFollowUp = MeetingCoachFollowUp(transcription: transcription, settings: settings)
         return AppEnvironment(
             modelContainer: container,
             transcription: transcription,

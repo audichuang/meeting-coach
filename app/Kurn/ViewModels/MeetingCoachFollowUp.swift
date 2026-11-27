@@ -19,18 +19,17 @@
 
 import Foundation
 import KurnCore
+import SwiftData
 
 @MainActor
 final class MeetingCoachFollowUp {
     nonisolated static let transcriptionModel = CoachPricing.transcribeModel
 
     private let transcription: TranscriptionCoordinator
-    private let summaries: SummaryViewModel
     private let settings: AppSettings
 
-    init(transcription: TranscriptionCoordinator, summaries: SummaryViewModel, settings: AppSettings) {
+    init(transcription: TranscriptionCoordinator, settings: AppSettings) {
         self.transcription = transcription
-        self.summaries = summaries
         self.settings = settings
     }
 
@@ -38,19 +37,16 @@ final class MeetingCoachFollowUp {
     /// transcription step pinned to the coach's backend. Cloud consent is implied — the coach
     /// already streamed this audio to OpenAI while recording.
     nonisolated static func configuration(from base: PipelineConfiguration) -> PipelineConfiguration {
-        var config = base
-        config.transcription = .whisperAPI
-        config.transcriptionProvider = .meetingCoach
-        config.transcriptionModel = transcriptionModel
-        config.cloudTranscriptionConsented = true
-        config.taiwanMandarinTranscript = true
-        config.correction = .none
-        return config
+        base.forMeetingCoach
     }
 
     func start(meeting: Meeting, recordingID: UUID) {
         guard let recording = meeting.recordings.first(where: { $0.id == recordingID }) else { return }
-        Self.run(meeting: meeting, recording: recording, transcription: transcription, summaries: summaries, settings: settings)
+        if transcription.startTranscription(
+            recording, language: .chinese, config: Self.configuration(from: settings.pipelineConfiguration)
+        ) == nil {
+            AppLog.transcription.atNotice.notice("MeetingCoachFollowUp: formal transcript not started id=\(recording.id, privacy: .public)")
+        }
     }
 
     /// Whether `recording` was made with the coach, so a re-transcription should take this route too.
@@ -58,38 +54,37 @@ final class MeetingCoachFollowUp {
         meeting.coachRecords.contains { $0.recordingID == recording.id }
     }
 
-    /// Also the detail screen's (re)transcribe for a coach recording, which is how a run that
-    /// failed after the meeting (offline, API error) is retried.
-    static func run(meeting: Meeting, recording: Recording, transcription: TranscriptionCoordinator,
-                    summaries: SummaryViewModel, settings: AppSettings) {
-        guard let task = transcription.startTranscription(
-            recording, language: .chinese, config: configuration(from: settings.pipelineConfiguration)
-        ) else {
-            AppLog.transcription.atNotice.notice("MeetingCoachFollowUp: formal transcript not started id=\(recording.id, privacy: .public)")
-            return
+    /// Called by `TranscriptionCoordinator.onCoachTranscriptCommitted` once this run's formal
+    /// transcript has been committed — including when that happens later via resume or retry.
+    static func finishAfterTranscript(
+        meeting: Meeting,
+        recording: Recording,
+        summaries: SummaryViewModel,
+        resolveSummaryProvider: ProviderFactory.LLMResolver? = nil
+    ) {
+        let recordingID = recording.id
+        let record = meeting.coachRecords.first { $0.recordingID == recordingID }
+            ?? (try? recording.modelContext?.fetch(
+                FetchDescriptor<CoachRecord>(predicate: #Predicate { $0.recordingID == recordingID })
+            ))?.first
+        // shortcut: bills the whole recording at the list price; a resumed run that skipped
+        // chunks is overcounted. Upgrade by summing the `usage.seconds` each chunk reports.
+        let recordSpend: @MainActor (Double) -> Void = { addSpend($0, to: record) }
+        recordSpend(recording.duration / 60 * CoachPricing.transcribePerMinute)
+        let resolver: ProviderFactory.LLMResolver = resolveSummaryProvider ?? { _, model in
+            let backend = CoachBackend.current()
+            try LLMHTTP.requireAPIKey(backend?.token ?? "", provider: .meetingCoach)
+            guard let backend else { throw AppError.invalidProviderURL }
+            return CoachSummaryProvider(client: CoachResponsesClient(backend: backend), model: model) { usage in
+                var meter = CoachCostMeter()
+                meter.addTokens(model: model, usage: usage)
+                Task { await recordSpend(meter.totalUSD) }
+            }
         }
-        Task { @MainActor in
-            await task.value
-            guard recording.transcript?.segments.isEmpty == false else { return }
-            let record = meeting.coachRecords.first { $0.recordingID == recording.id }
-            // shortcut: bills the whole recording at the list price; a resumed run that skipped
-            // chunks is overcounted. Upgrade by summing the `usage.seconds` each chunk reports.
-            let recordSpend: @MainActor (Double) -> Void = { addSpend($0, to: record) }
-            recordSpend(recording.duration / 60 * CoachPricing.transcribePerMinute)
-            summaries.startSummary(
-                for: meeting, provider: .meetingCoach, model: CoachPricing.cardModel, template: .meetingCoach,
-                resolveProvider: { _, model in
-                    let backend = CoachBackend.current()
-                    try LLMHTTP.requireAPIKey(backend?.token ?? "", provider: .meetingCoach)
-                    guard let backend else { throw AppError.invalidProviderURL }
-                    return CoachSummaryProvider(client: CoachResponsesClient(backend: backend), model: model) { usage in
-                        var meter = CoachCostMeter()
-                        meter.addTokens(model: model, usage: usage)
-                        Task { await recordSpend(meter.totalUSD) }
-                    }
-                }
-            )
-        }
+        summaries.startSummary(
+            for: meeting, provider: .meetingCoach, model: CoachPricing.cardModel, template: .meetingCoach,
+            resolveProvider: resolver
+        )
     }
 
     private static func addSpend(_ usd: Double, to record: CoachRecord?) {
