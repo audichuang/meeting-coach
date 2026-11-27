@@ -135,6 +135,11 @@ final class RecordingSessionController {
         isExpanded = true
     }
 
+    /// Flushes any unsaved handwritten notes when the app moves to the background.
+    func handleSceneDidEnterBackground() {
+        viewModel?.paperNotes.flushForBackground()
+    }
+
     /// Discards the session: deletes the in-progress recording (if any) and
     /// ends the session.
     func discard() {

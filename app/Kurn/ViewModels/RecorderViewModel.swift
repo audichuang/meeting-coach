@@ -133,8 +133,12 @@ final class RecorderViewModel {
         self.recorder.audioBitRate = options.audioQuality.bitRate
         self.recorder.forceBuiltInMic = options.alwaysUseBuiltInMic
         self.recorder.onStateChanged = { [weak self] state, elapsed in
-            self?.lockScreenController.update(state: state, elapsed: elapsed, highlightCount: self?.recorder.highlights.count ?? 0)
-            self?.pushWatchState(state: state, elapsed: elapsed)
+            guard let self else { return }
+            if state == .paused {
+                self.paperNotes.requestFlush()
+            }
+            self.lockScreenController.update(state: state, elapsed: elapsed, highlightCount: self.recorder.highlights.count)
+            self.pushWatchState(state: state, elapsed: elapsed)
         }
         // Marking a highlight doesn't change `state`/`elapsed`, so
         // `onStateChanged` above never fires for it — this is the only signal

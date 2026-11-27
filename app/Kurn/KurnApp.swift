@@ -253,6 +253,7 @@ struct KurnApp: App {
         // the meantime — `.inactive` raises the privacy cover, which is what
         // the app-switcher snapshot captures.
         if phase == .background {
+            environment.recordingSession.handleSceneDidEnterBackground()
             accessGate.lock()
             #if canImport(BackgroundTasks)
             // Ask the system for a processing window to advance any

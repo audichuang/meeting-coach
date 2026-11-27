@@ -15,6 +15,9 @@ import KurnCore
 import Observation
 import PencilKit
 import SwiftData
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Value snapshot of a `PKDrawing` sent off the main actor for encoding.
 /// `PKDrawing` is a copy-on-write value type whose `dataRepresentation()`
@@ -52,10 +55,13 @@ final class PaperNoteSession {
     @ObservationIgnored private let elapsed: @MainActor () -> TimeInterval
     @ObservationIgnored private let now: @MainActor () -> Date
     @ObservationIgnored private let debounceInterval: Duration
+    @ObservationIgnored private let maxWaitInterval: Duration
+    @ObservationIgnored private let sleepClock: any SleepClock
     @ObservationIgnored private let persist: @MainActor (ModelContext) -> AppError?
     @ObservationIgnored private let serialize: DrawingSerializer
     @ObservationIgnored private var note: PaperNote?
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
+    @ObservationIgnored private var maxWaitTask: Task<Void, Never>?
     @ObservationIgnored private var serializationTask: Task<Void, Never>?
     @ObservationIgnored private var drawingGeneration: UInt64 = 0
     @ObservationIgnored private var persistedGeneration: UInt64 = 0
@@ -78,6 +84,8 @@ final class PaperNoteSession {
         modelContext: ModelContext,
         pageWidth: Double = PaperNote.defaultPageWidth,
         debounceInterval: Duration = .milliseconds(500),
+        maxWaitInterval: Duration = .seconds(5),
+        sleepClock: any SleepClock = SystemClock(),
         elapsed: @escaping @MainActor () -> TimeInterval,
         now: @escaping @MainActor () -> Date = { Date() },
         persist: @escaping @MainActor (ModelContext) -> AppError? = { $0.saveOrError() },
@@ -87,6 +95,8 @@ final class PaperNoteSession {
         self.modelContext = modelContext
         self.pageWidth = pageWidth
         self.debounceInterval = debounceInterval
+        self.maxWaitInterval = maxWaitInterval
+        self.sleepClock = sleepClock
         self.elapsed = elapsed
         self.now = now
         self.persist = persist
@@ -134,12 +144,40 @@ final class PaperNoteSession {
         }
     }
 
+    /// Flushes unsaved strokes when the app moves to the background, requesting
+    /// brief background execution time so serialization and save complete
+    /// before iOS suspends the process.
+    func flushForBackground() {
+        guard !isCancelled, hasUnsavedChanges, recordingID != nil else { return }
+        #if canImport(UIKit)
+        let application = UIApplication.shared
+        var backgroundTaskID = UIBackgroundTaskIdentifier.invalid
+        backgroundTaskID = application.beginBackgroundTask(withName: "PaperNoteBackgroundFlush") {
+            if backgroundTaskID != .invalid {
+                application.endBackgroundTask(backgroundTaskID)
+                backgroundTaskID = .invalid
+            }
+        }
+        Task { @MainActor [weak self] in
+            await self?.flush()
+            if backgroundTaskID != .invalid {
+                application.endBackgroundTask(backgroundTaskID)
+                backgroundTaskID = .invalid
+            }
+        }
+        #else
+        requestFlush()
+        #endif
+    }
+
     /// Immediately commits any pending drawing changes to SwiftData synchronously.
     /// Used by synchronous recording teardown (`finish()` / `stopAndSave()`);
     /// safe to call repeatedly and a no-op when nothing changed.
     func flushNow() {
         debounceTask?.cancel()
         debounceTask = nil
+        maxWaitTask?.cancel()
+        maxWaitTask = nil
         serializationTask?.cancel()
         serializationTask = nil
         needsFollowUpFlush = false
@@ -184,6 +222,8 @@ final class PaperNoteSession {
         isCancelled = true
         debounceTask?.cancel()
         debounceTask = nil
+        maxWaitTask?.cancel()
+        maxWaitTask = nil
         serializationTask?.cancel()
         serializationTask = nil
         needsFollowUpFlush = false
@@ -197,16 +237,40 @@ final class PaperNoteSession {
     private func scheduleDebouncedSave() {
         debounceTask?.cancel()
         guard recordingID != nil else { return }
-        let interval = debounceInterval
+        let debounceSeconds = Self.seconds(from: debounceInterval)
+        let clock = sleepClock
         debounceTask = Task { [weak self] in
             do {
-                try await Task.sleep(for: interval)
+                try await clock.sleep(seconds: debounceSeconds)
             } catch {
                 return
             }
             guard !Task.isCancelled else { return }
             self?.startCoalescedBackgroundFlush()
         }
+        scheduleMaxWaitIfNeeded()
+    }
+
+    private func scheduleMaxWaitIfNeeded() {
+        guard recordingID != nil, maxWaitTask == nil else { return }
+        let maxWaitSeconds = Self.seconds(from: maxWaitInterval)
+        let clock = sleepClock
+        maxWaitTask = Task { [weak self] in
+            do {
+                try await clock.sleep(seconds: maxWaitSeconds)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            self.maxWaitTask = nil
+            self.startCoalescedBackgroundFlush()
+        }
+    }
+
+    private static func seconds(from duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
     }
 
     private func startCoalescedBackgroundFlush() {
@@ -278,6 +342,8 @@ final class PaperNoteSession {
         if drawingGeneration == persistedGeneration {
             hasUnsavedChanges = false
             needsFollowUpFlush = false
+            maxWaitTask?.cancel()
+            maxWaitTask = nil
         } else {
             hasUnsavedChanges = true
             if needsFollowUpFlush {
@@ -285,6 +351,8 @@ final class PaperNoteSession {
                 startCoalescedBackgroundFlush()
             } else if debounceTask == nil {
                 scheduleDebouncedSave()
+            } else {
+                scheduleMaxWaitIfNeeded()
             }
         }
     }
