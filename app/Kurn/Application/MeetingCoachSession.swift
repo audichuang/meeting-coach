@@ -89,7 +89,8 @@ final class MeetingCoachSession {
     @ObservationIgnored private(set) var isCancelled = false
     @ObservationIgnored private var triggerLog: [CoachTriggerRecord] = []
     @ObservationIgnored private var eventTask: Task<Void, Never>?
-    @ObservationIgnored private var pipeline: Task<Void, Never>?
+    @ObservationIgnored private var pipelineSink: AsyncStream<(LiveTranscriptSegment, [String])>.Continuation?
+    @ObservationIgnored private var pipelineTask: Task<Void, Never>?
     @ObservationIgnored private var askTask: Task<CoachCallResult, Error>?
     @ObservationIgnored private var wrapUpTask: Task<CoachCallResult, Error>?
     @ObservationIgnored private var budgetTimer: Task<Void, Never>?
@@ -176,8 +177,7 @@ final class MeetingCoachSession {
         eventSink.finish()
         eventTask?.cancel()
         eventTask = nil
-        pipeline?.cancel()
-        pipeline = nil
+        cancelPipeline()
         askTask?.cancel()
         askTask = nil
         wrapUpTask?.cancel()
@@ -202,7 +202,14 @@ final class MeetingCoachSession {
             return
         }
         eventSink.finish()
-        await pipeline?.value
+        await eventTask?.value
+        eventTask = nil
+        guard !isCancelled else { return }
+        pipelineSink?.finish()
+        pipelineSink = nil
+        await pipelineTask?.value
+        pipelineTask = nil
+        guard !isCancelled else { return }
         budgetTimer?.cancel()
         if let start = aiStoppedAt { addGap(LiveTranscriptGap(start: start, end: max(start, end))) }
         save()
@@ -287,7 +294,7 @@ final class MeetingCoachSession {
         guard !isAIStopped else { return }
         stopReason = reason
         aiStoppedAt = elapsed()
-        pipeline?.cancel()
+        cancelPipeline()
         onStopAI?()
         AppLog.generation.atNotice.notice("MeetingCoachSession: AI processing stopped reason=\(String(describing: reason), privacy: .public)")
     }
@@ -313,16 +320,28 @@ final class MeetingCoachSession {
 
     private var previousCardTexts: [String] { ledgers.map(\.candidate.shortText) }
 
+    private func cancelPipeline() {
+        pipelineSink?.finish()
+        pipelineSink = nil
+        pipelineTask?.cancel()
+        pipelineTask = nil
+    }
+
     private func evaluateTrigger(for segment: LiveTranscriptSegment) {
         guard !isCancelled, !isAIStopped else { return }
         let labels = trigger.events(for: segment)
         guard !labels.isEmpty else { return }
-        let previous = pipeline
-        pipeline = Task { [weak self] in
-            await previous?.value
-            guard let self, !Task.isCancelled, !self.isCancelled, !self.isAIStopped else { return }
-            await self.runPipeline(segment: segment, labels: labels)
+        if pipelineSink == nil {
+            let (stream, sink) = AsyncStream.makeStream(of: (LiveTranscriptSegment, [String]).self)
+            pipelineSink = sink
+            pipelineTask = Task { [weak self] in
+                for await (segment, labels) in stream {
+                    guard let self, !Task.isCancelled, !self.isCancelled, !self.isAIStopped else { break }
+                    await self.runPipeline(segment: segment, labels: labels)
+                }
+            }
         }
+        pipelineSink?.yield((segment, labels))
     }
 
     private func runPipeline(segment: LiveTranscriptSegment, labels: [String]) async {

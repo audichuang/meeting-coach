@@ -79,6 +79,79 @@ private final class SlowJudgeCoachLLM: CoachLLM, @unchecked Sendable {
     }
 }
 
+/// Simulates a judge request that hits a transient failure, sleeps in retry
+/// backoff (like `LLMHTTP.sendValidated` on HTTP 429/5xx), and sends a retry
+/// attempt unless its task is cancelled.
+private final class RetryingJudgeCoachLLM: CoachLLM, @unchecked Sendable {
+    private let lock = NSLock()
+    private let refuseAskStatus: Int?
+    private var recordedCalls: [String] = []
+    private var backoffContinuation: CheckedContinuation<Void, Error>?
+    private var enteredBackoff = false
+    private var released = false
+
+    init(refuseAskStatus: Int? = nil) {
+        self.refuseAskStatus = refuseAskStatus
+    }
+
+    var calls: [String] { lock.withLock { recordedCalls } }
+    var isInBackoff: Bool { lock.withLock { enteredBackoff } }
+
+    func releaseBackoff() {
+        let continuation = lock.withLock { () -> CheckedContinuation<Void, Error>? in
+            released = true
+            let current = backoffContinuation
+            backoffContinuation = nil
+            return current
+        }
+        continuation?.resume()
+    }
+
+    func call(model: String, instructions: String, input: String, tools: [CoachTool], force: String?) async throws -> CoachCallResult {
+        let name = tools[0].name
+        if name == "emit_suggestion", let status = refuseAskStatus {
+            lock.withLock { recordedCalls.append(name) }
+            throw AppError.apiError(statusCode: status, message: "refused")
+        }
+        guard name == "judge" else {
+            lock.withLock { recordedCalls.append(name) }
+            let args = #"{"short_text":"先對齊目標？","reason":"目標不同","evidence_start":0,"evidence_end":1,"category":"clarify"}"#
+            return CoachCallResult(calls: [CoachToolCall(name: name, arguments: Data(args.utf8))],
+                                   usage: CoachTokenUsage(input: 1_000, cached: 0, output: 100))
+        }
+        lock.withLock { recordedCalls.append("judge#1") }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                enum Action { case wait, resume, cancel }
+                let action: Action = lock.withLock {
+                    enteredBackoff = true
+                    if Task.isCancelled { return .cancel }
+                    if released { return .resume }
+                    backoffContinuation = continuation
+                    return .wait
+                }
+                switch action {
+                case .wait: break
+                case .resume: continuation.resume()
+                case .cancel: continuation.resume(throwing: CancellationError())
+                }
+            }
+        } onCancel: {
+            let continuation = self.lock.withLock { () -> CheckedContinuation<Void, Error>? in
+                let current = self.backoffContinuation
+                self.backoffContinuation = nil
+                return current
+            }
+            continuation?.resume(throwing: CancellationError())
+        }
+        try Task.checkCancellation()
+        lock.withLock { recordedCalls.append("judge#2") }
+        let args = #"{"decision":"emit","reason":"分歧"}"#
+        return CoachCallResult(calls: [CoachToolCall(name: name, arguments: Data(args.utf8))],
+                               usage: CoachTokenUsage(input: 1_000, cached: 0, output: 100))
+    }
+}
+
 extension CoachBackend {
     static let test = CoachBackend(baseURL: URL(string: "https://worker.test/v1")!, token: "mc_test", viaWorker: true)
 }
@@ -214,6 +287,69 @@ struct MeetingCoachSessionTests {
         #expect(llm.calls == ["judge"])
         #expect(coach.ledgers.isEmpty)
         #expect(try context.fetch(FetchDescriptor<CoachRecord>()).isEmpty)
+    }
+
+    @Test func cancellingWithQueuedTriggerCancelsEarlierJudgeInBackoff() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let llm = RetryingJudgeCoachLLM()
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "志明", budgetUSD: 10, backend: .test),
+            llm: llm, elapsed: { 150 }
+        )
+        coach.begin(recordingID: UUID())
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 130, end: 150, text: "志明你覺得呢", arrivedAt: 150)))
+        await waitUntil { llm.isInBackoff }
+
+        // A second trigger arrives while the first judge call is blocked in retry backoff.
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 150, end: 170, text: "要不要延期？", arrivedAt: 170)))
+        await waitUntil { coach.segments.count == 2 }
+        await Task.yield()
+
+        coach.cancel()
+        llm.releaseBackoff()
+        for _ in 0..<20 {
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+
+        // Neither the first judge retry nor the queued second trigger may send another request.
+        #expect(llm.calls == ["judge#1"])
+    }
+
+    @Test func stopAIWithQueuedTriggerCancelsEarlierJudgeInBackoff() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let llm = RetryingJudgeCoachLLM(refuseAskStatus: 402)
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "志明", budgetUSD: 10, backend: .test),
+            llm: llm, elapsed: { 150 }
+        )
+        coach.begin(recordingID: UUID())
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 130, end: 150, text: "志明你覺得呢", arrivedAt: 150)))
+        await waitUntil { llm.isInBackoff }
+
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 150, end: 170, text: "要不要延期？", arrivedAt: 170)))
+        await waitUntil { coach.segments.count == 2 }
+        await Task.yield()
+
+        await coach.askForCard()
+        #expect(coach.stopReason == .quota)
+
+        llm.releaseBackoff()
+        for _ in 0..<20 {
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+
+        #expect(llm.calls == ["judge#1", "emit_suggestion"])
+        await coach.finish(at: 180)
     }
 
     @Test(arguments: [(402, MeetingCoachSession.StopReason.quota), (401, .unauthorized)])
