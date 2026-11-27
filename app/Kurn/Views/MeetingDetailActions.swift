@@ -277,7 +277,7 @@ extension MeetingDetailView {
         if player.loadedFileName == recording.fileName { player.stop() }
         enhancement.cancel(recording)
         do throws(AppError) {
-            try MeetingLibrary(context: modelContext).deleteRecording(recording)
+            try (meetingLibrary ?? MeetingLibrary(context: modelContext)).deleteRecording(recording)
         } catch {
             actionError = error
         }

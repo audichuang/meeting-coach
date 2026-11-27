@@ -107,11 +107,18 @@ final class FakeTranscriber: PipelineTranscribing {
         var speakerTurns: [SpeakerTurn]?
         var failure: Error?
         var holdsAfterFirstChunk = false
+        var pausesBeforeFirstCheckpoint = false
+        var enteredFirstCheckpointPause = false
+        var releasedFirstCheckpointPause = false
+        var firstCheckpointContinuation: CheckedContinuation<Void, Never>?
+        var completedSecondChunk = false
     }
 
     private let state = Locked(State())
 
     var requests: [EngineTranscriptionRequest] { state.read { $0.requests } }
+    var isPausedBeforeFirstCheckpoint: Bool { state.read { $0.enteredFirstCheckpointPause } }
+    var didCompleteSecondChunk: Bool { state.read { $0.completedSecondChunk } }
 
     func setSpans(_ spans: [TranscribedSpan]) { state.write { $0.spans = spans } }
     func setSpeakerTurns(_ turns: [SpeakerTurn]?) { state.write { $0.speakerTurns = turns } }
@@ -120,16 +127,41 @@ final class FakeTranscriber: PipelineTranscribing {
     /// a test can observe the "half done" state and then cancel or stop it.
     func holdAfterFirstChunk() { state.write { $0.holdsAfterFirstChunk = true } }
     func clearHold() { state.write { $0.holdsAfterFirstChunk = false } }
+    func pauseBeforeFirstCheckpoint() { state.write { $0.pausesBeforeFirstCheckpoint = true } }
+
+    func releaseFirstCheckpoint() {
+        var continuation: CheckedContinuation<Void, Never>?
+        state.write {
+            $0.releasedFirstCheckpointPause = true
+            continuation = $0.firstCheckpointContinuation
+            $0.firstCheckpointContinuation = nil
+        }
+        continuation?.resume()
+    }
 
     func transcribe(_ request: EngineTranscriptionRequest) async throws -> RawTranscript {
-        let (spans, speakerTurns, failure, holds) = state.read {
-            ($0.spans, $0.speakerTurns, $0.failure, $0.holdsAfterFirstChunk)
+        let (spans, speakerTurns, failure, holds, pauses) = state.read {
+            ($0.spans, $0.speakerTurns, $0.failure, $0.holdsAfterFirstChunk, $0.pausesBeforeFirstCheckpoint)
         }
         state.write { $0.requests.append(request) }
         if let failure { throw failure }
         let total = 2
         let completed = request.resume?.completedChunks ?? 0
         if completed < 1 {
+            if pauses {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    var alreadyReleased = false
+                    state.write {
+                        $0.enteredFirstCheckpointPause = true
+                        if $0.releasedFirstCheckpointPause {
+                            alreadyReleased = true
+                        } else {
+                            $0.firstCheckpointContinuation = continuation
+                        }
+                    }
+                    if alreadyReleased { continuation.resume() }
+                }
+            }
             request.onProgress(0.5, ChunkProgress(completed: 1, total: total))
             try await request.onChunkCompleted?(ChunkedTranscriptionRunner.Progress(
                 totalChunks: total,
@@ -141,6 +173,7 @@ final class FakeTranscriber: PipelineTranscribing {
             if holds { try await Task.sleep(for: .seconds(3_600)) }
         }
         try Task.checkCancellation()
+        state.write { $0.completedSecondChunk = true }
         request.onProgress(1.0, ChunkProgress(completed: total, total: total))
         return RawTranscript(spans: spans, language: "en", speakerTurns: speakerTurns)
     }

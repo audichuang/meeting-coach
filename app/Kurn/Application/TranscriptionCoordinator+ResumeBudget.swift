@@ -37,12 +37,50 @@ extension TranscriptionCoordinator {
     ///
     /// Not `private` — `transcribe(_:language:config:)` in the main file
     /// calls it.
+    func existingRecording(id recordingID: UUID) -> Recording? {
+        let descriptor = FetchDescriptor<Recording>(predicate: #Predicate { $0.id == recordingID })
+        guard let recording = try? modelContext.fetch(descriptor).first, !recording.isDeleted else {
+            return nil
+        }
+        return recording
+    }
+
+    /// Cancels any in-flight transcription and post-transcription work for
+    /// deleted recordings. Unwinding tasks check `existingRecording(id:)` so
+    /// they never mutate or re-save deleted rows.
+    func cancelWork(forDeletedRecordings recordingIDs: Set<UUID>) {
+        guard !recordingIDs.isEmpty else { return }
+        for recordingID in recordingIDs {
+            if transcriptionTasks[recordingID] != nil {
+                cancellingIDs.insert(recordingID)
+                transcriptionTasks[recordingID]?.cancel()
+            }
+            postTranscriptionTasks[recordingID]?.cancel()
+            postTranscriptionPhases[recordingID] = nil
+        }
+    }
+
+    /// Cancels any in-flight transcription and post-transcription work for
+    /// deleted meetings.
+    func cancelWork(forDeletedMeetings meetingIDs: Set<UUID>) {
+        guard !meetingIDs.isEmpty else { return }
+        let affectedRecordings = Set(activeRecordingMeetingIDs.compactMap { recordingID, meetingID in
+            meetingIDs.contains(meetingID) ? recordingID : nil
+        })
+        cancelWork(forDeletedRecordings: affectedRecordings)
+        for meetingID in meetingIDs {
+            cancelPostTranscriptionWork(for: meetingID)
+        }
+    }
+
     func storeCheckpointDurably(
         _ checkpoint: TranscriptionCheckpoint,
         for id: UUID,
         completedChunksAtAttemptStart: Int
     ) throws {
-        guard let recording = activeRecordings[id] else { return }
+        guard let recording = existingRecording(id: id) else {
+            throw CancellationError()
+        }
         recording.transcriptionCheckpoint = checkpoint
         if checkpoint.completedChunks > completedChunksAtAttemptStart {
             recording.automaticResumeAttempts = 0

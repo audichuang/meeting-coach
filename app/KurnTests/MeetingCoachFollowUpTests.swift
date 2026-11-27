@@ -564,4 +564,53 @@ struct MeetingCoachFollowUpTests {
         #expect(summaries.error == nil)
         #expect(!summaries.isSummarizing)
     }
+
+    @Test func deletingMeetingMidFormalTranscriptionStopsChunksAndSkipsTranscriptAndRecap() async throws {
+        let harness = try Harness()
+        harness.engines.transcriber.pauseBeforeFirstCheckpoint()
+
+        harness.followUp.start(meeting: harness.meeting, recordingID: harness.recording.id)
+        for _ in 0..<2_000 where !harness.engines.transcriber.isPausedBeforeFirstCheckpoint {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(harness.engines.transcriber.isPausedBeforeFirstCheckpoint)
+
+        try MeetingLibrary(context: harness.context).deleteMeeting(harness.meeting)
+        harness.engines.transcriber.releaseFirstCheckpoint()
+        await harness.settleFollowUp()
+
+        #expect(!harness.engines.transcriber.didCompleteSecondChunk)
+        #expect(try harness.context.fetch(FetchDescriptor<Transcript>()).isEmpty)
+        #expect(try harness.context.fetch(FetchDescriptor<Summary>()).isEmpty)
+        #expect(harness.transcription.transcriptionError(for: harness.recording) == nil)
+        #expect(!harness.summaries.isSummarizing)
+    }
+
+    @Test func deletingRecordingCancelsHeldFormalTranscriptionImmediately() async throws {
+        let harness = try Harness()
+        harness.engines.transcriber.holdAfterFirstChunk()
+        let library = MeetingLibrary(
+            context: harness.context,
+            onMeetingsDeleted: { meetingIDs in
+                harness.summaries.cancelSummaries(for: meetingIDs)
+                harness.transcription.cancelWork(forDeletedMeetings: meetingIDs)
+            },
+            onRecordingsDeleted: { recordingIDs in
+                harness.transcription.cancelWork(forDeletedRecordings: recordingIDs)
+            }
+        )
+
+        harness.followUp.start(meeting: harness.meeting, recordingID: harness.recording.id)
+        await harness.waitForCheckpoint()
+        #expect(harness.transcription.isTranscribing(harness.recording))
+
+        try library.deleteRecording(harness.recording)
+        await harness.settleFollowUp()
+
+        #expect(!harness.engines.transcriber.didCompleteSecondChunk)
+        #expect(!harness.transcription.isTranscribing(harness.recording))
+        #expect(try harness.context.fetch(FetchDescriptor<Transcript>()).isEmpty)
+        #expect(try harness.context.fetch(FetchDescriptor<Summary>()).isEmpty)
+        #expect(harness.transcription.transcriptionError(for: harness.recording) == nil)
+    }
 }

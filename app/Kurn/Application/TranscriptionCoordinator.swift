@@ -45,7 +45,7 @@ final class TranscriptionCoordinator {
     /// Best-effort work still running after a transcript has already been saved.
     /// Kept separate from `phases` so the recording can honestly show `.done`
     /// instead of holding the transcription bar at "Finalizing".
-    private(set) var postTranscriptionPhases: [UUID: PostTranscriptionPhase] = [:]
+    var postTranscriptionPhases: [UUID: PostTranscriptionPhase] = [:]
     /// Failures not tied to any one recording — a generic `persist()` save
     /// (which commits whatever is pending across the whole context, not one
     /// recording's own changes) or an explicit AI title regeneration.
@@ -77,28 +77,31 @@ final class TranscriptionCoordinator {
 
     /// Task handles for transcriptions started via `startTranscription`, so
     /// they can be cancelled (by the user or by the background window expiring).
-    private var transcriptionTasks: [UUID: Task<Void, Never>] = [:]
+    var transcriptionTasks: [UUID: Task<Void, Never>] = [:]
     /// Post-transcription work is intentionally unstructured relative to the
     /// transcription task: pausing/stopping the audio pipeline no longer applies
     /// after its transcript has been persisted.
-    private var postTranscriptionTasks: [UUID: Task<Void, Never>] = [:]
+    var postTranscriptionTasks: [UUID: Task<Void, Never>] = [:]
     /// Identity guard preventing a cancelled task's deferred cleanup from
     /// clearing a newer task registered for the same recording.
     private var postTranscriptionRunIDs: [UUID: UUID] = [:]
     /// Meeting associated with each post-processing task. Starting another
     /// transcription for the same meeting cancels stale work based on the old
     /// transcript, even when it belongs to a different recording.
-    private var postTranscriptionMeetingIDs: [UUID: UUID] = [:]
+    var postTranscriptionMeetingIDs: [UUID: UUID] = [:]
     /// Recordings being fully stopped (not just paused): on cancellation their
     /// checkpoint is cleared and status resets to `.none` instead of `.pending`.
     private var stoppingIDs: Set<UUID> = []
     /// Recordings for which a cancel/stop was requested but the cooperative task
     /// cancellation hasn't propagated yet. The UI uses this for immediate feedback.
-    private(set) var cancellingIDs: Set<UUID> = []
+    var cancellingIDs: Set<UUID> = []
     /// Recordings this instance is transcribing, so `@Sendable` pipeline
     /// callbacks can reach the model by ID after hopping to the main actor.
     /// Not `private` — `TranscriptionCoordinator+ResumeBudget.swift` needs it.
     var activeRecordings: [UUID: Recording] = [:]
+    /// Owning meeting ID for each in-flight recording, captured up front so
+    /// deleting a meeting cancels its running transcriptions even after relationships clear.
+    var activeRecordingMeetingIDs: [UUID: UUID] = [:]
     /// Recordings this instance is actually working on. The foreground
     /// recovery sweep uses this to distinguish a live run (leave alone) from a
     /// stale persisted `.inProgress` (reset to resumable). There is one
@@ -298,10 +301,14 @@ final class TranscriptionCoordinator {
         cancelPostTranscriptionWork(for: recording.meeting?.id)
         transcribingIDs.insert(recordingID)
         activeRecordings[recordingID] = recording
+        if let meetingID = recording.meeting?.id {
+            activeRecordingMeetingIDs[recordingID] = meetingID
+        }
         phases[recordingID] = .preparing
         defer {
             transcribingIDs.remove(recordingID)
             activeRecordings[recordingID] = nil
+            activeRecordingMeetingIDs[recordingID] = nil
             phases[recordingID] = nil
             cancellingIDs.remove(recordingID)
         }
@@ -424,8 +431,12 @@ final class TranscriptionCoordinator {
                 }
             )
             await drainEvents()
+            try Task.checkCancellation()
+            guard let liveRecording = existingRecording(id: recordingID) else {
+                throw CancellationError()
+            }
 
-            let committed = try saveTranscript(output, for: recording)
+            let committed = try saveTranscript(output, for: liveRecording)
             AppLog.transcription.atNotice.notice("VM: transcribe succeeded id=\(recordingID, privacy: .public) segments=\(output.segments.count, privacy: .public)")
             ReliabilityLog.record(ReliabilityEvent(
                 operationID: runID, operation: "transcription", outcome: .succeeded,
@@ -434,10 +445,10 @@ final class TranscriptionCoordinator {
             appSettings?.recordTranscriptionEngineUsed(effectiveConfig.transcription)
             reviewPrompt?.noteSuccessfulMoment()
             if let settings = appSettings {
-                startPostTranscriptionWork(for: recording, settings: settings)
+                startPostTranscriptionWork(for: liveRecording, settings: settings)
             }
-            if committed, isCoach, !output.segments.isEmpty, let meeting = recording.meeting {
-                onCoachTranscriptCommitted?(meeting, recording)
+            if committed, isCoach, !output.segments.isEmpty, let meeting = liveRecording.meeting, !meeting.isDeleted {
+                onCoachTranscriptCommitted?(meeting, liveRecording)
             }
         } catch is CancellationError {
             await drainEvents()
@@ -455,9 +466,13 @@ final class TranscriptionCoordinator {
                 ))
                 finishCancelled(recording, id: recordingID)
             } else {
+                guard let liveRecording = existingRecording(id: recordingID) else {
+                    stoppingIDs.remove(recordingID)
+                    return
+                }
                 // Failed — but the checkpoint is kept, so a manual retry
                 // resumes from the last completed chunk.
-                recording.transcriptionStatus = .failed
+                liveRecording.transcriptionStatus = .failed
                 persist()
                 errorsByRecording[recordingID] = appError
                 let context = Self.logContext(for: appError)
@@ -476,7 +491,11 @@ final class TranscriptionCoordinator {
             }
         } catch {
             await drainEvents()
-            recording.transcriptionStatus = .failed
+            guard let liveRecording = existingRecording(id: recordingID) else {
+                stoppingIDs.remove(recordingID)
+                return
+            }
+            liveRecording.transcriptionStatus = .failed
             persist()
             let wrapped = AppError.transcriptionFailed(error.localizedDescription)
             errorsByRecording[recordingID] = wrapped
@@ -516,13 +535,13 @@ final class TranscriptionCoordinator {
                 self.postTranscriptionPhases[recordingID] = .generatingTitle
                 await self.generateAITitle(for: meeting, settings: settings)
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.existingRecording(id: recordingID) != nil else { return }
 
             if settings.semanticSearchEnabled, let semanticIndexCoordinator = self.semanticIndexCoordinator {
                 self.postTranscriptionPhases[recordingID] = .indexing
                 await semanticIndexCoordinator.index(meeting)
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.existingRecording(id: recordingID) != nil else { return }
 
             if self.shouldGenerateWiki(settings: settings),
                let wikiCoordinator = self.wikiCoordinator {
@@ -534,7 +553,7 @@ final class TranscriptionCoordinator {
 
     /// Stop enrichment based on a now-stale transcript before re-transcribing any
     /// recording in the same meeting.
-    private func cancelPostTranscriptionWork(for meetingID: UUID?) {
+    func cancelPostTranscriptionWork(for meetingID: UUID?) {
         guard let meetingID else { return }
         let staleRecordingIDs = postTranscriptionMeetingIDs.compactMap { recordingID, candidateMeetingID in
             candidateMeetingID == meetingID ? recordingID : nil
@@ -561,15 +580,20 @@ final class TranscriptionCoordinator {
     /// the `CancellationError` and the `AppError`-wrapped path land here — they
     /// must stay in agreement, which is why this is one function.
     private func finishCancelled(_ recording: Recording, id recordingID: UUID) {
+        guard let liveRecording = existingRecording(id: recordingID) else {
+            stoppingIDs.remove(recordingID)
+            AppLog.transcription.atNotice.notice("VM: transcribe cancelled for deleted recording id=\(recordingID, privacy: .public)")
+            return
+        }
         if stoppingIDs.remove(recordingID) != nil {
             // Full stop: discard the checkpoint so the next run starts fresh.
-            recording.transcriptionCheckpointData = nil
-            recording.transcriptionStatus = .none
+            liveRecording.transcriptionCheckpointData = nil
+            liveRecording.transcriptionStatus = .none
             AppLog.transcription.atNotice.notice("VM: transcribe stopped id=\(recordingID, privacy: .public)")
         } else {
             // Paused: chunk progress is already checkpointed and `.pending`
             // gets picked up by the next foreground resume pass.
-            recording.transcriptionStatus = .pending
+            liveRecording.transcriptionStatus = .pending
             AppLog.transcription.atNotice.notice("VM: transcribe paused id=\(recordingID, privacy: .public)")
         }
         persist()

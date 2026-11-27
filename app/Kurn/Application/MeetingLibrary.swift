@@ -39,15 +39,18 @@ struct MeetingLibrary {
     /// (summaries, transcriptions) cancel in-flight or queued work for them
     /// without creating an upward dependency from `Application/` to `ViewModels/`.
     private let onMeetingsDeleted: @MainActor (Set<UUID>) -> Void
+    private let onRecordingsDeleted: @MainActor (Set<UUID>) -> Void
 
     init(
         context: ModelContext,
         persist: @escaping @MainActor (ModelContext) -> AppError? = { $0.saveOrError() },
-        onMeetingsDeleted: @escaping @MainActor (Set<UUID>) -> Void = { _ in }
+        onMeetingsDeleted: @escaping @MainActor (Set<UUID>) -> Void = { _ in },
+        onRecordingsDeleted: @escaping @MainActor (Set<UUID>) -> Void = { _ in }
     ) {
         self.context = context
         self.persist = persist
         self.onMeetingsDeleted = onMeetingsDeleted
+        self.onRecordingsDeleted = onRecordingsDeleted
     }
 
     // MARK: - Meetings
@@ -97,10 +100,12 @@ struct MeetingLibrary {
     func deleteMeeting(_ meeting: Meeting) throws(AppError) {
         try requireNoCaptureInProgress(meeting.recordings)
         let meetingID = meeting.id
+        let recordingIDs = Set(meeting.recordings.map(\.id))
         let fileNames = meeting.recordings.map(\.fileName)
             + meeting.recordings.flatMap { $0.photos.map(\.fileName) }
             + meeting.attachments.map(\.fileName)
         try journaledDelete(fileNames: fileNames) { context.delete(meeting) }
+        if !recordingIDs.isEmpty { onRecordingsDeleted(recordingIDs) }
         onMeetingsDeleted([meetingID])
     }
 
@@ -112,12 +117,14 @@ struct MeetingLibrary {
         let recordings = meetings.flatMap(\.recordings)
         try requireNoCaptureInProgress(recordings)
         let meetingIDs = Set(meetings.map(\.id))
+        let recordingIDs = Set(recordings.map(\.id))
         let fileNames = recordings.map(\.fileName)
             + recordings.flatMap { $0.photos.map(\.fileName) }
             + meetings.flatMap { $0.attachments.map(\.fileName) }
         try journaledDelete(fileNames: fileNames) {
             for meeting in meetings { context.delete(meeting) }
         }
+        if !recordingIDs.isEmpty { onRecordingsDeleted(recordingIDs) }
         onMeetingsDeleted(meetingIDs)
     }
 
@@ -125,10 +132,12 @@ struct MeetingLibrary {
     /// it, through the same journaled path as `deleteMeeting`.
     func deleteRecording(_ recording: Recording) throws(AppError) {
         try requireNoCaptureInProgress([recording])
+        let recordingID = recording.id
         let fileNames = [recording.fileName] + recording.photos.map(\.fileName)
         try journaledDelete(fileNames: fileNames) {
             Self.deleteRecordingRows(recording, in: context)
         }
+        onRecordingsDeleted([recordingID])
     }
 
     /// Stages deletion of `recording` and any `CoachRecord` keyed to it in

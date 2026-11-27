@@ -22,6 +22,7 @@ struct MeetingDetailView: View {
     @Query var queriedRecordings: [Recording]
 
     @Environment(\.modelContext) var modelContext
+    @Environment(\.meetingLibrary) var meetingLibrary
     @Environment(AppSettings.self) var settings
     /// Only for the diarization-model prompt in the transcript's warning banner.
     @Environment(ModelDownloadController.self) var downloads

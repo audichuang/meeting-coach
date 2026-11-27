@@ -94,6 +94,10 @@ final class AppComposition {
             context: context,
             onMeetingsDeleted: { meetingIDs in
                 summaries.cancelSummaries(for: meetingIDs)
+                transcription.cancelWork(forDeletedMeetings: meetingIDs)
+            },
+            onRecordingsDeleted: { recordingIDs in
+                transcription.cancelWork(forDeletedRecordings: recordingIDs)
             }
         )
         return AppEnvironment(
