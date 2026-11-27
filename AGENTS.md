@@ -6,3 +6,4 @@
 - App 在 `app/`，建置與測試規則見 `app/CLAUDE.md`（其中的 `iPhone 17` 指令是 CI 用；本機改走 `scripts/sim.sh`，它已包 `heavy`）。
 - push 到 main 不會觸發 CI：workflow 放在 `app/.github/workflows/`，GitHub 只執行根目錄 `.github/workflows/` 的，`gh-wait` 等不到 run 只會逾時回 error。完成的證據改用本機測試。
 - 決定以 `docs/decisions.md` 為準，用詞以 `GLOSSARY.md` 為準。
+- TestFlight：App Store Connect app id `6840169416`（Meeting Coach Audi，`com.audichuang.meetingcoach`），內部群組「自己」、外部群組「家人」。上傳在 `app/` 跑 `BUILD_NUMBER=$(tf next-build --app 6840169416) ./scripts/testflight.sh`；腳本要 `app/Config/Secrets.xcconfig`（只在主 checkout，worktree 要先複製過去），缺值會停。外部群組每個新 marketing version 都要過 Beta App Review；審查用邀請碼在 1Password `meeting-coach-review-invite`。
