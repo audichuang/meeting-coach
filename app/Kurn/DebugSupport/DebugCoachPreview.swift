@@ -132,16 +132,29 @@ enum DebugCoachPreview {
                         start: 4,
                         end: 14,
                         text: "這週我們先把核心流程收斂，再決定下週的驗收項目。",
-                        arrivedAt: 14
+                        arrivedAt: 14,
+                        speakerLabel: "A"
                     )))
                     session.eventSink.yield(.final(LiveTranscriptSegment(
                         start: 15,
                         end: 28,
                         text: "如果測試窗口只剩兩天，介面調整可能要拆到下一個版本。",
-                        arrivedAt: 28
+                        arrivedAt: 28,
+                        speakerLabel: "B"
                     )))
-                    for _ in 0..<20 where session.segments.count < 2 {
+                    session.eventSink.yield(.final(LiveTranscriptSegment(
+                        start: 29,
+                        end: 40,
+                        text: "那我們今天就先確認最小可交付範圍。",
+                        arrivedAt: 40,
+                        speakerLabel: "A"
+                    )))
+                    for _ in 0..<20 where session.segments.count < 3 {
                         try? await Task.sleep(for: .milliseconds(25))
+                    }
+                    if let presetSelf = ProcessInfo.processInfo.environment["KURN_DEBUG_COACH_PREVIEW_SELF"],
+                       !presetSelf.isEmpty {
+                        session.markSelfSpeaker(presetSelf)
                     }
                     await session.askForCard()
                     if stopStatusCode != nil {

@@ -43,6 +43,7 @@ struct MicInputOption: Identifiable, Equatable, Sendable {
 final class RecorderViewModel {
     let recorder: AudioRecorderService
     let liveTranscription: LiveTranscriptionService
+    let liveDiarizer: LiveSpeakerDiarizationService?
     let coach: MeetingCoachSession?
     let paperNotes: PaperNoteSession
 
@@ -89,6 +90,7 @@ final class RecorderViewModel {
         options: RecorderOptions = RecorderOptions(),
         recorder: AudioRecorderService = AudioRecorderService(),
         liveTranscription: LiveTranscriptionService? = nil,
+        liveDiarizer: LiveSpeakerDiarizationService? = nil,
         coachSession: MeetingCoachSession? = nil,
         paperNoteSession: PaperNoteSession? = nil,
         fileFinalizer: any RecordingFileFinalizing = RecordingFileFinalizer(),
@@ -108,18 +110,25 @@ final class RecorderViewModel {
         if let coachSession {
             self.coach = coachSession
             self.liveTranscription = liveTranscription ?? coachSession.makeLiveTranscription()
+            self.liveDiarizer = liveDiarizer
         } else if let coachConfiguration = options.coach {
+            let diarizer = liveDiarizer ?? LiveSpeakerDiarizationService()
             let session = MeetingCoachSession(
                 meeting: meeting,
                 modelContext: modelContext,
                 configuration: coachConfiguration,
+                speakerLookup: { [weak diarizer] start, end in
+                    diarizer?.dominantSpeaker(from: start, to: end)
+                },
                 elapsed: { [weak recorder] in recorder?.elapsed ?? 0 }
             )
             self.coach = session
             self.liveTranscription = liveTranscription ?? session.makeLiveTranscription()
+            self.liveDiarizer = diarizer
         } else {
             self.coach = nil
             self.liveTranscription = liveTranscription ?? LiveTranscriptionService()
+            self.liveDiarizer = nil
         }
         self.fileFinalizer = fileFinalizer
         self.lifecycleSaver = lifecycleSaver
@@ -154,13 +163,15 @@ final class RecorderViewModel {
             self.pushWatchState(state: self.recorder.state, elapsed: self.recorder.elapsed)
         }
         if liveTranscriptionEnabled {
-            // Capture the service directly (not via `self`) so this closure,
+            // Capture the services directly (not via `self`) so this closure,
             // invoked on the tap's real-time render thread, isn't inferred as
             // main-actor isolated — `append` is `nonisolated` precisely so it
             // can be called from there.
             let live = self.liveTranscription
+            let diarizer = self.liveDiarizer
             self.recorder.onAudioBuffer = { buffer in
                 live.append(buffer)
+                diarizer?.append(buffer)
             }
         }
     }
@@ -346,12 +357,17 @@ final class RecorderViewModel {
         let liveStartTask: Task<Void, Never>? = liveTranscriptionEnabled && liveTranscriptionModelsConsented
             ? Task { @MainActor [weak self] in
                 guard let self else { return }
-                await liveTranscription.start(
+                let coachSession = self.coach
+                async let liveStart: Void = liveTranscription.start(
                     language: liveLanguage,
                     modelsConsented: liveTranscriptionModelsConsented,
                     policy: largeTransferPolicy,
                     model: liveTranscriptionModel
                 )
+                async let diarizerStart: Void = liveDiarizer?.start(onUpdate: { [weak coachSession] in
+                    coachSession?.refreshUnlabeledSegments()
+                }) ?? ()
+                _ = await (liveStart, diarizerStart)
             }
             : nil
         do {
@@ -486,22 +502,35 @@ final class RecorderViewModel {
     /// transcript comes from the full pipeline later), so not awaiting is safe.
     private func stopLiveAfterFailedStart(liveStartTask: Task<Void, Never>?) async {
         let discarding = coach?.isCancelled ?? true
-        if liveTranscriptionEnabled { await liveTranscription.stop(discarding: discarding) }
+        if liveTranscriptionEnabled {
+            await liveTranscription.stop(discarding: discarding)
+            await liveDiarizer?.stop(discarding: discarding)
+        }
         await liveStartTask?.value
-        if liveTranscriptionEnabled { await liveTranscription.stop(discarding: discarding) }
+        if liveTranscriptionEnabled {
+            await liveTranscription.stop(discarding: discarding)
+            await liveDiarizer?.stop(discarding: discarding)
+        }
         if !discarding { await coach?.finish(at: recorder.elapsed) }
     }
 
     private func stopLiveTranscription(at end: TimeInterval, discarding: Bool = false) {
         guard liveTranscriptionEnabled else { return }
         let live = liveTranscription
+        let diarizer = liveDiarizer
         if discarding {
-            // Coach work was already cancelled synchronously; only tear down the live engine.
-            Task { await live.stop(discarding: true) }
+            // Coach work was already cancelled synchronously; only tear down the live engines.
+            Task {
+                await live.stop(discarding: true)
+                await diarizer?.stop(discarding: true)
+            }
             return
         }
         let coach = self.coach
         Task {
+            await diarizer?.stop(discarding: false, onUpdate: { [weak coach] in
+                coach?.refreshUnlabeledSegments()
+            })
             await live.stop()
             await coach?.finish(at: end, discarding: false)
         }

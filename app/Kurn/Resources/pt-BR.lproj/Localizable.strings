@@ -1110,3 +1110,9 @@
 "paper.notes.updated" = "Updated %@";
 "coach.portrait.expand" = "Expand meeting coach";
 "coach.portrait.collapse" = "Collapse meeting coach";
+
+/* Live speaker self-mark */
+"coach.speaker.this_is_me" = "This is me";
+"coach.speaker.not_me" = "Not me";
+"coach.speaker.self" = "Me";
+"coach.speaker.accessibility_hint" = "Tap to mark whether this is you";

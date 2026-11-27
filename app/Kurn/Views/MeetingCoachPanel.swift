@@ -191,15 +191,7 @@ struct MeetingCoachPanel: View {
                     ForEach(rows) { row in
                         switch row {
                         case .segment(let segment):
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(segment.start.clockDisplay)
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(mutedText)
-                                Text(segment.text)
-                                    .font(Theme.subheadline)
-                                    .foregroundStyle(bodyText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+                            segmentRow(segment)
                         case .gap(let gap):
                             Label(
                                 String(format: NSLocalizedString("coach.gap", comment: "Untranscribed span"), gap.start.clockDisplay, gap.end.clockDisplay),
@@ -225,6 +217,66 @@ struct MeetingCoachPanel: View {
             .onChange(of: coach.segments.count) { reader.scrollTo("bottom", anchor: .bottom) }
             .onChange(of: partialText) { reader.scrollTo("bottom", anchor: .bottom) }
         }
+    }
+
+    @ViewBuilder
+    private func segmentRow(_ segment: LiveTranscriptSegment) -> some View {
+        let presentation = LiveTranscriptSegmentPresentation(
+            segment: segment,
+            selfSpeakerLabel: coach.selfSpeakerLabel
+        )
+        let rowContent = HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(segment.start.clockDisplay)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(mutedText)
+            if let badge = presentation.badgeText {
+                speakerBadge(badge, isSelf: presentation.isSelf)
+            }
+            Text(segment.text)
+                .font(Theme.subheadline)
+                .foregroundStyle(bodyText)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+
+        if let speakerLabel = segment.speakerLabel,
+           let actionTitle = presentation.menuActionTitle,
+           let actionImage = presentation.menuActionSystemImage {
+            Menu {
+                Button {
+                    if presentation.isSelf {
+                        coach.clearSelfSpeaker()
+                    } else {
+                        coach.markSelfSpeaker(speakerLabel)
+                    }
+                } label: {
+                    Label(actionTitle, systemImage: actionImage)
+                }
+            } label: {
+                rowContent
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(NSLocalizedString("coach.speaker.accessibility_hint", comment: "Tap to mark whether this is you"))
+            .accessibilityIdentifier("coach.segment.\(Int(segment.start))")
+        } else {
+            rowContent
+                .accessibilityIdentifier("coach.segment.\(Int(segment.start))")
+        }
+    }
+
+    private func speakerBadge(_ text: String, isSelf: Bool) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(isSelf ? Color.white : (style == .dark ? Color.white.opacity(0.9) : Theme.textSecondary))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(isSelf ? Theme.accent : (style == .dark ? Color.white.opacity(0.14) : Theme.separator.opacity(0.6)))
+            )
     }
 }
 

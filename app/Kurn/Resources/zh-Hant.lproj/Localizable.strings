@@ -1110,3 +1110,9 @@
 "paper.notes.updated" = "更新於 %@";
 "coach.portrait.expand" = "展開會議教練";
 "coach.portrait.collapse" = "收合會議教練";
+
+/* Live speaker self-mark */
+"coach.speaker.this_is_me" = "這是我";
+"coach.speaker.not_me" = "不是我";
+"coach.speaker.self" = "我";
+"coach.speaker.accessibility_hint" = "點一下標記是否為本人發言";

@@ -1110,3 +1110,9 @@
 "paper.notes.updated" = "更新 %@";
 "coach.portrait.expand" = "会議コーチを展開";
 "coach.portrait.collapse" = "会議コーチを折りたたむ";
+
+/* Live speaker self-mark */
+"coach.speaker.this_is_me" = "これは私";
+"coach.speaker.not_me" = "私ではない";
+"coach.speaker.self" = "自分";
+"coach.speaker.accessibility_hint" = "タップして自分の発言かどうかを設定";

@@ -56,6 +56,7 @@ final class MeetingCoachSession {
 
     private(set) var segments: [LiveTranscriptSegment] = []
     private(set) var gaps: [LiveTranscriptGap] = []
+    var selfSpeakerLabel: String?
     private(set) var connection: LiveConnectionState = .connecting
     private(set) var cost = CoachCostMeter()
     private(set) var budget: CoachBudgetGuard
@@ -99,6 +100,9 @@ final class MeetingCoachSession {
     @ObservationIgnored private var aiStoppedAt: TimeInterval?
     /// Stops cloud transcription when the budget guard fires; recording continues.
     @ObservationIgnored var onStopAI: (@MainActor () -> Void)?
+    /// Resolves the dominant anonymous speaker label for a live transcript window,
+    /// returning `nil` when streaming diarization is unavailable.
+    @ObservationIgnored var speakerLookup: (@Sendable (TimeInterval, TimeInterval) -> String?)?
 
     init(
         meeting: Meeting,
@@ -106,6 +110,7 @@ final class MeetingCoachSession {
         configuration: MeetingCoachConfiguration,
         llm: (any CoachLLM)? = nil,
         trigger: (any SuggestionTriggerStrategy)? = nil,
+        speakerLookup: (@Sendable (TimeInterval, TimeInterval) -> String?)? = nil,
         elapsed: @escaping @MainActor () -> TimeInterval
     ) {
         self.meeting = meeting
@@ -118,6 +123,7 @@ final class MeetingCoachSession {
                                            maximumInWindow: max(1, configuration.maxCardsPerWindow), openingQuiet: 120)
         self.llm = llm ?? CoachResponsesClient(backend: configuration.backend)
         self.trigger = trigger ?? EventSuggestionTrigger(mentionsUser: ChineseText.nameMatcher(for: configuration.userName))
+        self.speakerLookup = speakerLookup
         self.elapsed = elapsed
         (events, eventSink) = AsyncStream.makeStream(of: LiveTranscriptEvent.self)
     }
@@ -158,11 +164,26 @@ final class MeetingCoachSession {
     // MARK: Lifecycle
 
     /// Called once capture owns a recording; starts consuming transcript events.
+    /// If a `CoachRecord` already exists for `recordingID` (crash/restore of the
+    /// same recording), restores its persisted segments and self speaker label.
     func begin(recordingID: UUID) {
         self.recordingID = recordingID
-        let record = CoachRecord(meeting: meeting, recordingID: recordingID, userName: userName)
-        modelContext.insert(record)
-        self.record = record
+        let targetID: UUID? = recordingID
+        var descriptor = FetchDescriptor<CoachRecord>(predicate: #Predicate { $0.recordingID == targetID })
+        descriptor.fetchLimit = 1
+        if let existing = (try? modelContext.fetch(descriptor))?.first {
+            self.record = existing
+            self.segments = existing.segments
+            self.gaps = existing.gaps
+            self.ledgers = existing.ledgers
+            self.triggerLog = existing.triggerLog
+            self.wrapUp = existing.wrapUp
+            self.selfSpeakerLabel = existing.selfSpeakerLabel
+        } else {
+            let record = CoachRecord(meeting: meeting, recordingID: recordingID, userName: userName)
+            modelContext.insert(record)
+            self.record = record
+        }
         save()
         eventTask = Task { [self] in
             for await event in events {
@@ -225,6 +246,9 @@ final class MeetingCoachSession {
             Self.debugAppendRawFinal(segment)
             #endif
             segment.text = ChineseText.traditional(segment.text)
+            if segment.speakerLabel == nil {
+                segment.speakerLabel = speakerLookup?(segment.start, segment.end)
+            }
             segments.append(segment)
             save()
             evaluateTrigger(for: segment)
@@ -262,6 +286,10 @@ final class MeetingCoachSession {
         } else {
             gaps.append(gap)
         }
+    }
+
+    func updateSegmentSpeakerLabel(at index: Int, to label: String) {
+        segments[index].speakerLabel = label
     }
 
     // MARK: Budget
@@ -358,7 +386,13 @@ final class MeetingCoachSession {
 
     private func runPipeline(segment: LiveTranscriptSegment, labels: [String]) async {
         guard !Task.isCancelled, !isCancelled, !isAIStopped else { return }
-        let input = CoachMessages.trigger(segments: segments, now: segment.arrivedAt, events: labels, cards: previousCardTexts)
+        let input = CoachMessages.trigger(
+            segments: segments,
+            now: segment.arrivedAt,
+            events: labels,
+            cards: previousCardTexts,
+            selfSpeakerLabel: selfSpeakerLabel
+        )
         do {
             let judgeTool = CoachTool(name: "judge", description: "回答要不要出卡", parameters: CoachPrompts.judgeSchema)
             let judged = try await llm.call(model: CoachPricing.judgeModel,
@@ -392,7 +426,12 @@ final class MeetingCoachSession {
         guard !isCancelled, !isAsking, !isAIStopped, let last = segments.last else { return }
         isAsking = true
         defer { isAsking = false; askTask = nil }
-        let input = CoachMessages.ask(segments: segments, now: elapsed(), cards: previousCardTexts)
+        let input = CoachMessages.ask(
+            segments: segments,
+            now: elapsed(),
+            cards: previousCardTexts,
+            selfSpeakerLabel: selfSpeakerLabel
+        )
         let instructions = cardInstructions
         let tool = cardTool
         let llm = self.llm
@@ -425,7 +464,7 @@ final class MeetingCoachSession {
         defer { isWrappingUp = false; wrapUpTask = nil }
         let tool = CoachTool(name: "emit_wrapup", description: "顯示收尾整理", parameters: CoachPrompts.emitWrapupSchema)
         let instructions = cardInstructions
-        let input = CoachMessages.wrapUp(segments: segments)
+        let input = CoachMessages.wrapUp(segments: segments, selfSpeakerLabel: selfSpeakerLabel)
         let llm = self.llm
         let task = Task {
             try await llm.call(model: CoachPricing.cardModel, instructions: instructions,
@@ -523,12 +562,13 @@ final class MeetingCoachSession {
         save()
     }
 
-    private func save() {
+    func save() {
         guard !isCancelled, let record else { return }
         record.segments = segments
         record.gaps = gaps
         record.ledgers = ledgers
         record.triggerLog = triggerLog
+        record.selfSpeakerLabel = selfSpeakerLabel
         record.costUSD += cost.totalUSD - savedLiveCost
         savedLiveCost = cost.totalUSD
         record.transcribedSeconds = cost.transcribedSeconds

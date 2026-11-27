@@ -110,3 +110,36 @@ struct MeetingCoachCollapsedBarPresentation: Equatable, Sendable {
         }
     }
 }
+
+/// Pure presentation model for one live transcript row's speaker badge and self-mark menu.
+struct LiveTranscriptSegmentPresentation: Equatable, Sendable {
+    let badgeText: String?
+    let isSelf: Bool
+    let menuActionTitle: String?
+    let menuActionSystemImage: String?
+
+    var canMarkSelf: Bool { menuActionTitle != nil }
+
+    init(speakerLabel: String?, selfSpeakerLabel: String?) {
+        guard let label = speakerLabel, !label.isEmpty else {
+            self.badgeText = nil
+            self.isSelf = false
+            self.menuActionTitle = nil
+            self.menuActionSystemImage = nil
+            return
+        }
+        let markedSelf = label == selfSpeakerLabel
+        self.isSelf = markedSelf
+        self.badgeText = markedSelf
+            ? NSLocalizedString("coach.speaker.self", comment: "Short label shown for the user's own turns")
+            : label
+        self.menuActionTitle = markedSelf
+            ? NSLocalizedString("coach.speaker.not_me", comment: "Clear self speaker mark")
+            : NSLocalizedString("coach.speaker.this_is_me", comment: "Mark speaker label as self")
+        self.menuActionSystemImage = markedSelf ? "person.slash" : "person.fill.checkmark"
+    }
+
+    init(segment: LiveTranscriptSegment, selfSpeakerLabel: String?) {
+        self.init(speakerLabel: segment.speakerLabel, selfSpeakerLabel: selfSpeakerLabel)
+    }
+}
