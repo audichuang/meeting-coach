@@ -365,4 +365,131 @@ struct PaperNoteFlushPolicyTests {
         #expect(session.hasUnsavedChanges)
         #expect(session.lastSaveError != nil)
     }
+
+    @Test func finishWhileSerializationInFlightWaitsAndSerializesLatestOffMainWithoutConcurrency() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Finish Off-Main")
+        context.insert(meeting)
+        try context.save()
+
+        let gate = GatedDrawingSerializer()
+        let recordingID = UUID()
+        var elapsed: TimeInterval = 20
+        let session = PaperNoteSession(
+            meeting: meeting,
+            modelContext: context,
+            debounceInterval: .milliseconds(500),
+            elapsed: { elapsed },
+            serialize: { snapshot in await gate.serialize(snapshot) }
+        )
+        session.begin(recordingID: recordingID)
+
+        // Snapshot A starts serializing off-main and pauses at the gate.
+        let strokeA = makeSampleDrawing(offsetY: 120)
+        session.drawingDidChange(strokeA)
+        session.requestFlush()
+        await gate.waitForCall(atLeast: 1)
+
+        // Stroke B arrives while A is still in flight.
+        elapsed = 55
+        let strokeB = PKDrawing(strokes: strokeA.strokes + makeSampleDrawing(offsetY: 260).strokes)
+        session.drawingDidChange(strokeB)
+
+        // Finishing must wait for A instead of cancelling A and encoding B on MainActor.
+        let finishTask = Task { await session.finish() }
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        #expect(gate.callCount == 1, "Must wait for A before starting B")
+        #expect(gate.maxConcurrent == 1)
+        #expect(gate.hasWaitingCall)
+
+        // Release A -> A commits, then B starts off-main (still never two concurrent).
+        gate.releaseNext()
+        await gate.waitForCall(atLeast: 2)
+        #expect(gate.maxConcurrent == 1)
+
+        // Release B -> finish completes cleanly off-main with both batches persisted.
+        gate.releaseNext()
+        let finished = await finishTask.value
+        #expect(finished)
+        #expect(gate.callCount == 2)
+        #expect(gate.maxConcurrent == 1)
+        #expect(gate.ranOffMainThread)
+        #expect(!session.hasUnsavedChanges)
+
+        let saved = try #require(
+            try context.fetch(FetchDescriptor<PaperNote>(predicate: #Predicate { $0.recordingID == recordingID })).first
+        )
+        #expect(saved.loadDrawing().strokes.count == 2)
+        try #require(saved.anchors.count == 2)
+        #expect(saved.anchors[0].recordingOffset == 20)
+        #expect(saved.anchors[0].strokeCount == 1)
+        #expect(saved.anchors[1].recordingOffset == 55)
+        #expect(saved.anchors[1].strokeCount == 2)
+    }
+
+    @Test func stopAndSaveDoesNotBlockOnInFlightPaperSerializationAndPersistsLatestOffMain() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Non-Blocking Stop")
+        context.insert(meeting)
+        try context.save()
+
+        let gate = GatedDrawingSerializer()
+        let recorder = AudioRecorderService(
+            engine: FakeAudioCaptureEngine(),
+            sink: FakeAudioSinkWriting(),
+            stallInterval: 3_600,
+            microphonePermission: { true }
+        )
+        let paperNotes = PaperNoteSession(
+            meeting: meeting,
+            modelContext: context,
+            elapsed: { [weak recorder] in recorder?.elapsed ?? 0 },
+            serialize: { snapshot in await gate.serialize(snapshot) }
+        )
+        let viewModel = RecorderViewModel(
+            meeting: meeting,
+            modelContext: context,
+            defaultMode: .onDevice,
+            options: RecorderOptions(alwaysUseBuiltInMic: true),
+            recorder: recorder,
+            paperNoteSession: paperNotes,
+            fileFinalizer: StubRecordingFileFinalizer(result: FinalizedRecordingFile(duration: 4, fileSize: 2_048)),
+            lifecycleSaver: ScriptedRecordingLifecycleSaver()
+        )
+
+        await viewModel.startRecording()
+        let strokeA = makeSampleDrawing(offsetY: 120)
+        paperNotes.drawingDidChange(strokeA)
+        paperNotes.requestFlush()
+        await gate.waitForCall(atLeast: 1)
+
+        let strokeB = PKDrawing(strokes: strokeA.strokes + makeSampleDrawing(offsetY: 260).strokes)
+        paperNotes.drawingDidChange(strokeB)
+
+        // Recording stop returns immediately while A is still paused at the gate.
+        let finalized = viewModel.stopAndSave()
+        #expect(finalized)
+        #expect(viewModel.didSaveRecording)
+        #expect(gate.callCount == 1)
+        #expect(gate.hasWaitingCall)
+
+        // Releasing A triggers off-main serialization of B, never overlapping.
+        gate.releaseNext()
+        await gate.waitForCall(atLeast: 2)
+        #expect(gate.maxConcurrent == 1)
+        gate.releaseNext()
+        await paperNotes.waitForInFlightFlush()
+
+        #expect(!paperNotes.hasUnsavedChanges)
+        #expect(gate.callCount == 2)
+        #expect(gate.maxConcurrent == 1)
+        #expect(gate.ranOffMainThread)
+        let notes = try context.fetch(FetchDescriptor<PaperNote>())
+        #expect(notes.count == 1)
+        #expect(notes.first?.loadDrawing().strokes.count == 2)
+    }
 }

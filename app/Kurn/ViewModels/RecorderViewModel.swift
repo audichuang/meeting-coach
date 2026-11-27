@@ -90,6 +90,7 @@ final class RecorderViewModel {
         recorder: AudioRecorderService = AudioRecorderService(),
         liveTranscription: LiveTranscriptionService? = nil,
         coachSession: MeetingCoachSession? = nil,
+        paperNoteSession: PaperNoteSession? = nil,
         fileFinalizer: any RecordingFileFinalizing = RecordingFileFinalizer(),
         lifecycleSaver: any RecordingLifecycleSaving = ModelContextRecordingLifecycleSaver(),
         onRecordingSaved: @escaping () -> Void = {}
@@ -98,7 +99,7 @@ final class RecorderViewModel {
         self.modelContext = modelContext
         self.defaultMode = defaultMode
         self.recorder = recorder
-        self.paperNotes = PaperNoteSession(
+        self.paperNotes = paperNoteSession ?? PaperNoteSession(
             meeting: meeting,
             modelContext: modelContext,
             elapsed: { [weak recorder] in recorder?.elapsed ?? 0 }
@@ -529,8 +530,8 @@ final class RecorderViewModel {
             AppLog.persistence.atError.error("recording: finalizing transition save failed")
         }
         let result = recorder.stop()
-        paperNotes.finish()
         let finalized = finalizeCapture(recording, result: result)
+        paperNotes.finishInBackground()
         stopLiveTranscription(at: end, discarding: coach?.isCancelled ?? false)
         finishExternalRecordingState()
         return finalized

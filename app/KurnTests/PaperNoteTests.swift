@@ -105,7 +105,7 @@ struct PaperNoteTests {
             elapsed = 92.5
             let twoStrokeDrawing = PKDrawing(strokes: expectedDrawing.strokes + makeSampleDrawing(offsetY: 260).strokes)
             session.drawingDidChange(twoStrokeDrawing)
-            session.finish()
+            await session.finish()
 
             #expect(!session.hasUnsavedChanges)
             #expect(session.lastSavedAt == clock)
@@ -138,7 +138,7 @@ struct PaperNoteTests {
         #expect(abs(reloadedDrawing.bounds.minX - expectedDrawing.bounds.minX) < 1)
     }
 
-    @Test func emptySessionDoesNotInsertEmptyPaperNote() throws {
+    @Test func emptySessionDoesNotInsertEmptyPaperNote() async throws {
         let container = TestModelContainer.make()
         let context = container.mainContext
         let meeting = Meeting(title: "Quiet Meeting")
@@ -148,12 +148,12 @@ struct PaperNoteTests {
         let session = PaperNoteSession(meeting: meeting, modelContext: context, elapsed: { 10 })
         session.begin(recordingID: UUID())
         session.drawingDidChange(PKDrawing())
-        session.finish()
+        await session.finish()
 
         #expect(try context.fetch(FetchDescriptor<PaperNote>()).isEmpty)
     }
 
-    @Test func strokesDrawnBeforeBeginArePersistedOnceRecordingStarts() throws {
+    @Test func strokesDrawnBeforeBeginArePersistedOnceRecordingStarts() async throws {
         let container = TestModelContainer.make()
         let context = container.mainContext
         let meeting = Meeting(title: "Early Sketch")
@@ -166,7 +166,7 @@ struct PaperNoteTests {
         #expect(try context.fetch(FetchDescriptor<PaperNote>()).isEmpty)
 
         session.begin(recordingID: recordingID)
-        session.flushNow()
+        await session.flush()
 
         let saved = try #require(try context.fetch(FetchDescriptor<PaperNote>()).first)
         #expect(saved.recordingID == recordingID)
@@ -705,8 +705,18 @@ struct PaperNoteTests {
         elapsed = 92.5
         let stroke2 = PKDrawing(strokes: stroke1.strokes + makeSampleDrawing(offsetY: 260).strokes)
         session.drawingDidChange(stroke2)
-        session.finish()
+
+        let finishTask = Task { await session.finish() }
+        await Task.yield()
+        #expect(gate.callCount == 1)
+        #expect(gate.maxConcurrent == 1)
+
         gate.releaseNext()
+        await gate.waitForCall(atLeast: 2)
+        #expect(gate.maxConcurrent == 1)
+        gate.releaseNext()
+        #expect(await finishTask.value)
+        #expect(gate.ranOffMainThread)
 
         let saved = try #require(
             try context.fetch(FetchDescriptor<PaperNote>(predicate: #Predicate { $0.recordingID == recordingID })).first
