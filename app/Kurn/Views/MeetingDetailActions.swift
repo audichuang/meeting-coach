@@ -136,6 +136,11 @@ extension MeetingDetailView {
         // A deliberate user action gets a fresh automatic-resume budget,
         // regardless of how many unattended attempts already failed (H4).
         transcription?.resetAutomaticResumeBudget(for: recording)
+        if let transcription, let summaries, MeetingCoachFollowUp.isCoachRecording(recording, in: meeting) {
+            MeetingCoachFollowUp.run(meeting: meeting, recording: recording, transcription: transcription,
+                                     summaries: summaries, settings: settings)
+            return
+        }
         // Routed through the coordinator's task registry so the run can be
         // cancelled (by the user or when the background grace window expires).
         transcription?.startTranscription(
