@@ -169,6 +169,59 @@ final class PaperRecordingLayoutUITests: XCTestCase {
         try saveScreenshot(named: "detail-paper-viewer", to: shotDir)
     }
 
+    func testPortraitCollapsedBarShowsStoppedCoachStatusOverLastCard() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("Paper iPad layout test runs on iPad simulators")
+        }
+
+        let env = ProcessInfo.processInfo.environment
+        let shotDir = env["MC_SHOT_DIR"]
+
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "UI-Testing-Screenshots",
+            "UI-Testing-DisableAnimations",
+            "-AppleLanguages", "(zh-Hant)",
+            "-AppleLocale", "zh_TW"
+        ]
+        app.launchEnvironment["KURN_DEBUG_COACH_PREVIEW"] = "1"
+        app.launchEnvironment["KURN_DEBUG_COACH_PREVIEW_STOP"] = "quota"
+        if let captureFile = env["MC_CAPTURE_FILE"], !captureFile.isEmpty {
+            app.launchEnvironment["KURN_DEBUG_CAPTURE_FILE"] = captureFile
+        }
+
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+
+        let recordButton = app.buttons["meetings.record"].firstMatch
+        XCTAssertTrue(recordButton.waitForExistence(timeout: 15), "Record button should be reachable")
+        recordButton.tap()
+
+        let canvas = app.scrollViews["paper.canvas"].firstMatch
+        XCTAssertTrue(canvas.waitForExistence(timeout: 15), "Paper canvas should appear")
+
+        let collapsedBar = app.buttons["coach.portrait.bar"].firstMatch
+        XCTAssertTrue(collapsedBar.waitForExistence(timeout: 15), "Portrait coach bar should appear")
+
+        // The preview emits a card first and then triggers HTTP 402 stop;
+        // the collapsed bar must show the stopped status rather than the stale card.
+        let stoppedPredicate = NSPredicate(format: "label CONTAINS %@", "本月額度已用完")
+        let stoppedExpectation = XCTNSPredicateExpectation(predicate: stoppedPredicate, object: collapsedBar)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [stoppedExpectation], timeout: 15),
+            .completed,
+            "Collapsed portrait bar should show stopped status instead of stale card (label: \(collapsedBar.label))"
+        )
+        XCTAssertFalse(
+            collapsedBar.label.contains("下週交付範圍"),
+            "Collapsed portrait bar must not keep showing the stale suggestion card once stopped"
+        )
+
+        drawStroke(on: canvas, from: CGVector(dx: 0.16, dy: 0.30), to: CGVector(dx: 0.70, dy: 0.32))
+        Thread.sleep(forTimeInterval: 0.8)
+        try saveScreenshot(named: "portrait-paper-collapsed-stopped", to: shotDir)
+    }
+
     private func drawStroke(on element: XCUIElement, from start: CGVector, to end: CGVector) {
         let startCoord = element.coordinate(withNormalizedOffset: start)
         let endCoord = element.coordinate(withNormalizedOffset: end)

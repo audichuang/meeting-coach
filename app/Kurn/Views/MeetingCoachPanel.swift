@@ -126,7 +126,7 @@ struct MeetingCoachPanel: View {
         let presentation = MeetingCoachStatusPresentation(coach: coach)
         return Label(presentation.text, systemImage: presentation.icon)
             .font(.footnote.weight(.semibold))
-            .foregroundStyle(presentation.color)
+            .foregroundStyle(presentation.tone.color)
             .lineLimit(1)
     }
 
@@ -237,8 +237,8 @@ struct MeetingCoachPortraitDock: View {
     @Binding var isExpanded: Bool
     let maxExpandedHeight: CGFloat
 
-    private var status: MeetingCoachStatusPresentation {
-        MeetingCoachStatusPresentation(coach: coach)
+    private var bar: MeetingCoachCollapsedBarPresentation {
+        MeetingCoachCollapsedBarPresentation(coach: coach, partialText: partialText)
     }
 
     var body: some View {
@@ -265,28 +265,30 @@ struct MeetingCoachPortraitDock: View {
     }
 
     private var collapsedBar: some View {
-        Button {
+        let presentation = bar
+        return Button {
             withAnimation(.easeInOut(duration: 0.2)) { isExpanded = true }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: coach.currentCard != nil ? "lightbulb.fill" : status.icon)
+                Image(systemName: presentation.icon)
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(coach.currentCard != nil ? Theme.accent : status.color)
+                    .foregroundStyle(presentation.tone.color)
                     .accessibilityHidden(true)
 
-                if let card = coach.currentCard {
-                    Text(card.candidate.shortText)
+                if presentation.showsCard {
+                    Text(presentation.text)
                         .font(Theme.subheadlineEmphasized)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .accessibilityIdentifier("coach.card.text")
                 } else {
-                    Text(collapsedStatusSummary)
-                        .font(Theme.subheadline)
-                        .foregroundStyle(Theme.textPrimary)
+                    Text(presentation.text)
+                        .font(presentation.tone == .warning ? Theme.subheadlineEmphasized : Theme.subheadline)
+                        .foregroundStyle(presentation.tone == .warning ? Theme.warning : Theme.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .accessibilityIdentifier("coach.status.text")
                 }
 
                 Spacer(minLength: 8)
@@ -307,54 +309,19 @@ struct MeetingCoachPortraitDock: View {
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .capsule)
-        .accessibilityLabel(collapsedAccessibilityLabel)
+        .accessibilityLabel(presentation.accessibilityLabel)
         .accessibilityHint(NSLocalizedString("coach.portrait.expand", comment: "Expand meeting coach"))
         .accessibilityIdentifier("coach.portrait.bar")
     }
-
-    private var collapsedStatusSummary: String {
-        if let latest = coach.segments.last?.text, !latest.isEmpty {
-            return "\(status.text) · \(latest)"
-        }
-        if !partialText.isEmpty {
-            return "\(status.text) · \(ChineseText.traditional(partialText))"
-        }
-        return status.text
-    }
-
-    private var collapsedAccessibilityLabel: String {
-        if let card = coach.currentCard {
-            return "\(status.text): \(card.candidate.shortText)"
-        }
-        return collapsedStatusSummary
-    }
 }
 
-private struct MeetingCoachStatusPresentation {
-    let text: String
-    let icon: String
-    let color: Color
-
-    @MainActor
-    init(coach: MeetingCoachSession) {
-        if let stopReason = coach.stopReason {
-            switch stopReason {
-            case .budget: text = NSLocalizedString("coach.status.stopped", comment: "AI stopped (budget)")
-            case .quota: text = NSLocalizedString("coach.status.quota", comment: "AI stopped: this month's allowance is used up")
-            case .unauthorized: text = NSLocalizedString("coach.status.unauthorized", comment: "AI stopped: invite code rejected")
-            case .accessMissing: text = NSLocalizedString("coach.status.accessMissing", comment: "AI stopped: the build lacks the Worker address or Access token")
-            }
-        } else {
-            switch coach.connection {
-            case .live: text = NSLocalizedString("coach.status.live", comment: "Live")
-            case .connecting: text = NSLocalizedString("coach.status.connecting", comment: "Connecting")
-            case .reconnecting: text = NSLocalizedString("coach.status.paused", comment: "Transcript paused, reconnecting")
-            case .stopped: text = NSLocalizedString("coach.status.ended", comment: "Ended")
-            }
+private extension MeetingCoachStatusTone {
+    var color: Color {
+        switch self {
+        case .active: return Theme.success
+        case .accent: return Theme.accent
+        case .warning: return Theme.warning
         }
-        let degraded = coach.isAIStopped || coach.connection == .reconnecting
-        icon = degraded ? "pause.circle.fill" : "waveform"
-        color = degraded ? Theme.warning : Theme.success
     }
 }
 

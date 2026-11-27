@@ -18,7 +18,15 @@ import SwiftData
 #if canImport(FluidAudio)
 import FluidAudio
 
-private struct DebugPreviewCoachLLM: CoachLLM {
+private final class DebugPreviewCoachLLM: CoachLLM, @unchecked Sendable {
+    private let lock = NSLock()
+    private let stopStatusCode: Int?
+    private var askCount = 0
+
+    init(stopStatusCode: Int? = nil) {
+        self.stopStatusCode = stopStatusCode
+    }
+
     func call(
         model: String,
         instructions: String,
@@ -27,6 +35,15 @@ private struct DebugPreviewCoachLLM: CoachLLM {
         force: String?
     ) async throws -> CoachCallResult {
         let name = tools.first?.name ?? "emit_suggestion"
+        if name == "emit_suggestion", let stopStatusCode {
+            let count = lock.withLock { () -> Int in
+                askCount += 1
+                return askCount
+            }
+            if count >= 2 {
+                throw AppError.apiError(statusCode: stopStatusCode, message: "preview_stopped")
+            }
+        }
         let json: String
         switch name {
         case "judge":
@@ -92,11 +109,17 @@ enum DebugCoachPreview {
             budgetUSD: 10,
             backend: CoachBackend(baseURL: baseURL, token: "preview", viaWorker: true)
         )
+        let stopMode = ProcessInfo.processInfo.environment["KURN_DEBUG_COACH_PREVIEW_STOP"]
+        let stopStatusCode: Int? = switch stopMode {
+        case "quota": 402
+        case "unauthorized": 401
+        default: nil
+        }
         let session = MeetingCoachSession(
             meeting: meeting,
             modelContext: modelContext,
             configuration: configuration,
-            llm: DebugPreviewCoachLLM(),
+            llm: DebugPreviewCoachLLM(stopStatusCode: stopStatusCode),
             elapsed: elapsed
         )
         let live = LiveTranscriptionService(engineFactory: { [weak session] _, _ in
@@ -121,6 +144,9 @@ enum DebugCoachPreview {
                         try? await Task.sleep(for: .milliseconds(25))
                     }
                     await session.askForCard()
+                    if stopStatusCode != nil {
+                        await session.askForCard()
+                    }
                 }
             }
             try await engine.loadModels()
