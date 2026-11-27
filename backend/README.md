@@ -26,6 +26,25 @@ op read "op://<vault>/<admin-item>/credential" | tr -d '\n' | npx wrangler secre
 
 Generate `ADMIN_SECRET` (for example `openssl rand -base64 36`) straight into the password manager first; it is the only way to issue invites.
 
+## Cloudflare Access (front door)
+
+The Worker's `workers.dev` URL sits behind a Cloudflare Access self-hosted application whose only policy is Service Auth for one service token (`meeting-coach-ipad-app`). Every request, `/admin/*` included, needs `CF-Access-Client-Id` and `CF-Access-Client-Secret`; without them Access answers 401 before the Worker runs. The Worker does not check these headers itself, so `npx wrangler deploy` is unchanged, but `curl` calls in this README need them too:
+
+```sh
+curl -H "CF-Access-Client-Id: $ID" -H "CF-Access-Client-Secret: $SECRET" ...
+```
+
+The invite code stays the per-person identity; the token only proves the request comes from the App build. Anyone who unpacks the IPA can extract it, so it filters drive-by traffic and does not replace the invite code or the monthly cap.
+
+Setup (account of the Worker, `cf` CLI, `CLOUDFLARE_ACCOUNT_ID` set):
+
+1. `cf zero-trust access service-tokens create --name meeting-coach-ipad-app --duration 8760h`. The secret is shown once; pipe it straight into the password manager.
+2. `cf zero-trust access applications create --body <json>`: `type: self_hosted`, the Worker host in `domain` and `destinations`, `service_auth_401_redirect: true` (401 instead of a login redirect), one policy with `decision: non_identity` and `include: [{service_token: {token_id}}]`.
+
+Build the App with the token: copy `app/Config/Secrets.example.xcconfig` to `app/Config/Secrets.xcconfig` (gitignored) and fill both values; they reach Info.plist and are sent to the Worker only, never to OpenAI.
+
+Rotate (the token expires after one year, `expires_at` in `cf zero-trust access service-tokens list`): `cf zero-trust access service-tokens rotate <id>` (or refresh in the dashboard) issues a new secret with the same client id and keeps the old one valid for a grace period you choose. Update the password manager and `Secrets.xcconfig`, ship a new App build, and let the old secret lapse. Installed builds stop working when it does, so ship the build first. If the token leaks, rotate with no grace period.
+
 ## Invites
 
 ```sh
