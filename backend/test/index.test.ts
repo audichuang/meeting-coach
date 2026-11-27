@@ -1,6 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInvite } from "../src/auth";
+import { MAX_AUDIO_BYTES } from "../src/index";
 import { responseCostUSD } from "../src/pricing";
 
 const E = env;
@@ -83,6 +84,80 @@ describe("/v1/responses", () => {
     vi.restoreAllMocks();
     const usage = (await (await call(token, "/v1/usage")).json()) as any;
     expect(usage.month.usd).toBe(0);
+  });
+});
+
+// Same fields the App's OpenAIProvider sends for gpt-transcribe.
+function audioForm(fields: Record<string, string> = {}, bytes = 1000) {
+  const form = new FormData();
+  for (const [k, v] of Object.entries({ model: "gpt-transcribe", response_format: "json", language: "zh", prompt: "p", ...fields })) {
+    form.append(k, v);
+  }
+  form.append("file", new File([new Uint8Array(bytes)], "chunk.m4a", { type: "audio/m4a" }));
+  return form;
+}
+
+async function upload(token: string, form: FormData) {
+  return exports.default.fetch(`${BASE}/v1/audio/transcriptions`, {
+    method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form,
+  });
+}
+
+describe("/v1/audio/transcriptions", () => {
+  it("forwards the whitelisted fields and the file, and bills the reported duration", async () => {
+    const { token } = await createInvite(E, null);
+    const fetchSpy = mockOpenAI({ text: "你好", usage: { type: "duration", seconds: 120 } });
+    const res = await upload(token, audioForm());
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).text).toBe("你好");
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(url).toBe("https://api.openai.com/v1/audio/transcriptions");
+    expect((init!.headers as Record<string, string>).Authorization).toBe("Bearer test-openai-key");
+    const sent = init!.body as FormData;
+    expect(sent.get("model")).toBe("gpt-transcribe");
+    expect(sent.get("prompt")).toBe("p");
+    expect((sent.get("file") as File).size).toBe(1000);
+    vi.restoreAllMocks();
+    const usage = (await (await call(token, "/v1/usage")).json()) as any;
+    expect(usage.month.usd).toBeCloseTo((120 / 60) * 0.0045, 10);
+  });
+
+  it("bills from the file size at 32 kbps when no duration is reported", async () => {
+    const { token } = await createInvite(E, null);
+    mockOpenAI({ text: "x", usage: { type: "tokens", input_tokens: 10, output_tokens: 2 } });
+    expect((await upload(token, audioForm({}, 240_000))).status).toBe(200);
+    vi.restoreAllMocks();
+    const usage = (await (await call(token, "/v1/usage")).json()) as any;
+    // 240 kB at 32 kbps = 60 s
+    expect(usage.month.usd).toBeCloseTo(0.0045, 10);
+  });
+
+  it("rejects other models, formats, unknown fields and oversized files without calling OpenAI", async () => {
+    const { token } = await createInvite(E, null);
+    const fetchSpy = mockOpenAI({});
+    expect((await upload(token, audioForm({ model: "whisper-1" }))).status).toBe(400);
+    expect((await upload(token, audioForm({ response_format: "verbose_json" }))).status).toBe(400);
+    expect((await upload(token, audioForm({ stream: "true" }))).status).toBe(400);
+    expect((await upload(token, audioForm({}, MAX_AUDIO_BYTES + 1))).status).toBe(413);
+    const noFile = new FormData();
+    noFile.append("model", "gpt-transcribe");
+    expect((await upload(token, noFile)).status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns 402 over the cap and passes upstream errors through unbilled", async () => {
+    const { id, token } = await createInvite(E, null);
+    mockOpenAI({ error: { message: "bad" } }, 500);
+    expect((await upload(token, audioForm())).status).toBe(500);
+    vi.restoreAllMocks();
+    expect(((await (await call(token, "/v1/usage")).json()) as any).month.usd).toBe(0);
+
+    const month = new Date().toISOString().slice(0, 7);
+    await E.DB.prepare("INSERT INTO usage (user_id, period, usd) VALUES (?, ?, ?)")
+      .bind(id, month, Number(E.MONTHLY_CAP_USD)).run();
+    const fetchSpy = mockOpenAI({});
+    expect((await upload(token, audioForm())).status).toBe(402);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 

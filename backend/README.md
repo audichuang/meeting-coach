@@ -1,6 +1,6 @@
 # backend
 
-Cloudflare Worker that holds the OpenAI key for the iPad App. The App authenticates with an invite token; the Worker mints Realtime client secrets and proxies Responses calls.
+Cloudflare Worker that holds the OpenAI key for the iPad App. The App authenticates with an invite token; the Worker mints Realtime client secrets and proxies Responses calls and post-meeting file transcription (`/v1/audio/transcriptions`, `gpt-transcribe` only).
 
 ## Deploy
 
@@ -41,6 +41,7 @@ curl -X DELETE "$WORKER/admin/invites/<id>" -H "Authorization: Bearer $ADMIN_SEC
 
 - **Audio never passes through the Worker.** `/v1/realtime/session` returns a short-lived OpenAI client secret and the App connects to OpenAI directly. The secret only gates opening the socket; an open session keeps running after it expires, so the App asks for a new one on every (re)connect.
 - **Realtime spend is an estimate.** The Worker never sees audio duration, so each minted session is billed as `REALTIME_SESSION_EST_MINUTES` minutes. Responses spend is exact, from OpenAI's `usage`.
+- **File transcription is billed from OpenAI's `usage.seconds`** (`gpt-transcribe` has only a per-minute price). If a response ever lacks it, the file size is read at the App's lowest bit rate (32 kbps), which overestimates. Uploads over 8 MB are refused: the App's 300 s chunks are about 2.4 MB at its highest bit rate.
 - **One OpenAI key is shared by every user**, so `/v1/responses` forces `store: false` and rejects `previous_response_id`, `conversation`, streaming, hosted tools and any other unlisted parameter; otherwise one user could read another's stored responses or run up costs that are never metered.
 - **Identity is one function** (`authenticate` in `src/auth.ts`). Replace it with Sign in with Apple or StoreKit later; accounting only needs a stable user id.
 - **D1, not KV**, because spend and rate counters need atomic increments.

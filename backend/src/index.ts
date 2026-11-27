@@ -1,6 +1,9 @@
 import { authenticate, createInvite, isAdmin, type Caller } from "./auth";
 import type { Env } from "./env";
-import { LIVE_TRANSCRIBE_MODEL, RESPONSE_MODELS, realtimeSessionEstimateUSD, responseCostUSD } from "./pricing";
+import {
+  LIVE_TRANSCRIBE_MODEL, RESPONSE_MODELS, TRANSCRIBE_MODEL,
+  realtimeSessionEstimateUSD, responseCostUSD, transcribeCostUSD, transcribeSeconds,
+} from "./pricing";
 import { allowRate, read, record } from "./usage";
 
 const OPENAI = "https://api.openai.com/v1";
@@ -28,6 +31,12 @@ const RESPONSE_KEYS = new Set([
   "model", "instructions", "input", "reasoning", "tools", "tool_choice",
   "max_output_tokens", "text", "temperature", "top_p", "parallel_tool_calls", "truncation", "store",
 ]);
+
+// The App uploads 300 s chunks of mono AAC at 64 kbps at most (about 2.4 MB);
+// the headroom covers AudioChunker's AppleM4A re-encode fallback.
+export const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
+// `json` only: its body carries the `usage` we bill from.
+const TRANSCRIBE_TEXT_FIELDS = new Set(["model", "prompt", "language", "response_format", "temperature"]);
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
@@ -61,6 +70,8 @@ export default {
         return (await overCap(env, caller)) ?? realtimeSession(env, caller);
       case "POST /v1/responses":
         return responses(request, env, caller);
+      case "POST /v1/audio/transcriptions":
+        return transcriptions(request, env, caller);
       default:
         return error(404, "not found");
     }
@@ -152,6 +163,48 @@ async function responses(request: Request, env: Env, caller: Caller): Promise<Re
     let usage;
     try { usage = JSON.parse(text).usage; } catch { /* billed as zero below */ }
     if (usage) await record(env, caller.id, responseCostUSD(body.model, usage));
+  }
+  return new Response(text, { status: upstream.status, headers: { "Content-Type": "application/json" } });
+}
+
+async function transcriptions(request: Request, env: Env, caller: Caller): Promise<Response> {
+  // Reject an oversized upload before buffering it; multipart overhead is small.
+  if (Number(request.headers.get("Content-Length") ?? 0) > MAX_AUDIO_BYTES + 64 * 1024) {
+    return error(413, "audio file too large");
+  }
+  const form = await request.formData().catch(() => null);
+  if (!form) return error(400, "body must be multipart/form-data");
+
+  const upstreamForm = new FormData();
+  for (const [key, value] of form) {
+    if (key === "file") continue;
+    if (!TRANSCRIBE_TEXT_FIELDS.has(key) || typeof value !== "string") {
+      return error(400, `unsupported parameter: ${key}`);
+    }
+    upstreamForm.append(key, value);
+  }
+  if (form.get("model") !== TRANSCRIBE_MODEL) return error(400, `model not allowed: ${String(form.get("model"))}`);
+  const format = form.get("response_format");
+  if (format !== null && format !== "json") return error(400, "response_format must be json");
+  const file = form.get("file");
+  if (!(file instanceof File) || file.size === 0) return error(400, "file is required");
+  if (file.size > MAX_AUDIO_BYTES) return error(413, "audio file too large");
+  upstreamForm.set("response_format", "json");
+  upstreamForm.append("file", file, file.name);
+
+  const capped = await overCap(env, caller);
+  if (capped) return capped;
+
+  const upstream = await fetch(`${OPENAI}/audio/transcriptions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}` },
+    body: upstreamForm,
+  });
+  const text = await upstream.text();
+  if (upstream.ok) {
+    let usage;
+    try { usage = JSON.parse(text).usage; } catch { /* billed from the file size below */ }
+    await record(env, caller.id, transcribeCostUSD(transcribeSeconds(usage, file.size)));
   }
   return new Response(text, { status: upstream.status, headers: { "Content-Type": "application/json" } });
 }

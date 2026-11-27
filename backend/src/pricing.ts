@@ -27,6 +27,25 @@ export function responseCostUSD(model: string, usage: ResponseUsage): number {
   return ((input - cached) * rates.input + cached * rates.cached + output * rates.output) / 1_000_000;
 }
 
+export const TRANSCRIBE_MODEL = "gpt-transcribe";
+/** USD per audio minute; the pricing page lists no per-token rate for it. */
+export const TRANSCRIBE_PER_MINUTE = 0.0045;
+/** Lowest bit rate the App records at (AudioQuality .low), so a size-based duration is an overestimate. */
+const MIN_APP_BITS_PER_SECOND = 32_000;
+
+/**
+ * Seconds to bill for one file transcription: the duration OpenAI reports in
+ * `usage`, or failing that the file size read at the App's lowest bit rate.
+ */
+export function transcribeSeconds(usage: { type?: string; seconds?: number } | undefined, fileBytes: number): number {
+  if (usage?.type === "duration" && typeof usage.seconds === "number" && usage.seconds > 0) return usage.seconds;
+  return (fileBytes * 8) / MIN_APP_BITS_PER_SECOND;
+}
+
+export function transcribeCostUSD(seconds: number): number {
+  return (seconds / 60) * TRANSCRIBE_PER_MINUTE;
+}
+
 // shortcut: the Worker never sees the audio, so each minted realtime session is
 // billed as a flat ESTIMATE of `minutes` audio minutes. Flaky networks
 // (many reconnects) overcount; one long session undercounts. Upgrade by having
