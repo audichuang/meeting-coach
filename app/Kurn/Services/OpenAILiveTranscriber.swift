@@ -16,6 +16,13 @@
 //  network — sends go through a bounded outbox drained by the connection's
 //  own task, so a stalled socket cannot back up the live-audio pump.
 //
+//  A Realtime session expires about an hour after it opens. Shortly before
+//  that (`rotateAfter`, or 5 minutes before the session's own `expires_at`)
+//  the transcriber opens a second session at the next commit boundary and
+//  sends all further audio there, while the old socket stays open only until
+//  its already-committed windows come back. Connections overlap, audio does
+//  not, so nothing is transcribed twice and nothing falls into a gap.
+//
 
 import AVFoundation
 import Foundation
@@ -64,17 +71,27 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
     private static let chunkSamples = 2_400
     /// About 30 s of audio queued for the socket before it counts as stalled.
     private static let outboxLimit = 300
+    /// Lead before the session's own `expires_at` at which a fresh session takes over.
+    private static let expiryLead: TimeInterval = 5 * 60
+    /// How long a replaced session may take to return its committed windows.
+    private static let drainTimeout: Duration = .seconds(30)
 
     nonisolated var displayName: String { Self.model }
 
     private let makeSocket: SocketFactory
     private let onEvent: @Sendable (LiveTranscriptEvent) -> Void
     private let sleep: @Sendable (Duration) async throws -> Void
+    private let clock: @Sendable () -> TimeInterval
+    private let rotateAfter: TimeInterval
     private var partialCallback: (@Sendable (String) -> Void)?
 
     private var tracker = RealtimeCommitTracker(sampleRate: sampleRate, window: 20)
     private var pending: [Int16] = []
     private var connection: Connection?
+    /// The replaced session while its committed windows are still outstanding.
+    private var draining: Draining?
+    /// Clock time at which the live session is replaced.
+    private var rotateAt: TimeInterval = .infinity
     private var generation = 0
     private var gapStart: TimeInterval?
     private var deltas: [(id: String, text: String)] = []
@@ -88,15 +105,32 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         let socket: any RealtimeSocket
         let outbox: AsyncStream<String>.Continuation
         let tasks: [Task<Void, Never>]
+
+        func close() {
+            outbox.finish()
+            tasks.forEach { $0.cancel() }
+            socket.close()
+        }
+    }
+
+    private struct Draining {
+        let connection: Connection
+        /// Holds only the windows committed on `connection`.
+        var tracker: RealtimeCommitTracker
+        let timeout: Task<Void, Never>
     }
 
     init(
         makeSocket: @escaping SocketFactory,
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+        clock: @escaping @Sendable () -> TimeInterval = { Date().timeIntervalSince1970 },
+        rotateAfter: TimeInterval = 55 * 60,
         onEvent: @escaping @Sendable (LiveTranscriptEvent) -> Void
     ) {
         self.makeSocket = makeSocket
         self.sleep = sleep
+        self.clock = clock
+        self.rotateAfter = rotateAfter
         self.onEvent = onEvent
     }
 
@@ -158,9 +192,10 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
             connection.outbox.yield(#"{"type":"input_audio_buffer.commit"}"#)
         }
         // Bounded wait for the last window's final.
-        for _ in 0..<80 where connection != nil && tracker.hasOutstanding {
+        for _ in 0..<80 where (connection != nil && tracker.hasOutstanding) || draining != nil {
             try? await sleep(.milliseconds(100))
         }
+        closeDraining(reportGaps: true)
         closeConnection(reportGaps: true)
         onEvent(.connection(.stopped))
         return finals.joined()
@@ -175,6 +210,7 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
     func cleanup() async {
         finished = true
         reconnectTask?.cancel()
+        closeDraining(reportGaps: false)
         closeConnection(reportGaps: false)
         pending.removeAll()
         partialCallback = nil
@@ -188,11 +224,12 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
 
     // MARK: Connection
 
-    private func connect() {
+    /// - Parameter rotating: a planned hand-over from a live session, which the UI does not see.
+    private func connect(rotating: Bool = false) {
         guard !finished else { return }
         generation += 1
         let id = generation
-        onEvent(.connection(reconnectAttempt == 0 ? .connecting : .reconnecting))
+        if !rotating { onEvent(.connection(reconnectAttempt == 0 ? .connecting : .reconnecting)) }
         let socket: any RealtimeSocket
         do {
             socket = try makeSocket()
@@ -223,6 +260,59 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
             }
         }
         connection = Connection(id: id, socket: socket, outbox: outbox, tasks: [sender, receiver])
+        rotateAt = clock() + rotateAfter
+    }
+
+    /// Moves the live session to `draining` and opens its successor. Called right
+    /// after a commit, so the old session owns no partially sent window.
+    private func rotate() {
+        guard let old = connection, draining == nil else { return }
+        AppLog.transcription.atNotice.notice("OpenAILiveTranscriber: rotating session before expiry")
+        let oldTracker = tracker
+        _ = tracker.abandonPending()   // those windows now belong to the draining session
+        let timeout = Task { [weak self] in
+            try? await Task.sleep(for: Self.drainTimeout)
+            guard !Task.isCancelled else { return }
+            await self?.closeDraining(reportGaps: true)
+        }
+        draining = Draining(connection: old, tracker: oldTracker, timeout: timeout)
+        connection = nil
+        connect(rotating: true)
+    }
+
+    private func handleDraining(_ event: RealtimeServerEvent) {
+        guard var state = draining else { return }
+        switch event {
+        case .committed(let itemID):
+            state.tracker.acknowledge(itemID: itemID)
+        case .completed(let itemID, let transcript, let seconds):
+            deltas.removeAll { $0.id == itemID }
+            partialCallback?(getPartialTranscript())
+            if let seconds { onEvent(.billedSeconds(seconds)) }
+            if let segment = state.tracker.complete(itemID: itemID, text: transcript) {
+                finals.append(transcript)
+                if !transcript.isEmpty {
+                    onEvent(.final(LiveTranscriptSegment(start: segment.start, end: segment.end,
+                                                         text: transcript, arrivedAt: tracker.now)))
+                }
+            }
+        case .error(let code, let message):
+            if code == "input_audio_buffer_commit_empty" { state.tracker.rejectOldest() }
+            AppLog.transcription.atError.error("OpenAILiveTranscriber: server error (draining) code=\(code ?? "unknown", privacy: .public) detail=\(message, privacy: .private)")
+        case .sessionCreated, .delta, .other:
+            break
+        }
+        draining = state
+        if !state.tracker.hasOutstanding { closeDraining(reportGaps: false) }
+    }
+
+    private func closeDraining(reportGaps: Bool) {
+        guard var state = draining else { return }
+        draining = nil
+        state.timeout.cancel()
+        state.connection.close()
+        let gaps = state.tracker.abandonPending()
+        if reportGaps { gaps.forEach { onEvent(.gap($0)) } }
     }
 
     private func send(_ samples: [Int16]) {
@@ -241,19 +331,17 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         }
         if tracker.sent(samples.count), tracker.commit() {
             connection.outbox.yield(#"{"type":"input_audio_buffer.commit"}"#)
+            if clock() >= rotateAt { rotate() }
         }
     }
 
     private func handle(_ text: String, from id: Int) {
-        guard id == connection?.id, let event = RealtimeServerEvent.parse(Data(text.utf8)) else { return }
+        guard let event = RealtimeServerEvent.parse(Data(text.utf8)) else { return }
+        if id == draining?.connection.id { handleDraining(event); return }
+        guard id == connection?.id else { return }
         switch event {
-        case .sessionCreated:
-            reconnectAttempt = 0
-            if let start = gapStart {
-                onEvent(.gap(LiveTranscriptGap(start: start, end: tracker.now)))
-                gapStart = nil
-            }
-            onEvent(.connection(.live))
+        case .sessionCreated(let expiresAt):
+            sessionStarted(expiresAt: expiresAt)
         case .committed(let itemID):
             tracker.acknowledge(itemID: itemID)
         case .delta(let itemID, let delta):
@@ -279,7 +367,25 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
         }
     }
 
+    private func sessionStarted(expiresAt: TimeInterval?) {
+        reconnectAttempt = 0
+        // Honour a shorter server-side expiry; a stale or missing value keeps the default.
+        if let expiresAt, expiresAt - Self.expiryLead > clock() {
+            rotateAt = min(rotateAt, expiresAt - Self.expiryLead)
+        }
+        if let start = gapStart {
+            onEvent(.gap(LiveTranscriptGap(start: start, end: tracker.now)))
+            gapStart = nil
+        }
+        onEvent(.connection(.live))
+    }
+
     private func connectionLost(_ id: Int, code: String) {
+        if id == draining?.connection.id {
+            AppLog.transcription.atNotice.notice("OpenAILiveTranscriber: replaced session lost code=\(code, privacy: .public)")
+            closeDraining(reportGaps: true)
+            return
+        }
         guard id == connection?.id else { return }
         AppLog.transcription.atNotice.notice("OpenAILiveTranscriber: connection lost code=\(code, privacy: .public)")
         closeConnection(reportGaps: true)
@@ -290,9 +396,7 @@ actor OpenAILiveTranscriber: StreamingAsrManager {
     private func closeConnection(reportGaps: Bool) {
         guard let connection else { return }
         self.connection = nil
-        connection.outbox.finish()
-        connection.tasks.forEach { $0.cancel() }
-        connection.socket.close()
+        connection.close()
         deltas.removeAll()
         partialCallback?("")
         let gaps = tracker.abandonPending() + [tracker.abandonWindow()].compactMap { $0 }
