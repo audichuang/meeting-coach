@@ -20,6 +20,9 @@ import KurnCore
 import SwiftData
 import Testing
 @testable import Kurn
+#if canImport(FluidAudio)
+import FluidAudio
+#endif
 
 @MainActor
 @Suite("RecorderViewModel state machine")
@@ -42,7 +45,9 @@ struct RecorderViewModelStateMachineTests {
             finalizer: any RecordingFileFinalizing = StubRecordingFileFinalizer(
                 result: FinalizedRecordingFile(duration: 4, fileSize: 2_048)
             ),
-            failSaveOnCall: Int? = nil
+            failSaveOnCall: Int? = nil,
+            coach: MeetingCoachConfiguration? = nil,
+            liveTranscription: LiveTranscriptionService? = nil
         ) throws {
             container = TestModelContainer.make()
             context = container.mainContext
@@ -64,8 +69,9 @@ struct RecorderViewModelStateMachineTests {
                 meeting: meeting,
                 modelContext: context,
                 defaultMode: .onDevice,
-                options: RecorderOptions(alwaysUseBuiltInMic: true),
+                options: RecorderOptions(alwaysUseBuiltInMic: true, coach: coach),
                 recorder: recorder,
+                liveTranscription: liveTranscription,
                 fileFinalizer: finalizer,
                 lifecycleSaver: saver,
                 onRecordingSaved: { counter.increment() }
@@ -76,6 +82,10 @@ struct RecorderViewModelStateMachineTests {
 
         func recordings() throws -> [Recording] {
             try context.fetch(FetchDescriptor<Recording>())
+        }
+
+        func coachRecords() throws -> [CoachRecord] {
+            try context.fetch(FetchDescriptor<CoachRecord>())
         }
 
         func cleanUp() {
@@ -374,4 +384,82 @@ struct RecorderViewModelStateMachineTests {
         #expect(harness.meeting.title == "Renamed")
         #expect(harness.viewModel.meetingTitle == "Renamed")
     }
+
+    // MARK: - Meeting coach lifecycle (C6)
+
+    #if canImport(FluidAudio)
+    private actor StubStreamingAsrManager: StreamingAsrManager {
+        let displayName = "stub"
+        private(set) var finishCount = 0
+        private(set) var cleanupCount = 0
+        func loadModels() {}
+        func appendAudio(_ buffer: AVAudioPCMBuffer) {}
+        func processBufferedAudio() {}
+        func finish() async throws -> String { finishCount += 1; return "" }
+        func reset() {}
+        func cleanup() { cleanupCount += 1 }
+        func setPartialTranscriptCallback(_ callback: @escaping @Sendable (String) -> Void) {}
+        func getPartialTranscript() -> String { "" }
+    }
+
+    private func makeCoachHarness(
+        finalizer: any RecordingFileFinalizing = StubRecordingFileFinalizer(
+            result: FinalizedRecordingFile(duration: 4, fileSize: 2_048)
+        )
+    ) throws -> (harness: Harness, asr: StubStreamingAsrManager) {
+        let asr = StubStreamingAsrManager()
+        let live = LiveTranscriptionService(engineFactory: { _, _ in asr })
+        let coachConfig = MeetingCoachConfiguration(userName: "Tester", budgetUSD: 10, backend: .test)
+        let harness = try Harness(finalizer: finalizer, coach: coachConfig, liveTranscription: live)
+        return (harness, asr)
+    }
+
+    @Test func cancelDeletesCoachRecordSynchronouslyInSameSaveAsRecording() async throws {
+        let (harness, asr) = try makeCoachHarness()
+        await harness.viewModel.startRecording()
+        #expect(try harness.coachRecords().count == 1)
+
+        harness.viewModel.cancel()
+
+        // Check a fresh context immediately after cancel() returns (before any background Task runs).
+        let fresh = ModelContext(harness.container)
+        #expect(try fresh.fetch(FetchDescriptor<Recording>()).isEmpty)
+        #expect(try fresh.fetch(FetchDescriptor<CoachRecord>()).isEmpty)
+
+        // Let the live-teardown task finish and ensure discarding did not call finish() (no extra commit/spend).
+        for _ in 0..<50 {
+            if await asr.cleanupCount > 0 { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await asr.finishCount == 0)
+        #expect(await asr.cleanupCount == 1)
+    }
+
+    @Test func failedStartWithCoachLeavesNoCoachRecord() async throws {
+        let (harness, _) = try makeCoachHarness()
+        harness.engine.failSessionConfiguration()
+
+        await harness.viewModel.startRecording()
+
+        #expect(harness.viewModel.state == .idle)
+        #expect(harness.viewModel.error != nil)
+        let fresh = ModelContext(harness.container)
+        #expect(try fresh.fetch(FetchDescriptor<Recording>()).isEmpty)
+        #expect(try fresh.fetch(FetchDescriptor<CoachRecord>()).isEmpty)
+    }
+
+    @Test func tooShortCoachRecordingDeletesCoachRecordWithRecording() async throws {
+        let (harness, _) = try makeCoachHarness(
+            finalizer: StubRecordingFileFinalizer(result: FinalizedRecordingFile(duration: 0.2, fileSize: 64))
+        )
+        await harness.viewModel.startRecording()
+        #expect(try harness.coachRecords().count == 1)
+
+        _ = harness.viewModel.stopAndSave()
+
+        let fresh = ModelContext(harness.container)
+        #expect(try fresh.fetch(FetchDescriptor<Recording>()).isEmpty)
+        #expect(try fresh.fetch(FetchDescriptor<CoachRecord>()).isEmpty)
+    }
+    #endif
 }

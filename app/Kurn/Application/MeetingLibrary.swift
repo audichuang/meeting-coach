@@ -116,13 +116,22 @@ struct MeetingLibrary {
     func deleteRecording(_ recording: Recording) throws(AppError) {
         try requireNoCaptureInProgress([recording])
         let fileNames = [recording.fileName] + recording.photos.map(\.fileName)
+        try journaledDelete(fileNames: fileNames) {
+            Self.deleteRecordingRows(recording, in: context)
+        }
+    }
+
+    /// Stages deletion of `recording` and any `CoachRecord` keyed to it in
+    /// `context`, without saving. Reused by `RecorderViewModel` so cancel,
+    /// failed-start, and too-short discard always remove both rows in one save.
+    static func deleteRecordingRows(_ recording: Recording, in context: ModelContext) {
         // The coach record is keyed by recording id, not a relationship, so it goes explicitly.
         let recordingID = recording.id
-        let coachRecords = (try? context.fetch(FetchDescriptor<CoachRecord>(predicate: #Predicate { $0.recordingID == recordingID }))) ?? []
-        try journaledDelete(fileNames: fileNames) {
-            context.delete(recording)
-            coachRecords.forEach(context.delete)
-        }
+        let coachRecords = (try? context.fetch(
+            FetchDescriptor<CoachRecord>(predicate: #Predicate { $0.recordingID == recordingID })
+        )) ?? []
+        context.delete(recording)
+        coachRecords.forEach(context.delete)
     }
 
     /// Refuses to delete a recording the live recorder is still writing. A

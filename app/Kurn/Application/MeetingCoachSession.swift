@@ -86,8 +86,12 @@ final class MeetingCoachSession {
     @ObservationIgnored private let elapsed: @MainActor () -> TimeInterval
     @ObservationIgnored private var record: CoachRecord?
     @ObservationIgnored private(set) var recordingID: UUID?
+    @ObservationIgnored private(set) var isCancelled = false
     @ObservationIgnored private var triggerLog: [CoachTriggerRecord] = []
+    @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var pipeline: Task<Void, Never>?
+    @ObservationIgnored private var askTask: Task<CoachCallResult, Error>?
+    @ObservationIgnored private var wrapUpTask: Task<CoachCallResult, Error>?
     @ObservationIgnored private var budgetTimer: Task<Void, Never>?
     @ObservationIgnored private var aiStoppedAt: TimeInterval?
     /// Stops cloud transcription when the budget guard fires; recording continues.
@@ -154,30 +158,58 @@ final class MeetingCoachSession {
         modelContext.insert(record)
         self.record = record
         save()
-        Task { [self] in
-            for await event in events { handle(event) }
+        eventTask = Task { [self] in
+            for await event in events {
+                guard !isCancelled else { break }
+                handle(event)
+            }
         }
     }
 
-    /// The transcriber has stopped; close open gaps and persist the final state.
-    /// A discarded recording takes its coach record with it.
-    func finish(at end: TimeInterval, discarding: Bool = false) async {
+    /// Immediately stops all coach tasks and detaches the record so no new LLM
+    /// requests are started and late responses cannot write to SwiftData.
+    /// Callers deleting the `Recording` delete the `CoachRecord` in the same save.
+    func cancel() {
+        isCancelled = true
+        record = nil
+        recordingID = nil
         eventSink.finish()
-        await pipeline?.value
+        eventTask?.cancel()
+        eventTask = nil
+        pipeline?.cancel()
+        pipeline = nil
+        askTask?.cancel()
+        askTask = nil
+        wrapUpTask?.cancel()
+        wrapUpTask = nil
         budgetTimer?.cancel()
-        if discarding, let record {
-            modelContext.delete(record)
-            self.record = nil
-            if let failure = modelContext.saveOrError() {
-                AppLog.persistence.atError.error("MeetingCoachSession: discard failed code=\(failure.logCode, privacy: .public)")
+        budgetTimer = nil
+    }
+
+    /// The transcriber has stopped; close open gaps and persist the final state.
+    /// A discarded recording stops the pipeline immediately and takes its coach record with it.
+    func finish(at end: TimeInterval, discarding: Bool = false) async {
+        guard !isCancelled else { return }
+        if discarding {
+            let recordToDelete = record
+            cancel()
+            if let recordToDelete {
+                modelContext.delete(recordToDelete)
+                if let failure = modelContext.saveOrError() {
+                    AppLog.persistence.atError.error("MeetingCoachSession: discard failed code=\(failure.logCode, privacy: .public)")
+                }
             }
             return
         }
+        eventSink.finish()
+        await pipeline?.value
+        budgetTimer?.cancel()
         if let start = aiStoppedAt { addGap(LiveTranscriptGap(start: start, end: max(start, end))) }
         save()
     }
 
     private func handle(_ event: LiveTranscriptEvent) {
+        guard !isCancelled else { return }
         switch event {
         case .partial:
             break
@@ -282,30 +314,33 @@ final class MeetingCoachSession {
     private var previousCardTexts: [String] { ledgers.map(\.candidate.shortText) }
 
     private func evaluateTrigger(for segment: LiveTranscriptSegment) {
-        guard !isAIStopped else { return }
+        guard !isCancelled, !isAIStopped else { return }
         let labels = trigger.events(for: segment)
         guard !labels.isEmpty else { return }
         let previous = pipeline
         pipeline = Task { [weak self] in
             await previous?.value
-            guard let self, !Task.isCancelled, !self.isAIStopped else { return }
+            guard let self, !Task.isCancelled, !self.isCancelled, !self.isAIStopped else { return }
             await self.runPipeline(segment: segment, labels: labels)
         }
     }
 
     private func runPipeline(segment: LiveTranscriptSegment, labels: [String]) async {
+        guard !Task.isCancelled, !isCancelled, !isAIStopped else { return }
         let input = CoachMessages.trigger(segments: segments, now: segment.arrivedAt, events: labels, cards: previousCardTexts)
         do {
             let judgeTool = CoachTool(name: "judge", description: "回答要不要出卡", parameters: CoachPrompts.judgeSchema)
             let judged = try await llm.call(model: CoachPricing.judgeModel,
                                             instructions: CoachMessages.instructions(CoachPrompts.judge, user: userName),
                                             input: input, tools: [judgeTool], force: "judge")
+            guard !Task.isCancelled, !isCancelled else { return }
             account(model: CoachPricing.judgeModel, judged.usage)
             let verdict = judged.calls.first.flatMap { try? JSONDecoder().decode(CoachJudgeArguments.self, from: $0.arguments) }
             logTrigger(offset: segment.arrivedAt, labels: labels, decision: verdict?.decision ?? "error", reason: verdict?.reason ?? "")
-            guard verdict?.decision == "emit", !isAIStopped else { return }
+            guard verdict?.decision == "emit", !Task.isCancelled, !isCancelled, !isAIStopped else { return }
             let carded = try await llm.call(model: CoachPricing.cardModel, instructions: cardInstructions,
                                             input: input, tools: [cardTool], force: nil)
+            guard !Task.isCancelled, !isCancelled else { return }
             account(model: CoachPricing.cardModel, carded.usage)
             guard let args = Self.card(from: carded) else {
                 logTrigger(offset: segment.arrivedAt, labels: labels, decision: "card_declined", reason: "")
@@ -313,6 +348,7 @@ final class MeetingCoachSession {
             }
             try addCandidate(args, evidence: segment, policy: policyVersion, gated: true)
         } catch {
+            guard !Task.isCancelled, !isCancelled else { return }
             lastError = error.localizedDescription
             handleServiceError(error)
             logTrigger(offset: segment.arrivedAt, labels: labels, decision: "error", reason: error.publicLogCode)
@@ -322,17 +358,26 @@ final class MeetingCoachSession {
 
     /// 「我該說什麼」: bypasses the judge and the throttle.
     func askForCard() async {
-        guard !isAsking, !isAIStopped, let last = segments.last else { return }
+        guard !isCancelled, !isAsking, !isAIStopped, let last = segments.last else { return }
         isAsking = true
-        defer { isAsking = false }
+        defer { isAsking = false; askTask = nil }
         let input = CoachMessages.ask(segments: segments, now: elapsed(), cards: previousCardTexts)
+        let instructions = cardInstructions
+        let tool = cardTool
+        let llm = self.llm
         do {
-            let result = try await llm.call(model: CoachPricing.cardModel, instructions: cardInstructions,
-                                            input: input, tools: [cardTool], force: "emit_suggestion")
+            let task = Task {
+                try await llm.call(model: CoachPricing.cardModel, instructions: instructions,
+                                   input: input, tools: [tool], force: "emit_suggestion")
+            }
+            askTask = task
+            let result = try await task.value
+            guard !Task.isCancelled, !isCancelled else { return }
             account(model: CoachPricing.cardModel, result.usage)
             guard let args = Self.card(from: result) else { return }
             try addCandidate(args, evidence: last, policy: "ask", gated: false)
         } catch {
+            guard !Task.isCancelled, !isCancelled else { return }
             lastError = error.localizedDescription
             handleServiceError(error)
             AppLog.generation.atError.error("MeetingCoachSession: ask failed code=\(error.publicLogCode, privacy: .public)")
@@ -340,18 +385,27 @@ final class MeetingCoachSession {
     }
 
     func requestWrapUp() async {
-        guard !isWrappingUp, !isAIStopped, !segments.isEmpty else { return }
+        guard !isCancelled, !isWrappingUp, !isAIStopped, !segments.isEmpty else { return }
         isWrappingUp = true
-        defer { isWrappingUp = false }
+        defer { isWrappingUp = false; wrapUpTask = nil }
         let tool = CoachTool(name: "emit_wrapup", description: "顯示收尾整理", parameters: CoachPrompts.emitWrapupSchema)
+        let instructions = cardInstructions
+        let input = CoachMessages.wrapUp(segments: segments)
+        let llm = self.llm
         do {
-            let result = try await llm.call(model: CoachPricing.cardModel, instructions: cardInstructions,
-                                            input: CoachMessages.wrapUp(segments: segments), tools: [tool], force: "emit_wrapup")
+            let task = Task {
+                try await llm.call(model: CoachPricing.cardModel, instructions: instructions,
+                                   input: input, tools: [tool], force: "emit_wrapup")
+            }
+            wrapUpTask = task
+            let result = try await task.value
+            guard !Task.isCancelled, !isCancelled else { return }
             account(model: CoachPricing.cardModel, result.usage)
             wrapUp = result.calls.first.flatMap { try? JSONDecoder().decode(CoachWrapUpArguments.self, from: $0.arguments) }
             record?.wrapUp = wrapUp
             save()
         } catch {
+            guard !Task.isCancelled, !isCancelled else { return }
             lastError = error.localizedDescription
             handleServiceError(error)
             AppLog.generation.atError.error("MeetingCoachSession: wrap-up failed code=\(error.publicLogCode, privacy: .public)")
@@ -431,7 +485,7 @@ final class MeetingCoachSession {
     }
 
     private func save() {
-        guard let record else { return }
+        guard !isCancelled, let record else { return }
         record.segments = segments
         record.gaps = gaps
         record.ledgers = ledgers

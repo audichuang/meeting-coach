@@ -146,7 +146,7 @@ final class LiveTranscriptionService {
         }
     }
 
-    func stop() async {
+    func stop(discarding: Bool = false) async {
         audioQueue.invalidate()
         let engine = self.engine
         self.engine = nil
@@ -158,10 +158,12 @@ final class LiveTranscriptionService {
         pump?.cancel()
         await pump?.value
         guard let engine else { return }
-        do {
-            _ = try await engine.finish()
-        } catch {
-            AppLog.transcription.atError.error("LiveTranscriptionService: finish failed code=\(error.publicLogCode, privacy: .public) detail=\(error.localizedDescription, privacy: .private)")
+        if !discarding {
+            do {
+                _ = try await engine.finish()
+            } catch {
+                AppLog.transcription.atError.error("LiveTranscriptionService: finish failed code=\(error.publicLogCode, privacy: .public) detail=\(error.localizedDescription, privacy: .private)")
+            }
         }
         await engine.cleanup()
     }
@@ -249,7 +251,7 @@ final class LiveTranscriptionService {
 
     nonisolated func append(_ buffer: AVAudioPCMBuffer) {}
 
-    func stop() async {
+    func stop(discarding: Bool = false) async {
         isActive = false
         isLoading = false
         partialText = ""

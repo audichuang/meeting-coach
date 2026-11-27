@@ -27,6 +27,58 @@ private struct RefusingCoachLLM: CoachLLM {
     }
 }
 
+/// Holds the first judge call so a test can cancel mid-flight and later deliver a late reply.
+private final class SlowJudgeCoachLLM: CoachLLM, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedCalls: [String] = []
+    private var judgeGate: CheckedContinuation<Void, Never>?
+    private var judgeReleased = false
+
+    var calls: [String] { lock.withLock { recordedCalls } }
+
+    func releaseJudge() {
+        let continuation = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            judgeReleased = true
+            let current = judgeGate
+            judgeGate = nil
+            return current
+        }
+        continuation?.resume()
+    }
+
+    func call(model: String, instructions: String, input: String, tools: [CoachTool], force: String?) async throws -> CoachCallResult {
+        let name = tools[0].name
+        lock.withLock { recordedCalls.append(name) }
+        if name == "judge" {
+            // Wait until released (with a short safety timeout so a buggy caller awaiting it won't hang).
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    await withCheckedContinuation { continuation in
+                        let alreadyReleased = self.lock.withLock { () -> Bool in
+                            if self.judgeReleased { return true }
+                            self.judgeGate = continuation
+                            return false
+                        }
+                        if alreadyReleased { continuation.resume() }
+                    }
+                }
+                group.addTask {
+                    try? await Task.sleep(for: .milliseconds(300))
+                    self.releaseJudge()
+                }
+                await group.next()
+                group.cancelAll()
+            }
+            let args = #"{"decision":"emit","reason":"分歧"}"#
+            return CoachCallResult(calls: [CoachToolCall(name: name, arguments: Data(args.utf8))],
+                                   usage: CoachTokenUsage(input: 1_000, cached: 0, output: 100))
+        }
+        let args = #"{"short_text":"先對齊目標？","reason":"目標不同","evidence_start":0,"evidence_end":1,"category":"clarify"}"#
+        return CoachCallResult(calls: [CoachToolCall(name: name, arguments: Data(args.utf8))],
+                               usage: CoachTokenUsage(input: 1_000, cached: 0, output: 100))
+    }
+}
+
 extension CoachBackend {
     static let test = CoachBackend(baseURL: URL(string: "https://worker.test/v1")!, token: "mc_test", viaWorker: true)
 }
@@ -131,6 +183,36 @@ struct MeetingCoachSessionTests {
         )
         coach.begin(recordingID: UUID())
         await coach.finish(at: 1, discarding: true)
+        #expect(try context.fetch(FetchDescriptor<CoachRecord>()).isEmpty)
+    }
+
+    @Test func discardingStopsPipelineImmediatelyWithoutNewRequestsOrLateWrites() async throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let llm = SlowJudgeCoachLLM()
+        let coach = MeetingCoachSession(
+            meeting: meeting, modelContext: context,
+            configuration: MeetingCoachConfiguration(userName: "志明", budgetUSD: 10, backend: .test),
+            llm: llm, elapsed: { 150 }
+        )
+        coach.begin(recordingID: UUID())
+        coach.eventSink.yield(.final(LiveTranscriptSegment(start: 130, end: 150, text: "志明你覺得呢", arrivedAt: 150)))
+        await waitUntil { llm.calls == ["judge"] }
+
+        // Discard while judge is still in flight.
+        await coach.finish(at: 155, discarding: true)
+        // Now deliver the late judge response and let any stray tasks settle.
+        llm.releaseJudge()
+        for _ in 0..<20 {
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+
+        // No card LLM call was issued after discard, and no late write recreated or mutated records.
+        #expect(llm.calls == ["judge"])
+        #expect(coach.ledgers.isEmpty)
         #expect(try context.fetch(FetchDescriptor<CoachRecord>()).isEmpty)
     }
 

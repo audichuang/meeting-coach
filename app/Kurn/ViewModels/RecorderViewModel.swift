@@ -373,18 +373,16 @@ final class RecorderViewModel {
             // must not reach a `.public` log line unredacted.
             AppLog.recorderUI.atError.error("startRecording: AppError code=\(appError.logCode, privacy: .public) detail=\(appError.privateContext ?? "", privacy: .private)")
             recoverFailedStart(recording)
-            await liveStartTask?.value
-            if liveTranscriptionEnabled { await liveTranscription.stop() }
+            await stopLiveAfterFailedStart(liveStartTask: liveStartTask)
             if error == nil { error = appError }
         } catch is CancellationError {
             if !cancellationRequested { recoverFailedStart(recording) }
-            if liveTranscriptionEnabled { await liveTranscription.stop() }
+            await stopLiveAfterFailedStart(liveStartTask: liveStartTask)
         } catch {
             if cancellationRequested { return }
             AppLog.recorderUI.atError.error("startRecording: error code=\(error.publicLogCode, privacy: .public) detail=\(error.localizedDescription, privacy: .private)")
             recoverFailedStart(recording)
-            await liveStartTask?.value
-            if liveTranscriptionEnabled { await liveTranscription.stop() }
+            await stopLiveAfterFailedStart(liveStartTask: liveStartTask)
             if self.error == nil { self.error = .audioError(error.localizedDescription) }
         }
     }
@@ -469,14 +467,26 @@ final class RecorderViewModel {
     /// recorder) alive past teardown; only the small preview service is retained
     /// until it finishes. The finalized preview text isn't persisted (the real
     /// transcript comes from the full pipeline later), so not awaiting is safe.
-    private func stopLiveTranscription(discarding: Bool = false) {
+    private func stopLiveAfterFailedStart(liveStartTask: Task<Void, Never>?) async {
+        let discarding = coach?.isCancelled ?? true
+        if liveTranscriptionEnabled { await liveTranscription.stop(discarding: discarding) }
+        await liveStartTask?.value
+        if liveTranscriptionEnabled { await liveTranscription.stop(discarding: discarding) }
+        if !discarding { await coach?.finish(at: recorder.elapsed) }
+    }
+
+    private func stopLiveTranscription(at end: TimeInterval, discarding: Bool = false) {
         guard liveTranscriptionEnabled else { return }
         let live = liveTranscription
+        if discarding {
+            // Coach work was already cancelled synchronously; only tear down the live engine.
+            Task { await live.stop(discarding: true) }
+            return
+        }
         let coach = self.coach
-        let end = recorder.elapsed
         Task {
             await live.stop()
-            await coach?.finish(at: end, discarding: discarding)
+            await coach?.finish(at: end, discarding: false)
         }
     }
 
@@ -490,8 +500,9 @@ final class RecorderViewModel {
     @discardableResult
     func stopAndSave() -> Bool {
         AppLog.recorderUI.atNotice.notice("stopAndSave: called state=\(String(describing: self.recorder.state), privacy: .public)")
-        stopLiveTranscription()
+        let end = recorder.elapsed
         guard let recording = activeRecording else {
+            stopLiveTranscription(at: end)
             finishExternalRecordingState()
             return true
         }
@@ -503,6 +514,7 @@ final class RecorderViewModel {
         }
         let result = recorder.stop()
         let finalized = finalizeCapture(recording, result: result)
+        stopLiveTranscription(at: end, discarding: coach?.isCancelled ?? false)
         finishExternalRecordingState()
         return finalized
     }
@@ -567,11 +579,12 @@ final class RecorderViewModel {
 
     @discardableResult
     private func discardShortRecording(_ recording: Recording, result: AudioRecordingResult?) -> Bool {
+        coach?.cancel()
         AudioFileStore.delete(fileName: recording.fileName)
         for capturedPhoto in result?.photos ?? [] {
             PhotoFileStore.delete(fileName: capturedPhoto.fileName)
         }
-        modelContext.delete(recording)
+        MeetingLibrary.deleteRecordingRows(recording, in: modelContext)
         do {
             try lifecycleSaver.save(modelContext)
             activeRecording = nil
@@ -586,8 +599,9 @@ final class RecorderViewModel {
     private func recoverFailedStart(_ recording: Recording) {
         guard recording.captureState == .preparing || recording.captureState == .recording else { return }
         if AudioFileStore.byteSize(fileName: recording.fileName) == 0 {
+            coach?.cancel()
             AudioFileStore.delete(fileName: recording.fileName)
-            modelContext.delete(recording)
+            MeetingLibrary.deleteRecordingRows(recording, in: modelContext)
             do {
                 try lifecycleSaver.save(modelContext)
                 activeRecording = nil
@@ -614,10 +628,11 @@ final class RecorderViewModel {
 
     func cancel() {
         cancellationRequested = true
-        stopLiveTranscription(discarding: true)
+        coach?.cancel()
+        stopLiveTranscription(at: recorder.elapsed, discarding: true)
         recorder.cancel()
         if let recording = activeRecording {
-            modelContext.delete(recording)
+            MeetingLibrary.deleteRecordingRows(recording, in: modelContext)
             do {
                 try lifecycleSaver.save(modelContext)
                 activeRecording = nil
