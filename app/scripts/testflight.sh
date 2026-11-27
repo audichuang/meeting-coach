@@ -36,6 +36,20 @@ for key in CoachWorkerHost CoachAccessClientID CoachAccessClientSecret; do
   if [[ "${len:-0}" -le 1 ]]; then echo "archive 的 Info.plist 缺少 ${key}" >&2; exit 1; fi
 done
 
+# sherpa-onnx auto-embeds a static onnxruntime.framework that nothing loads; Apple rejects it
+# (ITMS-90208). Strip it and resign, as upstream's fastlane beta lane does (see fastlane/Fastfile).
+app="${OUT}/Kurn.xcarchive/Products/Applications/Kurn.app"
+stripped=0
+for name in onnxruntime onnxruntime_extensions; do
+  [[ -d "${app}/Frameworks/${name}.framework" ]] && { rm -rf "${app}/Frameworks/${name}.framework"; stripped=1; }
+done
+if (( stripped )); then
+  identity=$(codesign -dvv "$app" 2>&1 | grep '^Authority=' | head -1 | cut -d= -f2)
+  [[ -n "$identity" ]] || { echo "找不到 archive 的簽章身分，無法重簽" >&2; exit 1; }
+  codesign --force --sign "$identity" --preserve-metadata=identifier,entitlements,flags "$app"
+  codesign --verify --deep --strict "$app"
+fi
+
 if ! xcodebuild -exportArchive -archivePath "${OUT}/Kurn.xcarchive" -exportOptionsPlist ExportOptions.plist \
   -exportPath "${OUT}/export" -allowProvisioningUpdates > "${OUT}/export.log" 2>&1; then
   tail -30 "${OUT}/export.log"; echo "上傳失敗，完整 log：${OUT}/export.log"; exit 1
