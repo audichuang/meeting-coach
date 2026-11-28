@@ -41,7 +41,11 @@ struct CoachBackend: Sendable, Equatable {
 
     /// The configured backend, or `nil` when the coach has nowhere to send audio.
     /// Read off the main actor too (ProviderFactory), so it reads the Keychain directly rather than `AppSettings`.
-    static func current() -> CoachBackend? {
+    static func current(
+        signOutPending: Bool = UserDefaults.standard.bool(forKey: AppSettings.coachSignOutPendingKey)
+    ) -> CoachBackend? {
+        // A sign-out whose Keychain delete failed left the token behind; nothing may use it.
+        if signOutPending { return nil }
         let invite = debugOverride("KURN_DEBUG_COACH_INVITE")
             ?? KeychainManager.shared.value(for: AIProvider.meetingCoach.keychainAccount) ?? ""
         if let worker = workerBackend(invite: invite) {

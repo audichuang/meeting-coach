@@ -125,7 +125,7 @@ struct RecordingSettingsView: View {
             }
             if signedIn {
                 Button(NSLocalizedString("settings.meeting_coach_sign_out", comment: "Sign out of the coach"), role: .destructive) {
-                    coachServer.signOut(settings: settings)
+                    Task { await coachServer.signOut(settings: settings) }
                 }
             }
             LabeledContent(NSLocalizedString("settings.meeting_coach_name", comment: "Your name, used by the coach")) {

@@ -1637,7 +1637,10 @@ keyed by `recordingID` (cascade only through `Meeting`), so
   authorization are kept in `AppSettings` (`coachAppleUserID`,
   `coachAccountLabel`); every activation asks `getCredentialState` and signs
   out on `.revoked`/`.notFound` (the completion-handler form: the async
-  overload throws on `.notFound` and loses the state). A build 1 install still
+  overload throws on `.notFound` and loses the state). Signing out also asks the Worker to
+  revoke the session (`POST /v1/auth/signout`, best effort); if the Keychain delete fails the
+  Apple user id stays, `coachSignOutPending` makes `CoachBackend.current()` return nil, and the
+  error is shown. A build 1 install still
   holds its invite code in the same Keychain account; the Worker accepts it,
   so it counts as signed in, with no Apple user id to check. Every
   live (re)connect first fetches a 60 s client secret from
