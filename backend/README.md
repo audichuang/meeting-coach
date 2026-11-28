@@ -4,6 +4,8 @@ Cloudflare Worker that holds the OpenAI key for the iPad App. The App signs in w
 
 ## Deploy
 
+Deploy only from merged `main`: a deploy from an unmerged branch is silently undone by the next deploy from `main`.
+
 ```sh
 npm install
 npm test
