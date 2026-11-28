@@ -36,7 +36,7 @@ struct ChatRoute: Equatable {
             try backend.requireReady()
             return CoachSummaryProvider(client: CoachResponsesClient(backend: backend), model: model) { usage in
                 var meter = CoachCostMeter()
-                meter.addTokens(model: model, usage: usage)
+                meter.addTokens(model: model, usage: usage, step: .chat)
                 let usd = meter.totalUSD
                 Task { await onSpend(usd) }
             }
