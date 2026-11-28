@@ -131,7 +131,7 @@ struct MeetingBulkExport {
         case .singleFile:
             let newest = meetings.map(\.createdAt).max() ?? Date()
             return [MeetingExportItem(
-                suggestedName: "Kurn meetings \(Self.fileDate(newest))",
+                suggestedName: "Meeting Coach meetings \(Self.fileDate(newest))",
                 document: combinedDocument(),
                 format: format
             )]

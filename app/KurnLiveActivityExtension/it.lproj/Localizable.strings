@@ -6,14 +6,14 @@
 "live_activity.highlight" = "Evidenzia";
 
 "intent.startRecording.title" = "Avvia registrazione";
-"intent.startRecording.description" = "Avvia una nuova registrazione in Kurn senza aprire l'app.";
+"intent.startRecording.description" = "Avvia una nuova registrazione in Meeting Coach senza aprire l'app.";
 "intent.startRecording.shortTitle" = "Avvia registrazione";
-"intent.startRecording.notReady" = "Kurn non era pronto ad avviare la registrazione. Riprova dall'app.";
+"intent.startRecording.notReady" = "Meeting Coach non era pronto ad avviare la registrazione. Riprova dall'app.";
 "control.startRecording.title" = "Avvia registrazione";
 "control.startRecording.displayName" = "Avvia registrazione";
-"control.startRecording.description" = "Avvia una nuova registrazione in Kurn. Aggiungendolo alla schermata di blocco, può essere attivato con un solo tocco anche a dispositivo bloccato.";
+"control.startRecording.description" = "Avvia una nuova registrazione in Meeting Coach. Aggiungendolo alla schermata di blocco, può essere attivato con un solo tocco anche a dispositivo bloccato.";
 "widget.startRecording.displayName" = "Avvia registrazione";
-"widget.startRecording.description" = "Avvia una nuova registrazione Kurn dalla schermata Home, dalla schermata di blocco o da StandBy. Il widget non mostra mai il contenuto delle riunioni.";
+"widget.startRecording.description" = "Avvia una nuova registrazione Meeting Coach dalla schermata Home, dalla schermata di blocco o da StandBy. Il widget non mostra mai il contenuto delle riunioni.";
 "widget.startRecording.title" = "Registra";
 "widget.startRecording.subtitle" = "Avvia una nuova riunione";
 

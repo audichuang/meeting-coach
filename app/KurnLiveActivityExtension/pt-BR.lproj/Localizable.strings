@@ -6,14 +6,14 @@
 "live_activity.highlight" = "Destacar";
 
 "intent.startRecording.title" = "Iniciar gravação";
-"intent.startRecording.description" = "Inicia uma nova gravação no Kurn sem abrir o app.";
+"intent.startRecording.description" = "Inicia uma nova gravação no Meeting Coach sem abrir o app.";
 "intent.startRecording.shortTitle" = "Iniciar gravação";
-"intent.startRecording.notReady" = "O Kurn não estava pronto para iniciar a gravação. Tente novamente pelo app.";
+"intent.startRecording.notReady" = "O Meeting Coach não estava pronto para iniciar a gravação. Tente novamente pelo app.";
 "control.startRecording.title" = "Iniciar gravação";
 "control.startRecording.displayName" = "Iniciar gravação";
-"control.startRecording.description" = "Inicia uma nova gravação no Kurn. Ao adicionar isso à Tela Bloqueada, ela pode ser acionada com um único toque enquanto o aparelho está bloqueado.";
+"control.startRecording.description" = "Inicia uma nova gravação no Meeting Coach. Ao adicionar isso à Tela Bloqueada, ela pode ser acionada com um único toque enquanto o aparelho está bloqueado.";
 "widget.startRecording.displayName" = "Iniciar gravação";
-"widget.startRecording.description" = "Inicia uma nova gravação do Kurn pela Tela de Início, Tela Bloqueada ou Em Espera. O widget nunca mostra conteúdo de reuniões.";
+"widget.startRecording.description" = "Inicia uma nova gravação do Meeting Coach pela Tela de Início, Tela Bloqueada ou Em Espera. O widget nunca mostra conteúdo de reuniões.";
 "widget.startRecording.title" = "Gravar";
 "widget.startRecording.subtitle" = "Iniciar uma nova reunião";
 

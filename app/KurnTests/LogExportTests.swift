@@ -53,7 +53,7 @@ struct LogExportTests {
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
 
         let text = try String(contentsOf: url, encoding: .utf8)
-        #expect(text.hasPrefix("# Kurn log export"))
+        #expect(text.hasPrefix("# Meeting Coach log export"))
         #expect(text.contains("Entries: "))
     }
 }

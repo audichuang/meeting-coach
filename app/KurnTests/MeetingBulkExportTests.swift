@@ -128,7 +128,7 @@ struct MeetingBulkExportTests {
         #expect(items.count == 1)
         #expect(export.fileCount == 1)
         #expect(items[0].format == .pdf)
-        #expect(items[0].suggestedName == "Kurn meetings \(MeetingBulkExport.fileDate(second.createdAt))")
+        #expect(items[0].suggestedName == "Meeting Coach meetings \(MeetingBulkExport.fileDate(second.createdAt))")
 
         let document = items[0].document
         #expect(document.title == String(
