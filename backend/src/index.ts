@@ -5,7 +5,7 @@ import {
   LIVE_TRANSCRIBE_MODEL, RESPONSE_MODELS, TRANSCRIBE_MODEL,
   realtimeSessionEstimateUSD, responseCostUSD, transcribeCostUSD, transcribeSeconds,
 } from "./pricing";
-import { allowRate, read, record } from "./usage";
+import { allowRate, periods, read, record } from "./usage";
 
 const OPENAI = "https://api.openai.com/v1";
 
@@ -144,9 +144,15 @@ async function usage(env: Env, caller: Caller): Promise<Response> {
   });
 }
 
+// Per caller and across every user and invite: anyone with an Apple ID can sign up,
+// and they all spend from one OpenAI key.
 async function overCap(env: Env, caller: Caller): Promise<Response | null> {
-  const { month } = await read(env, caller.id);
-  return month.usd >= Number(env.MONTHLY_CAP_USD) ? error(402, "monthly spend cap reached") : null;
+  const row = await env.DB.prepare(
+    `SELECT COALESCE(SUM(CASE WHEN user_id = ?1 THEN usd END), 0) AS mine, COALESCE(SUM(usd), 0) AS total
+     FROM usage WHERE period = ?2`,
+  ).bind(caller.id, periods().month).first<{ mine: number; total: number }>();
+  const over = row!.mine >= Number(env.MONTHLY_CAP_USD) || row!.total >= Number(env.GLOBAL_MONTHLY_CAP_USD);
+  return over ? error(402, "monthly spend cap reached") : null;
 }
 
 function openai(env: Env, path: string, body: unknown): Promise<Response> {

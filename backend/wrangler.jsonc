@@ -16,6 +16,7 @@
   // Secrets (not here): OPENAI_API_KEY, ADMIN_SECRET.
   "vars": {
     "MONTHLY_CAP_USD": "30",
+    "GLOBAL_MONTHLY_CAP_USD": "100",
     "RATE_LIMIT_PER_MINUTE": "30",
     "MAX_OUTPUT_TOKENS": "8000",
     "REALTIME_SESSION_EST_MINUTES": "30"

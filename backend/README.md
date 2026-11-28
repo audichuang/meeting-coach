@@ -13,7 +13,7 @@ npx wrangler deploy
 
 `wrangler.jsonc` points at an existing D1 database; for a fresh account create one (`npx wrangler d1 create meeting-coach`) and replace `database_id`.
 
-Limits live in `vars` in `wrangler.jsonc`: `MONTHLY_CAP_USD` (per user, default 30), `RATE_LIMIT_PER_MINUTE`, `MAX_OUTPUT_TOKENS`, `REALTIME_SESSION_EST_MINUTES`. Prices are in `src/pricing.ts`.
+Limits live in `vars` in `wrangler.jsonc`: `MONTHLY_CAP_USD` (per user, default 30), `GLOBAL_MONTHLY_CAP_USD` (all users and invites together, default 100; past it every caller gets the same 402), `RATE_LIMIT_PER_MINUTE`, `MAX_OUTPUT_TOKENS`, `REALTIME_SESSION_EST_MINUTES`. Prices are in `src/pricing.ts`.
 
 ## Secrets
 
