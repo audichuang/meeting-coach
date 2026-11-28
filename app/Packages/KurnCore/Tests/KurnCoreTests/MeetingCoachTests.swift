@@ -3,6 +3,13 @@ import Testing
 @testable import KurnCore
 
 struct MeetingCoachTests {
+    @Test func breakdownStoredBeforeChatStepStillDecodes() throws {
+        let old = Data(#"{"liveTranscript":0.3,"cards":0.05,"wrapUp":0.01,"formalTranscript":0.09,"summary":0.004}"#.utf8)
+        let decoded = try JSONDecoder().decode(CoachCostBreakdown.self, from: old)
+        #expect(decoded.chat == 0)
+        #expect(abs(decoded.totalUSD - 0.454) < 1e-9)
+    }
+
     // MARK: Realtime events and commit windows
 
     @Test func parsesRealtimeEventsFromTheSpikeLog() {
