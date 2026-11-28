@@ -22,20 +22,20 @@ import SwiftData
 
 @Model
 final class MeetingAttachment {
-    @Attribute(.unique) var id: UUID
+    var id: UUID = UUID()
     var meeting: Meeting?
     /// File name (not absolute path) within the protected attachments
     /// directory, resolved lazily via `AttachmentFileStore`.
-    var fileName: String
+    var fileName: String = ""
     /// The name the file had when it was added, shown in the UI and used as
     /// the document's name in prompts.
-    var displayName: String
-    var fileSize: Int64
-    var pageCount: Int
+    var displayName: String = ""
+    var fileSize: Int64 = 0
+    var pageCount: Int = 0
     /// Text extracted on device when the file was added (`PDFTextExtractor`);
     /// `nil` when the document carries none that could be read.
     var extractedText: String?
-    var createdAt: Date
+    var createdAt: Date = Date()
 
     init(
         id: UUID = UUID(),

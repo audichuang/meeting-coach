@@ -27,15 +27,15 @@ import SwiftData
 
 @Model
 final class MeetingPhoto {
-    @Attribute(.unique) var id: UUID
+    var id: UUID = UUID()
     var recording: Recording?
     /// File name (not absolute path) within the protected photos directory.
     /// Resolved lazily via `PhotoFileStore`, mirroring `Recording.fileName`.
-    var fileName: String
+    var fileName: String = ""
     /// Seconds from the start of the *recording* this photo belongs to — the
     /// same reference frame `Highlight.timestamp` uses.
-    var capturedAt: TimeInterval
-    var createdAt: Date
+    var capturedAt: TimeInterval = 0
+    var createdAt: Date = Date()
     /// On-device Vision OCR result, `nil` until extraction runs or when
     /// nothing was recognized.
     var recognizedText: String?

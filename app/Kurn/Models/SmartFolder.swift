@@ -13,15 +13,15 @@ import SwiftData
 
 @Model
 final class SmartFolder {
-    @Attribute(.unique) var id: UUID
-    var name: String
+    var id: UUID = UUID()
+    var name: String = ""
     /// SF Symbol shown in the sidebar.
-    var iconName: String
+    var iconName: String = ""
     /// Hex color shown in the sidebar.
-    var colorHex: String
+    var colorHex: String = ""
     /// JSON-encoded `MeetingFilter`.
     private var predicateData: Data = Data()
-    var createdAt: Date
+    var createdAt: Date = Date()
 
     init(
         id: UUID = UUID(),

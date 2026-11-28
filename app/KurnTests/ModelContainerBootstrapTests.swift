@@ -151,18 +151,20 @@ struct KurnModelGraphTests {
         // KurnSchemaV2 added ChatSession, KurnSchemaV3 MeetingPhoto,
         // KurnSchemaV4 MeetingAttachment, KurnSchemaV5 CoachRecord,
         // KurnSchemaV6 PaperNote, KurnSchemaV7 CoachRecord.selfSpeakerLabel and
-        // KurnSchemaV8 CoachRecord.costBreakdownData — all purely additive, so each gets its own lightweight stage.
+        // KurnSchemaV8 CoachRecord.costBreakdownData — all purely additive — and
+        // KurnSchemaV9's CloudKit-compatible constraints, so each gets its own lightweight stage.
         #expect(KurnSchemaMigrationPlan.schemas.map { ObjectIdentifier($0) } == [
             ObjectIdentifier(KurnSchemaV1.self), ObjectIdentifier(KurnSchemaV2.self),
             ObjectIdentifier(KurnSchemaV3.self), ObjectIdentifier(KurnSchemaV4.self),
             ObjectIdentifier(KurnSchemaV5.self), ObjectIdentifier(KurnSchemaV6.self),
-            ObjectIdentifier(KurnSchemaV7.self), ObjectIdentifier(KurnSchemaV8.self)
+            ObjectIdentifier(KurnSchemaV7.self), ObjectIdentifier(KurnSchemaV8.self),
+            ObjectIdentifier(KurnSchemaV9.self)
         ])
-        #expect(KurnSchemaMigrationPlan.stages.count == 7)
+        #expect(KurnSchemaMigrationPlan.stages.count == 8)
     }
 
     @Test func versionedSchemaModelsMatchTheCentralizedGraph() {
-        let versionedIdentifiers = Set(KurnSchemaV8.models.map { ObjectIdentifier($0) })
+        let versionedIdentifiers = Set(KurnSchemaV9.models.map { ObjectIdentifier($0) })
         let graphIdentifiers = Set(KurnModelGraph.currentModels.map { ObjectIdentifier($0) })
         #expect(versionedIdentifiers == graphIdentifiers)
     }

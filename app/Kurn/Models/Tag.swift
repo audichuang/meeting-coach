@@ -12,17 +12,21 @@ import SwiftData
 
 @Model
 final class Tag {
-    @Attribute(.unique) var id: UUID
-    var name: String
+    var id: UUID = UUID()
+    var name: String = ""
     /// Hex string ("#RRGGBB") rendered through `Color(hex:)`.
-    var colorHex: String
-    var createdAt: Date
+    var colorHex: String = ""
+    var createdAt: Date = Date()
 
     /// Meetings that carry this tag. Many-to-many via SwiftData's inverse
     /// relationship. `.nullify` so deleting a tag only detaches it from
     /// meetings; deleting a meeting only detaches it from the tag.
-    @Relationship(deleteRule: .nullify, inverse: \Meeting.tags)
-    var meetings: [Meeting] = []
+    @Relationship(deleteRule: .nullify, originalName: "meetings", inverse: \Meeting.tagsStorage)
+    var meetingsStorage: [Meeting]? = []
+    var meetings: [Meeting] {
+        get { meetingsStorage ?? [] }
+        set { meetingsStorage = newValue }
+    }
 
     init(
         id: UUID = UUID(),

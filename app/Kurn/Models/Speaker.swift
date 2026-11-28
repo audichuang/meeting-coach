@@ -11,12 +11,12 @@ import SwiftData
 
 @Model
 final class Speaker {
-    @Attribute(.unique) var id: UUID
+    var id: UUID = UUID()
     var meeting: Meeting?
-    var label: String
-    var name: String
+    var label: String = ""
+    var name: String = ""
     /// Hex color used to tint this speaker in the transcript UI.
-    var color: String
+    var color: String = ""
     /// L2-normalized mean speaker embedding, as raw `Float32` bytes
     /// (`VectorData`). `nil` when the diarizer that ran produced none — the
     /// heuristic engine, or a transcript from before this field existed.

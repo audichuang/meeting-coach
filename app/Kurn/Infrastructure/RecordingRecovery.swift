@@ -143,6 +143,9 @@ enum RecordingRecovery {
         // here rather than in a migration keeps it free: this sweep already runs
         // at launch and on every foreground activation.
         var changedAny = backfillFileSizes(in: existing)
+        if stampOriginDevice(on: existing) {
+            changedAny = true
+        }
         if reconcileInterruptedCaptures(in: existing) {
             changedAny = true
         }
@@ -217,6 +220,18 @@ enum RecordingRecovery {
     /// Stat the backing file of every recording whose cached size is still
     /// unknown. Returns whether anything changed, so the caller only saves when
     /// there is something to save.
+    /// Rows from before schema 1.8.0 were all recorded here. Stamping them
+    /// before sync can be turned on (it takes effect at the next launch) keeps
+    /// another device from mistaking them for its own.
+    static func stampOriginDevice(on recordings: [Recording]) -> Bool {
+        var changed = false
+        for recording in recordings where recording.originDeviceID == nil {
+            recording.originDeviceID = DeviceIdentity.current
+            changed = true
+        }
+        return changed
+    }
+
     private static func backfillFileSizes(in recordings: [Recording]) -> Bool {
         var changed = false
         for recording in recordings where recording.fileSize == 0 {

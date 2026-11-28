@@ -17,31 +17,31 @@ import SwiftData
 
 @Model
 final class SemanticChunk {
-    @Attribute(.unique) var id: UUID
+    var id: UUID = UUID()
     /// Owning meeting. The inverse `Meeting.semanticChunks` is `.cascade`, so
     /// deleting a meeting removes its chunks with the rest of its data.
     var meeting: Meeting?
     /// Recording this passage came from, so a hit can point back at the source
     /// recording without a relationship (chunks are rebuilt, not navigated).
-    var recordingID: UUID
+    var recordingID: UUID = UUID()
     /// The passage text that was embedded and is shown as the search snippet.
-    var text: String
+    var text: String = ""
     /// Absolute meeting-relative start/end (recording offset already applied),
     /// so a hit can deep-link to the moment in the transcript.
-    var startTime: TimeInterval
-    var endTime: TimeInterval
+    var startTime: TimeInterval = 0
+    var endTime: TimeInterval = 0
     /// Dominant speaker label for the passage (e.g. "Speaker 1").
-    var speakerLabel: String
+    var speakerLabel: String = ""
     /// Unit-normalized embedding as little-endian `Float32` bytes; see
     /// `VectorData`. Normalized so cosine similarity is a plain dot product.
-    var vectorData: Data
+    var vectorData: Data = Data()
     /// Vector length, stored so a query can skip mismatched-dimension rows
     /// without decoding them.
-    var dimension: Int
+    var dimension: Int = 0
     /// Embedder id + version that produced `vectorData`. A backfill pass
     /// re-indexes chunks whose identifier no longer matches the current embedder.
-    var modelIdentifier: String
-    var createdAt: Date
+    var modelIdentifier: String = ""
+    var createdAt: Date = Date()
 
     init(
         id: UUID = UUID(),

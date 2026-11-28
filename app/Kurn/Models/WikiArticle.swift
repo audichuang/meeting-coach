@@ -22,29 +22,29 @@ import SwiftData
 
 @Model
 final class WikiArticle {
-    @Attribute(.unique) var id: UUID
+    var id: UUID = UUID()
     /// Owning meeting. The inverse `Meeting.wikiArticle` is `.cascade`, so
     /// deleting a meeting removes its article with the rest of its data.
     var meeting: Meeting?
     /// The condensed notes as markdown — the only consumer is the synthesis
     /// prompt (plain text), so markdown is stored directly rather than a
     /// re-decodable section structure.
-    var bodyMarkdown: String
+    var bodyMarkdown: String = ""
     /// Meeting title captured at generation time, so an article is a
     /// self-contained synthesis input (headed by its own title without joining
     /// back to `Meeting` off the main actor).
-    var meetingTitleSnapshot: String
+    var meetingTitleSnapshot: String = ""
     /// Meeting date captured at generation time, for the same reason.
-    var meetingDate: Date
+    var meetingDate: Date = Date()
     /// SHA-256 (hex) of the assembled transcript this article was built from.
     /// Regeneration is skipped when the current transcript hashes the same.
-    var sourceContentHash: String
+    var sourceContentHash: String = ""
     /// "<provider>:<model>:wiki-v1" — a backfill regenerates articles whose
     /// generator no longer matches the configured provider/model, and the
     /// `wiki-vN` tag forces a rebuild when the generation prompt changes.
-    var generatorModelIdentifier: String
-    var createdAt: Date
-    var updatedAt: Date
+    var generatorModelIdentifier: String = ""
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
 
     init(
         id: UUID = UUID(),

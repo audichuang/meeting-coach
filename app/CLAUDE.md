@@ -493,7 +493,14 @@ arbitrary `Codable` arrays**, so `Transcript.segments` (`[TranscriptSegment]`) a
 similar collections are encoded to/from JSON `Data` via computed properties
 (`Transcript.segmentsData`). Relationships are set by assigning the parent (e.g.
 `Recording(meeting:)`) — SwiftData maintains the inverse, so never append to the
-parent collection manually. `Recording.transcriptionCheckpointData` uses the same
+parent collection manually. Since schema 1.8.0 (`KurnSchemaV9`) the graph is kept
+CloudKit-compatible for the opt-in iCloud sync: no `@Attribute(.unique)`,
+every stored attribute optional or defaulted, and every to-many relationship
+stored optional as `<name>Storage` (`originalName` keeps the old column) behind
+a non-optional computed `<name>` that call sites use. `#Predicate` and sort
+key paths must name the `…Storage` property. `SchemaV9MigrationTests` fails a
+model change that breaks these rules; the CloudKit loader would otherwise only
+report it on a device with sync turned on. `Recording.transcriptionCheckpointData` uses the same
 JSON-`Data` pattern to persist a `TranscriptionCheckpoint` (see "Resumable
 transcription" below), and `Transcript.pipelineReportData` to persist the run's
 `PipelineReport` (H5 PR 11) — which engine each stage was asked for, which one
