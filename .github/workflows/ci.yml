@@ -65,10 +65,14 @@ jobs:
           xcrun simctl bootstatus 'iPad mini (A20 Pro)' -b || { sleep 15; xcrun simctl bootstatus 'iPad mini (A20 Pro)' -b; }
       # Package sources only (not build products), keyed on what pins them; same idea
       # as upstream's app/.github/actions/cache-spm-packages.
+      # hashFiles() timed out (120 s) twice on this runner, so hash the three files in shell.
+      - name: SwiftPM cache key
+        id: spmkey
+        run: echo "hash=$(cat Kurn.xcodeproj/project.pbxproj Kurn.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved Packages/WhisperCpp/Package.swift | shasum -a 256 | cut -c1-40)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/DerivedData/SourcePackages
-          key: ${{ runner.os }}-spm-${{ hashFiles('app/Kurn.xcodeproj/project.pbxproj', 'app/Kurn.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'app/Packages/WhisperCpp/Package.swift') }}
+          key: ${{ runner.os }}-spm-${{ steps.spmkey.outputs.hash }}
       - name: KurnTests
         run: |
           xcodebuild \
