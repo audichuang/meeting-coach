@@ -196,6 +196,34 @@ describe("usage and caps", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("returns 402 for everyone once the service-wide monthly cap is reached", async () => {
+    const { token } = await createInvite(E, null);
+    const month = new Date().toISOString().slice(0, 7);
+    const day = new Date().toISOString().slice(0, 10);
+    const insert = (user: string, period: string, usd: number) =>
+      E.DB.prepare("INSERT INTO usage (user_id, period, usd) VALUES (?, ?, ?)").bind(user, period, usd).run();
+    const global = Number(E.GLOBAL_MONTHLY_CAP_USD);
+    // Day rows share the table and must not count twice.
+    await insert("synthetic-a", month, global / 2);
+    await insert("synthetic-a", day, global / 2);
+    try {
+      mockOpenAI({ output: [], usage: { input_tokens: 1, output_tokens: 1 } });
+      expect((await call(token, "/v1/responses", appBody())).status).toBe(200);
+      vi.restoreAllMocks();
+
+      await insert("synthetic-b", month, global / 2);
+      const fetchSpy = mockOpenAI({});
+      const res = await call(token, "/v1/responses", appBody());
+      expect(res.status).toBe(402);
+      expect(((await res.json()) as any).error.message).toBe("monthly spend cap reached");
+      expect((await call(token, "/v1/realtime/session", {})).status).toBe(402);
+      expect((await upload(token, audioForm())).status).toBe(402);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      await E.DB.prepare("DELETE FROM usage WHERE user_id IN ('synthetic-a', 'synthetic-b')").run();
+    }
+  });
+
   it("returns 429 past the per-minute request limit", async () => {
     const { token } = await createInvite(E, null);
     const limit = Number(E.RATE_LIMIT_PER_MINUTE);
