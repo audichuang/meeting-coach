@@ -847,7 +847,7 @@
 "chat.model.coach_label" = "OpenAI · %@";
 "chat.model.default" = "%@（預設）";
 "chat.model.faster" = "%@（較快、較便宜）";
-"error.on_device_interrupted" = "Apple Intelligence 沒有完成回答：App 在背景時無法使用裝置上的模型。請回到 App 再試一次。";
+"error.on_device_interrupted" = "Apple Intelligence 沒有完成回答。App 切到背景時裝置上的模型會中斷；請回到 App 再試一次。";
 "error.on_device_refused" = "Apple Intelligence 的安全規則擋下了這段內容，無法回答。";
 "error.on_device_busy" = "Apple Intelligence 目前忙碌中，請稍候再試。";
 "error.on_device_too_long" = "內容太長，超過 Apple Intelligence 能處理的範圍。";
