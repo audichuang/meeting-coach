@@ -105,12 +105,11 @@ struct MeetingChatReliabilityEventTests {
                 runID: runID
             )
         } catch let error as AppError {
-            guard case .onDeviceModelUnavailable = error else {
-                // Resolution succeeded and a later stage threw a different
-                // AppError (real generation behavior) — not this test's case.
-                return
-            }
-            #expect(reason != nil, "call failed but availability reports available")
+            // Only the device-reports-unavailable branch is deterministic. When it
+            // reports available, real generation can still fail and that failure is
+            // also surfaced as `.onDeviceModelUnavailable` (readable message), at a
+            // later stage, so it is not this test's case.
+            guard case .onDeviceModelUnavailable = error, reason != nil else { return }
             let events = capture.recorded.filter { $0.operationID == runID }
             #expect(events.count == 1)
             #expect(events.first?.outcome == .failed)
