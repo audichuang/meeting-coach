@@ -1088,7 +1088,14 @@
 "coach.sign_in.title" = "登入會議教練";
 "coach.sign_in.message" = "會議教練會把現場聲音轉成即時逐字稿，並提示你可以怎麼開口。使用 Apple 登入後即可使用；不登入也能錄音。";
 "coach.sign_in.later" = "稍後再說";
-"detail.coach_cost" = "會議教練 US$%.2f";
+"detail.coach_cost.total" = "本場 AI 費用（估算）%@";
+"detail.coach_cost.live_transcript" = "即時逐字稿";
+"detail.coach_cost.cards" = "建議卡";
+"detail.coach_cost.wrap_up" = "收尾";
+"detail.coach_cost.formal_transcript" = "正式逐字稿";
+"detail.coach_cost.summary" = "會後摘要";
+"detail.coach_cost.expanded" = "已展開";
+"detail.coach_cost.collapsed" = "已收合";
 "settings.meeting_coach_cooldown" = "自動建議卡至少間隔 %d 秒";
 "settings.meeting_coach_max_cards" = "每 10 分鐘最多 %d 張自動建議卡";
 "template.meeting_coach.name" = "會議教練會後摘要";

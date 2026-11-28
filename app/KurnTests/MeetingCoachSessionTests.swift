@@ -750,12 +750,72 @@ struct MeetingCoachSessionTests {
         )
         coach.begin(recordingID: UUID())
         let record = try #require(try context.fetch(FetchDescriptor<CoachRecord>()).first)
-        record.costUSD += 1   // e.g. the follow-up's transcription landed first
+        record.addCost(1, to: .formalTranscript)   // e.g. the follow-up's transcription landed first
+        coach.eventSink.yield(.billedSeconds(60))
         coach.eventSink.yield(.final(LiveTranscriptSegment(start: 0, end: 20, text: "大家好", arrivedAt: 20)))
         await waitUntil { coach.transcriptAvailable }
         await coach.askForCard()
+        await coach.requestWrapUp()
         await coach.finish(at: 30)
         #expect(abs(record.costUSD - (1 + coach.cost.totalUSD)) < 1e-9)
+        // Each step lands in its own bucket and the buckets add up to the total.
+        let breakdown = try #require(record.costBreakdown)
+        #expect(breakdown.formalTranscript == 1)
+        #expect(abs(breakdown.liveTranscript - 0.017) < 1e-9)
+        #expect(breakdown.cards > 0 && breakdown.wrapUp > 0)
+        #expect(abs(breakdown.cards - coach.cost.breakdown.cards) < 1e-12)
+        #expect(breakdown.summary == 0)
+        #expect(abs(breakdown.totalUSD - record.costUSD) < 1e-9)
+    }
+
+    @Test func aRecordWithSpendButNoBreakdownStaysTotalOnly() throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        // Written before steps were tracked: a total and no breakdown.
+        let legacy = CoachRecord(meeting: meeting, recordingID: UUID(), userName: "我")
+        legacy.costUSD = 0.42
+        context.insert(legacy)
+        #expect(legacy.costBreakdown == nil)
+        legacy.addCost(0.1, to: .summary)
+        #expect(abs(legacy.costUSD - 0.52) < 1e-9)
+        #expect(legacy.costBreakdown == nil)
+
+        let fresh = CoachRecord(meeting: meeting, recordingID: UUID(), userName: "我")
+        context.insert(fresh)
+        #expect(fresh.costBreakdown == CoachCostBreakdown())
+        fresh.addCost(0.2, to: .cards)
+        #expect(fresh.costBreakdown?.cards == 0.2)
+
+        // A meeting with any total-only recording shows its total only.
+        #expect(abs(meeting.coachCostUSD - 0.72) < 1e-9)
+        #expect(meeting.coachCostBreakdown == nil)
+        context.delete(legacy)
+        try context.save()
+        #expect(meeting.coachCostBreakdown?.cards == 0.2)
+    }
+
+    @Test func meetingCostSumsEveryRecording() throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Coach")
+        context.insert(meeting)
+        let first = CoachRecord(meeting: meeting, recordingID: UUID(), userName: "我")
+        let second = CoachRecord(meeting: meeting, recordingID: UUID(), userName: "我")
+        context.insert(first)
+        context.insert(second)
+        first.addCost(1, to: .liveTranscript)
+        first.addCost(0.05, to: .summary)
+        second.addCost(0.5, to: .liveTranscript)
+        second.addCost(0.1, to: .formalTranscript)
+        try context.save()
+        #expect(abs(meeting.coachCostUSD - 1.65) < 1e-9)
+        let breakdown = try #require(meeting.coachCostBreakdown)
+        #expect(breakdown.liveTranscript == 1.5)
+        #expect(breakdown.formalTranscript == 0.1)
+        #expect(breakdown.summary == 0.05)
+        #expect(breakdown.cards == 0 && breakdown.wrapUp == 0)
     }
 
     @Test func workerBaseURLAndSummaryOutput() throws {

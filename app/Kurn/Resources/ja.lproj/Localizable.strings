@@ -1088,7 +1088,14 @@
 "coach.sign_in.title" = "ミーティングコーチにサインイン";
 "coach.sign_in.message" = "ミーティングコーチは会場の音声をライブ文字起こしにし、発言のヒントを提案します。Appleでサインインすると使えます。サインインしなくても録音はできます。";
 "coach.sign_in.later" = "後で";
-"detail.coach_cost" = "会議コーチ US$%.2f";
+"detail.coach_cost.total" = "この会議のAI利用額（概算）%@";
+"detail.coach_cost.live_transcript" = "ライブ文字起こし";
+"detail.coach_cost.cards" = "提案カード";
+"detail.coach_cost.wrap_up" = "まとめ";
+"detail.coach_cost.formal_transcript" = "正式な文字起こし";
+"detail.coach_cost.summary" = "会議後の要約";
+"detail.coach_cost.expanded" = "展開";
+"detail.coach_cost.collapsed" = "折りたたみ";
 "settings.meeting_coach_cooldown" = "自動カードの間隔を最低%d秒にする";
 "settings.meeting_coach_max_cards" = "自動カードは10分間に最大%d枚";
 "template.meeting_coach.name" = "会議コーチの振り返り";
