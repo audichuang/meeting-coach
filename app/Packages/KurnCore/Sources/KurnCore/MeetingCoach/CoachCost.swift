@@ -84,7 +84,7 @@ public struct CoachCostBreakdown: Codable, Equatable, Sendable {
         var total = CoachCostBreakdown()
         for part in parts {
             guard let part else { return nil }
-            total = total + part
+            for step in CoachCostStep.allCases { total[step] += part[step] }
         }
         return total
     }
