@@ -27,8 +27,10 @@ enum CloudKitSchemaInitializer {
                 try initializeStoreSchema()
                 try await initializeFileRecordType()
                 AppLog.persistence.atNotice.notice("cloudkit schema: initialized")
+                print("CKSCHEMA: initialized")
             } catch {
                 AppLog.persistence.atError.error("cloudkit schema: failed \(String(describing: error), privacy: .public)")
+                print("CKSCHEMA: failed \(error)")
             }
         }
     }
