@@ -736,7 +736,6 @@
 /* À propos et remerciements */
 "settings.about" = "À propos";
 "settings.acknowledgements" = "Remerciements";
-"settings.sponsor" = "Soutenir le projet Kurn d'origine";
 "ack.intro" = "La reconnaissance vocale sur l'appareil, la diarisation des intervenants et la détection d'activité vocale sont assurées par Fluid Inference et whisper.cpp. Meeting Coach utilise les packages ci-dessous et télécharge à la demande leurs modèles de machine learning. Chaque composant est utilisé sous sa propre licence.";
 "ack.based_on" = "Meeting Coach est basé sur le projet open source Kurn de Carlos Mazzei, utilisé sous licence MIT.";
 "ack.packages" = "Packages Swift";

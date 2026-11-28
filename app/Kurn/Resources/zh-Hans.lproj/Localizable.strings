@@ -736,7 +736,6 @@
 /* 关于与致谢 */
 "settings.about" = "关于";
 "settings.acknowledgements" = "致谢";
-"settings.sponsor" = "赞助原始 Kurn 项目";
 "ack.intro" = "设备端语音识别、说话人分离和语音活动检测由 Fluid Inference 与 whisper.cpp 提供支持。Meeting Coach 使用下列软件包，并按需下载其机器学习模型。每个组件均在各自的许可协议下使用。";
 "ack.based_on" = "Meeting Coach 基于 Carlos Mazzei 的开源项目 Kurn，依 MIT 许可证使用。";
 "ack.packages" = "Swift 包";
