@@ -30,9 +30,12 @@ struct MeetingDetailCoachCost: View {
                             .rotationEffect(.degrees(isExpanded ? 180 : 0))
                             .accessibilityHidden(true)
                     }
+                    // A taller hit area than the footnote line, without growing the header.
+                    .padding(.vertical, 14)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .padding(.vertical, -14)
                 .accessibilityValue(NSLocalizedString(isExpanded ? "detail.coach_cost.expanded" : "detail.coach_cost.collapsed",
                                                       comment: "Whether the cost breakdown is shown"))
                 .accessibilityIdentifier("detail.coachCost")
