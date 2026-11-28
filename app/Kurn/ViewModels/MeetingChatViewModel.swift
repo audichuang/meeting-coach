@@ -7,8 +7,12 @@
 //  a grounded answer. All SwiftData reads happen on the main actor; the
 //  retrieval + LLM call run off-main in the service.
 //
-//  A conversation is also the unit of persistence: `configure(meeting:modelContext:)`
-//  wires up the `ChatSession` scope (per-meeting or library-wide), and a
+//  Owned for the life of the process by `MeetingChatStore` (one per meeting,
+//  one library-wide), so a reply in flight survives leaving the chat; only
+//  `cancel()` (the stop button, a new chat, deleting the meeting) stops it.
+//
+//  A conversation is also the unit of persistence: the `meeting` and
+//  `modelContext` passed at construction scope `ChatSession` (per-meeting or library-wide), and a
 //  successfully completed exchange is saved into `session` — created lazily on
 //  the first one, so a conversation the user opens and abandons never leaves an
 //  empty row in the history list. Only finished exchanges are persisted; a
@@ -65,6 +69,8 @@ final class MeetingChatViewModel {
 
     private(set) var turns: [Turn] = []
     private(set) var isResponding = false
+    /// When the in-flight reply started, so a view opened mid-reply shows the real wait.
+    private(set) var respondingSince: Date?
     /// The saved conversation backing `turns`, or `nil` for a not-yet-saved
     /// one — set by `configure`, `startNewSession`, or `load(session:)`, and
     /// created lazily by `persist()` on the first successful exchange.
@@ -86,41 +92,28 @@ final class MeetingChatViewModel {
     /// large-library "Ask" works through several blocks of meeting notes —
     /// see `ChatStreamEvent.progress`. Cleared alongside `currentPhase`.
     private(set) var currentPhaseDetail: String?
+    /// A save or delete that failed; shown as an alert.
     var error: AppError?
+    /// Why the last question got no answer, shown inline above its retry
+    /// button rather than as an alert: the question is still on screen, and
+    /// an alert here stacked on the detail screen's own alerts.
+    private(set) var failureMessage: String?
 
     private let chatService: MeetingChatService
-    // H8 PR 20: `deinit` is nonisolated even on a `@MainActor` class (Swift
-    // gives it no way to hop actors before the object is gone), so cancelling
-    // `task` there needs unchecked access — confirmed by CI, which rejected
-    // a plain `private var task` with "main actor-isolated property 'task'
-    // can not be referenced from a nonisolated context". This is the same
-    // "the compiler can't prove it, but it's fine" shape PR 18 already
-    // resolved for `LockScreenRecordingController.activity`: every other
-    // access to `task` (`send`/`cancel`/`reset`) is already isolated to the
-    // main actor as normal, and the one added by `deinit` can't race them —
-    // `deinit` only runs once the object's refcount reaches zero, and the
-    // task's own closure holds a strong reference to `self` (via its
-    // `guard let self`) for as long as it's actively mutating state, which
-    // makes that reference and deinit mutually exclusive by construction.
-    // `@ObservationIgnored` keeps this a plain stored property; behind the
-    // `@Observable` accessors `nonisolated(unsafe)` would have no effect.
-    @ObservationIgnored private nonisolated(unsafe) var task: Task<Void, Never>?
-
-    /// H8 PR 20, item 1's "chat/search tasks cancel on dismissal": this view
-    /// model is owned by `MeetingChatView`'s `@State`, so SwiftUI deallocates
-    /// it when the chat tab/sheet leaves the hierarchy — but nothing
-    /// previously cancelled `task` when that happened, so a reply already in
-    /// flight (a paid cloud LLM call) kept running to completion in the
-    /// background after the user navigated away. `deinit` is the reliable
-    /// backstop regardless of which dismissal path was taken.
-    deinit {
-        task?.cancel()
-    }
+    /// Bumped by every send and cancel, so a superseded run's late events and
+    /// cleanup never touch the turn that replaced it.
+    @ObservationIgnored private var generation = 0
+    /// Where the in-flight reply starts in `turns`, so `cancel` can drop it.
+    @ObservationIgnored private var replyStart: Int?
+    @ObservationIgnored private var background: BackgroundActivity?
+    @ObservationIgnored private var task: Task<Void, Never>?
 
     /// `chatService` defaults to the live retrieval + provider stack; tests
     /// pass one over a stub embedder and a scripted provider.
-    init(chatService: MeetingChatService = MeetingChatService()) {
+    init(chatService: MeetingChatService = MeetingChatService(), meeting: Meeting? = nil, modelContext: ModelContext? = nil) {
         self.chatService = chatService
+        self.meeting = meeting
+        self.modelContext = modelContext
     }
 
     /// Send `question`. When `transcriptText` is non-nil the scope is a single
@@ -150,14 +143,18 @@ final class MeetingChatViewModel {
 
         turns.append(Turn(role: .user, text: trimmed))
         isResponding = true
+        failureMessage = nil
         currentPhase = nil
         currentPhaseDetail = nil
+        generation += 1
+        let runGeneration = generation
         let history = Self.buildHistory(from: Array(turns.dropLast()))
         // Streaming can append a partial assistant turn before cancellation is
         // observed (unlike the old atomic-answer flow, which only appended on
         // success). Remember where the reply would start so a cancel can drop
         // it, keeping the "silently drop the pending turn" behavior intact.
         let turnCountBeforeReply = turns.count
+        replyStart = turnCountBeforeReply
         // `runID` correlates every `ReliabilityEvent` this turn produces — the
         // service's own per-stage events (validation, provider, answer) and
         // this view model's own outcome event below — the same
@@ -165,6 +162,7 @@ final class MeetingChatViewModel {
         // uses for `DocumentGenerationService`. A parameter (defaulted) so a
         // test can pick its own events out of the process-global log.
         let startedAt = Date()
+        respondingSince = startedAt
 
         let (stream, continuation) = AsyncStream<ChatStreamEvent>.makeStream()
         let onEvent: MeetingChatService.ChatEventHandler = { event in
@@ -173,7 +171,7 @@ final class MeetingChatViewModel {
         let consumer = Task { @MainActor [weak self] in
             var assistantIndex: Int?
             for await event in stream {
-                guard let self else { return }
+                guard let self, self.generation == runGeneration else { return }
                 switch event {
                 case .phase(let phase):
                     self.currentPhase = phase
@@ -203,6 +201,18 @@ final class MeetingChatViewModel {
             await consumer.value
         }
 
+        // A cloud request keeps going for the window iOS grants after the app
+        // backgrounds; when that runs out, the turn ends as interrupted. The
+        // on-device model cannot generate in the background at all.
+        if provider.kind != .appleOnDevice {
+            let activity = BackgroundActivity()
+            activity.begin(name: "meeting-chat") { [weak self] in
+                guard let self, self.generation == runGeneration else { return }
+                self.interrupt()
+            }
+            background = activity
+        }
+
         task = Task { [weak self] in
             guard let self else { return }
             do {
@@ -221,6 +231,7 @@ final class MeetingChatViewModel {
                     )
                 }
                 await drainEvents()
+                guard self.generation == runGeneration else { return }
                 self.applyFinal(answer, model: model, elapsed: Date().timeIntervalSince(startedAt))
                 // Reported at "view_model" stage, distinct from the service's
                 // own unstaged success event — the same two-tier shape
@@ -234,9 +245,10 @@ final class MeetingChatViewModel {
             } catch is CancellationError {
                 // User cancelled; drop whatever streamed in so far, silently.
                 // Leaving the question turn in place is what makes it
-                // `retryableQuestion` afterward.
+                // `retryableQuestion` afterward. `cancel()` already did this
+                // for its own run; the guard keeps it off a newer one.
                 await drainEvents()
-                self.dropPartialReply(keeping: turnCountBeforeReply)
+                if self.generation == runGeneration { self.dropPartialReply(keeping: turnCountBeforeReply) }
                 ReliabilityLog.record(ReliabilityEvent(
                     operationID: runID, operation: "meeting_chat", stage: "view_model",
                     outcome: .cancelled, elapsedSeconds: Date().timeIntervalSince(startedAt)
@@ -247,8 +259,9 @@ final class MeetingChatViewModel {
                 // question, so `retryableQuestion` needs the turn list back
                 // at just the question for this to be one clean asset.
                 await drainEvents()
+                guard self.generation == runGeneration else { return }
                 self.dropPartialReply(keeping: turnCountBeforeReply)
-                self.error = appError
+                self.failureMessage = appError.errorDescription
                 ReliabilityLog.record(ReliabilityEvent(
                     operationID: runID, operation: "meeting_chat", stage: "view_model",
                     outcome: .failed, elapsedSeconds: Date().timeIntervalSince(startedAt),
@@ -256,19 +269,30 @@ final class MeetingChatViewModel {
                 ))
             } catch {
                 await drainEvents()
+                guard self.generation == runGeneration else { return }
                 self.dropPartialReply(keeping: turnCountBeforeReply)
-                self.error = .apiError(statusCode: 0, message: error.localizedDescription)
+                self.failureMessage = AppError.apiError(statusCode: 0, message: error.localizedDescription).errorDescription
                 ReliabilityLog.record(ReliabilityEvent(
                     operationID: runID, operation: "meeting_chat", stage: "view_model",
                     outcome: .failed, elapsedSeconds: Date().timeIntervalSince(startedAt),
                     code: "unexpected"
                 ))
             }
-            self.isResponding = false
-            self.currentPhase = nil
-            self.currentPhaseDetail = nil
-            self.task = nil
+            guard self.generation == runGeneration else { return }
+            self.finishRun()
         }
+    }
+
+    /// Clears the in-flight state; the caller has already checked the run is current.
+    private func finishRun() {
+        isResponding = false
+        respondingSince = nil
+        currentPhase = nil
+        currentPhaseDetail = nil
+        task = nil
+        replyStart = nil
+        background?.end()
+        background = nil
     }
 
     /// Replace the streamed-in assistant text with the service's final answer
@@ -339,6 +363,7 @@ final class MeetingChatViewModel {
     func dropRetryableQuestion() {
         guard retryableQuestion != nil else { return }
         turns.removeLast()
+        failureMessage = nil
     }
 
     /// Prior turns as chat history. Turns are plain text to keep token cost
@@ -364,11 +389,21 @@ final class MeetingChatViewModel {
         return "For reference, my previous answer was grounded on these excerpts:\n\(lines)"
     }
 
-    /// Cancel an in-flight reply.
+    /// Cancel an in-flight reply: drops whatever streamed in, leaves the
+    /// question retryable, and retires the run so its late cleanup is a no-op.
     func cancel() {
         task?.cancel()
-        task = nil
-        isResponding = false
+        generation += 1
+        if let replyStart { dropPartialReply(keeping: replyStart) }
+        finishRun()
+    }
+
+    /// iOS reclaimed the background window: stop, and say so next to the
+    /// question so it reads as "ask again", not as a spinner that never ends.
+    func interrupt() {
+        guard isResponding else { return }
+        cancel()
+        failureMessage = NSLocalizedString("chat.interrupted", comment: "Reply interrupted in the background")
     }
 
     /// Starts a brand-new, unsaved conversation — the "new chat" affordance.
@@ -378,19 +413,11 @@ final class MeetingChatViewModel {
         cancel()
         turns.removeAll()
         error = nil
+        failureMessage = nil
         session = nil
     }
 
     // MARK: - Session history
-
-    /// Must be called once before `send`/`pastSessions`, from the owning
-    /// view, so replies can be persisted and past ones listed. `meeting`
-    /// scopes both the same way it scopes retrieval — `nil` for the
-    /// library-wide "Ask".
-    func configure(meeting: Meeting?, modelContext: ModelContext) {
-        self.meeting = meeting
-        self.modelContext = modelContext
-    }
 
     /// Saved conversations in the current scope, most-recently-active first.
     /// Fetches every `ChatSession` and filters in memory rather than a
@@ -413,6 +440,7 @@ final class MeetingChatViewModel {
         self.session = session
         turns = session.turns.map(Turn.init)
         error = nil
+        failureMessage = nil
     }
 
     /// Permanently deletes `target`. If it was the open conversation, starts

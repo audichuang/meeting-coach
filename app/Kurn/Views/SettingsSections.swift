@@ -42,6 +42,7 @@ extension SettingsView {
     func deleteAllData() {
         ReadAloudController.shared.stop()
         summaries?.cancelAllSummaries()
+        meetingChats?.discardAll()
         transcription?.cancelAllTranscriptions()
         Task {
             await summaries?.summaryTask?.value

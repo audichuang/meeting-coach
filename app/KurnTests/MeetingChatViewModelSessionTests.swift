@@ -38,8 +38,7 @@ struct MeetingChatViewModelSessionTests {
         context.insert(ChatSession(meeting: nil, title: "Library-wide"))
         try context.save()
 
-        let vm = MeetingChatViewModel()
-        vm.configure(meeting: meetingA, modelContext: context)
+        let vm = MeetingChatViewModel(meeting: meetingA, modelContext: context)
 
         let sessions = vm.pastSessions()
         #expect(sessions.map(\.title) == ["About A"])
@@ -53,8 +52,7 @@ struct MeetingChatViewModelSessionTests {
         context.insert(ChatSession(meeting: nil, title: "Library-wide"))
         try context.save()
 
-        let vm = MeetingChatViewModel()
-        vm.configure(meeting: nil, modelContext: context)
+        let vm = MeetingChatViewModel(meeting: nil, modelContext: context)
 
         #expect(vm.pastSessions().map(\.title) == ["Library-wide"])
     }
@@ -67,8 +65,7 @@ struct MeetingChatViewModelSessionTests {
         context.insert(newer)
         try context.save()
 
-        let vm = MeetingChatViewModel()
-        vm.configure(meeting: nil, modelContext: context)
+        let vm = MeetingChatViewModel(meeting: nil, modelContext: context)
 
         #expect(vm.pastSessions().map(\.title) == ["Newer", "Older"])
     }
@@ -83,8 +80,7 @@ struct MeetingChatViewModelSessionTests {
         context.insert(session)
         try context.save()
 
-        let vm = MeetingChatViewModel()
-        vm.configure(meeting: nil, modelContext: context)
+        let vm = MeetingChatViewModel(meeting: nil, modelContext: context)
         vm.load(session: session)
 
         #expect(vm.turns.map(\.text) == ["What shipped?", "The v2 release."])
@@ -100,8 +96,7 @@ struct MeetingChatViewModelSessionTests {
         context.insert(session)
         try context.save()
 
-        let vm = MeetingChatViewModel()
-        vm.configure(meeting: nil, modelContext: context)
+        let vm = MeetingChatViewModel(meeting: nil, modelContext: context)
         vm.load(session: session)
         #expect(vm.currentSessionID == session.id)
 
@@ -120,8 +115,7 @@ struct MeetingChatViewModelSessionTests {
         context.insert(other)
         try context.save()
 
-        let vm = MeetingChatViewModel()
-        vm.configure(meeting: nil, modelContext: context)
+        let vm = MeetingChatViewModel(meeting: nil, modelContext: context)
         vm.load(session: open)
 
         vm.delete(other)
@@ -139,8 +133,7 @@ struct MeetingChatViewModelSessionTests {
         context.insert(session)
         try context.save()
 
-        let vm = MeetingChatViewModel()
-        vm.configure(meeting: nil, modelContext: context)
+        let vm = MeetingChatViewModel(meeting: nil, modelContext: context)
         vm.load(session: session)
 
         vm.reset()

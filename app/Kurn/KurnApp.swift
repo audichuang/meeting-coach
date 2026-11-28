@@ -221,6 +221,7 @@ struct KurnApp: App {
                 .environment(appEnvironment.wiki)
                 .environment(appEnvironment.recordingSession)
                 .environment(appEnvironment.reviewPrompt)
+                .environment(appEnvironment.meetingChats)
                 .environment(\.meetingLibrary, appEnvironment.meetingLibrary)
                 .environment(incomingFiles)
                 // Both the app-switcher privacy placeholder and the lock screen

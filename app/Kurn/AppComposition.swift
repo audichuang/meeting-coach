@@ -40,6 +40,9 @@ struct AppEnvironment {
     /// Library mutations wired to cancel in-flight coordinator work when rows
     /// are deleted.
     let meetingLibrary: MeetingLibrary
+    /// Chat conversations, kept for the life of the process so a question in
+    /// flight survives leaving the chat.
+    let meetingChats: MeetingChatStore
 }
 
 @MainActor
@@ -90,11 +93,13 @@ final class AppComposition {
             }
         )
         let coachFollowUp = MeetingCoachFollowUp(transcription: transcription, settings: settings)
+        let meetingChats = MeetingChatStore(modelContext: context)
         let meetingLibrary = MeetingLibrary(
             context: context,
             onMeetingsDeleted: { meetingIDs in
                 summaries.cancelSummaries(for: meetingIDs)
                 transcription.cancelWork(forDeletedMeetings: meetingIDs)
+                meetingChats.discard(meetingIDs: meetingIDs)
             },
             onRecordingsDeleted: { recordingIDs in
                 transcription.cancelWork(forDeletedRecordings: recordingIDs)
@@ -112,7 +117,8 @@ final class AppComposition {
                 onCoachRecordingSaved: { coachFollowUp.start(meeting: $0, recordingID: $1) }
             ),
             reviewPrompt: reviewPrompt,
-            meetingLibrary: meetingLibrary
+            meetingLibrary: meetingLibrary,
+            meetingChats: meetingChats
         )
     }
 

@@ -62,6 +62,6 @@ struct MeetingChatViewModelReliabilityEventTests {
         guard reason != nil else { return }
         #expect(events.first?.outcome == .failed)
         #expect(events.first?.code == "on_device_model_unavailable")
-        #expect(viewModel.error != nil)
+        #expect(viewModel.failureMessage != nil)
     }
 }

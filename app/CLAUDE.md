@@ -2135,6 +2135,25 @@ loaded once via the `EmbeddingModelStore` actor — same coalesced-load pattern 
   chunk vectors by cosine similarity (`vDSP` dot product on unit-normalized
   vectors). `MeetingsListView` runs a debounced hybrid pass: instant substring
   matching plus semantically-relevant meetings the substring pass missed.
+- **Chat lifetime and route (fork).** `MeetingChatStore` (ViewModels/,
+  built by `AppComposition`, in the environment) owns one
+  `MeetingChatViewModel` per meeting plus one library-wide for the life of
+  the process; `MeetingChatView` only looks it up. Leaving the tab, the
+  meeting or the sheet does not cancel a reply: only stop, a new chat,
+  deleting the meeting (`MeetingLibrary`'s delete hook → `discard`) or
+  erasing all data does. This replaced upstream's cancel-in-`deinit` rule,
+  under which the owner's question died when they switched away. A cloud
+  reply runs inside a `BackgroundActivity`; when iOS reclaims the window the
+  turn ends as "interrupted" with the retry row. A failed or interrupted
+  turn shows its reason inline (`failureMessage`), not as an alert: it
+  stacked with the detail screen's own alerts. `ChatRoute` sends chat to the
+  Worker's `/v1/responses` (`CoachSummaryProvider.chat`, not streamed) when
+  `CoachBackend.current()` is ready, with `AppSettings.coachChatModel`
+  (`CoachPricing.chatModels`, picked from the composer's chip); both models
+  have a 1.05M window, so a two-hour transcript is read in one call instead
+  of the on-device retrieval path. Spend goes into the meeting's newest
+  `CoachRecord.costUSD`; library-wide chat and meetings without one are not
+  counted.
 - **Chat.** `LLMProvider` gained a plain-text `chat(systemPrompt:messages:)`
   (implemented for OpenAI/Anthropic/Google) alongside
   `summarize`. `MeetingChatService` has two grounding strategies: **per-meeting**

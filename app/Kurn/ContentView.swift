@@ -117,6 +117,7 @@ struct ContentView: View {
             .environment(TranscriptionCoordinator(modelContext: container.mainContext, appSettings: settings))
             .environment(RecordingSessionController(modelContext: container.mainContext, settings: settings))
             .environment(ReviewPromptCoordinator())
+            .environment(MeetingChatStore(modelContext: container.mainContext))
             .modelContainer(container)
     }
 }
