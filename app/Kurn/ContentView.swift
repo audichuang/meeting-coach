@@ -7,7 +7,8 @@
 //  sections, with the folder/library picker reached through a sheet
 //  (`FolderSidebarView`, opened from the toolbar). On regular width (iPad,
 //  Mac Catalyst) a NavigationSplitView instead shows that same picker as a
-//  persistent sidebar column next to the meetings list: the app is declared
+//  sidebar column next to the meetings list (collapsed at launch, opened
+//  from the system sidebar button): the app is declared
 //  universal, and a full-screen sheet wasted the width iPad has. `selection` moved up to this
 //  view specifically so the same `Binding<LibrarySelection>` can drive both
 //  `FolderSidebarView` (sidebar or sheet) and `MeetingsListView`'s own
@@ -34,14 +35,18 @@ struct ContentView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(TranscriptionCoordinator.self) private var transcription
     @State private var selection: LibrarySelection = .allMeetings
+    /// iPad opens on the meetings list; the library column is one tap away
+    /// on the system sidebar button instead of greeting a new user with a
+    /// column of zero counts.
+    @State private var sidebarVisibility: NavigationSplitViewVisibility = .detailOnly
     @State private var isImportingAudio = false
     @State private var audioImportError: AppError?
 
     var body: some View {
         Group {
             if horizontalSizeClass == .regular {
-                NavigationSplitView {
-                    FolderSidebarView(selection: $selection)
+                NavigationSplitView(columnVisibility: $sidebarVisibility) {
+                    FolderSidebarView(selection: $selection, showsDoneButton: false)
                 } detail: {
                     NavigationStack {
                         MeetingsListView(selection: $selection)

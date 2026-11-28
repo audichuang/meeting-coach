@@ -39,10 +39,9 @@ extension MeetingsListView {
         ToolbarSpacer(.fixed, placement: .topBarTrailing)
         ToolbarItem(placement: .topBarTrailing) { settingsButton }
 
-        // On iPad-regular width the same selection is always visible in
-        // `FolderSidebarView`'s persistent sidebar column (D6), so this
-        // button would just open a sheet duplicating what's already on
-        // screen — hidden there rather than left as a redundant control.
+        // On iPad-regular width the same picker is `FolderSidebarView`'s
+        // split-view column (D6), reached from the system sidebar button, so
+        // this button would only open a sheet duplicating it.
         if horizontalSizeClass != .regular {
             ToolbarItem(placement: .bottomBar) { libraryButton }
         }

@@ -520,12 +520,13 @@ root:
   `FolderSidebarView` itself is host-agnostic — it only depends on a
   `Binding<LibrarySelection>` — so `ContentView` presents it two ways off the
   same binding: a sheet on compact width (from `MeetingsListView`'s toolbar,
-  unchanged) and, on regular width (iPad, Mac Catalyst), a persistent
-  `NavigationSplitView` sidebar column.
+  unchanged) and, on regular width (iPad, Mac Catalyst), a
+  `NavigationSplitView` sidebar column, collapsed at launch so the iPad opens
+  on the meetings list rather than a column of zero counts.
   `selection` lives on `ContentView` for both paths, so `MeetingsListView`
   holds it as a `@Binding` rather than owning it; `MeetingsListToolbar`'s
-  library button is hidden on regular width since the sidebar column already
-  shows the same picker persistently.
+  library button is hidden on regular width since the system sidebar button
+  already opens the same picker.
 - `Tag` (`Models/Tag.swift`) — many-to-many via `Meeting.tags` (`.nullify`).
   `AutoTaggingService` (`Services/AutoTaggingService.swift`) can suggest
   existing/new tags from a transcript excerpt through the configured summary

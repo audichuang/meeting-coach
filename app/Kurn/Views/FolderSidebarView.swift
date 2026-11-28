@@ -25,6 +25,8 @@ struct FolderSidebarView: View {
     @Environment(\.dismiss) private var dismiss
 
     @Binding var selection: LibrarySelection
+    /// Off for the split-view column, where there is no sheet to close.
+    var showsDoneButton = true
 
     @Query(sort: \Meeting.createdAt, order: .reverse) private var meetings: [Meeting]
     @Query(filter: #Predicate<Folder> { $0.parent == nil }, sort: \Folder.createdAt)
@@ -114,8 +116,10 @@ struct FolderSidebarView: View {
                     )
                 }
             }
-            ToolbarItem(placement: .confirmationAction) {
-                Button(NSLocalizedString("common.done", comment: "Done")) { dismiss() }
+            if showsDoneButton {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(NSLocalizedString("common.done", comment: "Done")) { dismiss() }
+                }
             }
         }
     }
