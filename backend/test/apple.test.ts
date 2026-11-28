@@ -108,6 +108,44 @@ describe("POST /v1/auth/apple", () => {
     expect((await usage("mcs_unknown")).status).toBe(401);
   });
 
+  it("sign-out deletes only the caller's session and is a no-op for invite tokens", async () => {
+    mockAppleKeys();
+    const sub = "001234.synthetic.0005";
+    const a = (await (await exchange(await sign({ sub }))).json()) as { token: string };
+    const b = (await (await exchange(await sign({ sub }))).json()) as { token: string };
+    vi.restoreAllMocks();
+    const signout = (token: string) => exports.default.fetch(`${BASE}/v1/auth/signout`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect((await signout(a.token)).status).toBe(204);
+    expect((await usage(a.token)).status).toBe(401);
+    expect((await signout(a.token)).status).toBe(401);
+    expect((await usage(b.token)).status).toBe(200);
+
+    const { token: invite } = await createInvite(env, "legacy");
+    expect((await signout(invite)).status).toBe(204);
+    expect((await usage(invite)).status).toBe(200);
+  });
+
+  it("sessions expire after 90 days without use and each use extends them", async () => {
+    mockAppleKeys();
+    const { token } = (await (await exchange(await sign({ sub: "001234.synthetic.0006" }))).json()) as { token: string };
+    vi.restoreAllMocks();
+    const hash = await sha256Hex(token);
+    const expiresAt = async () =>
+      (await env.DB.prepare("SELECT expires_at FROM sessions WHERE token_hash = ?").bind(hash).first<{ expires_at: number }>())!.expires_at;
+    const DAY = 86_400_000;
+    expect(await expiresAt()).toBeGreaterThan(Date.now() + 89 * DAY);
+
+    await env.DB.prepare("UPDATE sessions SET expires_at = ? WHERE token_hash = ?").bind(Date.now() + DAY, hash).run();
+    expect((await usage(token)).status).toBe(200);
+    expect(await expiresAt()).toBeGreaterThan(Date.now() + 89 * DAY);
+
+    await env.DB.prepare("UPDATE sessions SET expires_at = ? WHERE token_hash = ?").bind(Date.now() - 1, hash).run();
+    expect((await usage(token)).status).toBe(401);
+  });
+
   it("admin lists users with usage and blocking ends existing sessions and sign-in", async () => {
     mockAppleKeys();
     const sub = "001234.synthetic.0004";

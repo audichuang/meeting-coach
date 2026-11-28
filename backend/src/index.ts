@@ -1,5 +1,5 @@
 import { AppleTokenError, verifyAppleIdentityToken } from "./apple";
-import { authenticate, createInvite, isAdmin, signInWithApple, type Caller } from "./auth";
+import { authenticate, createInvite, isAdmin, signInWithApple, signOut, type Caller } from "./auth";
 import type { Env } from "./env";
 import {
   LIVE_TRANSCRIBE_MODEL, RESPONSE_MODELS, TRANSCRIBE_MODEL,
@@ -62,6 +62,11 @@ export default {
 
     const caller = await authenticate(request, env);
     if (!caller) return error(401, "unauthorized");
+    // Before the rate limit, so a burst can never keep a session from being revoked.
+    if (route === "POST /v1/auth/signout") {
+      await signOut(request, env);
+      return new Response(null, { status: 204 });
+    }
     if (!(await allowRate(env, caller.id, Number(env.RATE_LIMIT_PER_MINUTE)))) {
       return error(429, "rate limit exceeded");
     }
