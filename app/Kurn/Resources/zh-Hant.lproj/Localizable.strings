@@ -556,6 +556,10 @@
 "settings.add_template" = "新增範本";
 "settings.templates_sync" = "透過 iCloud 同步範本";
 "settings.templates_sync_footer" = "你建立的自訂範本會透過 iCloud 同步，更換裝置後依然可用。內建範本會自動保持最新，無需同步。";
+"settings.library_sync_title" = "iCloud 同步";
+"settings.library_sync" = "透過 iCloud 同步會議";
+"settings.library_sync_footer" = "會議、逐字稿、摘要與錄音會同步到登入同一個 Apple ID 的其他裝置。刪除會議時，所有裝置都會一起刪除。關閉同步只會停止同步，iCloud 上已有的資料會保留。";
+"settings.library_sync_restart" = "下次開啟 App 時生效。";
 "settings.template_name" = "名稱";
 "settings.template_description" = "描述";
 "settings.template_description_placeholder" = "在範本清單中顯示的一行文字";

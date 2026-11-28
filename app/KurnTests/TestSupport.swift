@@ -101,7 +101,7 @@ enum TestModelContainer {
         // (`KurnModelGraph`) so this container cannot silently diverge from
         // what `KurnApp` actually persists.
         let schema = Schema(KurnModelGraph.currentModels)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let container: ModelContainer
         do {
             container = try ModelContainer(for: schema, configurations: [configuration])

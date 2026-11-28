@@ -7,7 +7,7 @@ Repository: `carlosmazzei/Kurn` (iOS 26 app, watchOS companion, Live Activity ex
 Kurn is local-first: it records meetings, transcribes, diarizes and summarizes on device. There is **no backend**; no infrastructure repository applies. The only "infrastructure" is the GitHub Actions + fastlane release pipeline in this repo.
 
 Trust boundaries:
-1. **Device sandbox ↔ other apps / OS surfaces** — share sheet (PDF document type), `onOpenURL`, App Intents, Lock Screen / Dynamic Island controls, WatchConnectivity, iCloud KVS.
+1. **Device sandbox ↔ other apps / OS surfaces** — share sheet (PDF document type), `onOpenURL`, App Intents, Lock Screen / Dynamic Island controls, WatchConnectivity, iCloud KVS, and — only when the user turns on iCloud sync (off by default) — the CloudKit private database, which mirrors the whole store and holds recordings, photos and attachments as assets.
 2. **App ↔ network** — opt-in cloud transcription (Whisper-compatible: OpenAI, Groq, ElevenLabs, custom endpoint) and cloud LLMs (OpenAI, Anthropic, Google, Groq, custom OpenAI-compatible endpoint); on-device model downloads (whisper.cpp, FluidAudio, Sherpa-ONNX, embeddings).
 3. **Untrusted content ↔ LLM prompts** — transcripts, imported PDFs, OCR'd photos and provider responses flow into summary/chat/wiki/document/correction prompts and are rendered as Markdown.
 4. **Repo contributors (PRs) ↔ CI/release secrets** — App Store Connect API key, `fastlane match` signing repo credentials, Codecov token, provider API keys used by evaluation workflows.
@@ -64,6 +64,7 @@ Owner: meeting content and provider API keys matter **equally** and are top prio
 
 - Attacker with **physical access to an unlocked device** (`SECURITY.md`).
 - Vulnerabilities in third-party services/SDKs themselves (OpenAI, Anthropic, Google, Groq, FluidAudio, Apple frameworks) (`SECURITY.md`).
+- **Content in iCloud once the user turns on iCloud sync**: CloudKit's private database is encrypted in transit and at rest but not end-to-end unless Advanced Data Protection is on; the user accepts that by enabling the off-by-default switch. Off, nothing leaves the device this way.
 - **The user disabling the Face ID / passcode gate in Settings** — the user's choice; findings that only matter once the gate is off are accepted risk.
 - **`Tools/` Python scripts and the evaluation pipeline** (`Tools/`, `Tools/evaluation/`, `.github/workflows/pipeline-eval.yml`, `KurnTests/Support/Evaluation/`).
 - **DEBUG-only, UI-test and screenshot-seeding code** (`Kurn/DebugSupport/`, `#if DEBUG` paths, `KurnUITests/`, `KurnWatchUITests/`, screenshot seed data, `scripts/screenshots/`).

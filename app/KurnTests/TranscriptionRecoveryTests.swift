@@ -40,6 +40,19 @@ struct TranscriptionRecoveryTests {
         return recording
     }
 
+    /// A row synced from another device is that device's run, not a stale one.
+    @Test func leavesAnotherDevicesTranscriptionAlone() throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let recording = makeRecording(in: context, status: .inProgress, checkpointEngine: nil)
+        recording.originDeviceID = "another-device"
+        try context.save()
+
+        TranscriptionRecovery.sweepStaleTranscriptions(modelContainer: container)
+
+        #expect(recording.transcriptionStatus == .inProgress)
+    }
+
     @Test func staleCloudCheckpointRequiresManualRetry() throws {
         let container = TestModelContainer.make()
         let context = container.mainContext

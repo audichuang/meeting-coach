@@ -108,6 +108,13 @@ struct SettingsView: View {
                     TagsSettingsView()
                 }
                 link(
+                    NSLocalizedString("settings.library_sync_title", comment: "iCloud Sync"),
+                    systemImage: "icloud",
+                    identifier: "settings.link.librarySync"
+                ) {
+                    LibrarySyncSettingsView()
+                }
+                link(
                     NSLocalizedString("usage_insights.title", comment: "Usage Insights"),
                     systemImage: "chart.bar",
                     identifier: "settings.link.usage"

@@ -112,7 +112,7 @@ struct ContentView: View {
     let container = try? ModelContainer(
         for: Meeting.self, Recording.self, Transcript.self, Speaker.self, Summary.self,
         Folder.self, Tag.self, SmartFolder.self, GeneratedDocument.self,
-        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
     )
     if let container {
         ContentView()

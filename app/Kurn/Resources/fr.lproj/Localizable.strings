@@ -556,6 +556,10 @@
 "settings.add_template" = "Ajouter un modèle";
 "settings.templates_sync" = "Synchroniser les modèles via iCloud";
 "settings.templates_sync_footer" = "Les modèles personnalisés que vous créez sont synchronisés via iCloud, afin d'être disponibles après un changement d'appareil. Les modèles intégrés restent toujours à jour d'eux-mêmes.";
+"settings.library_sync_title" = "Synchronisation iCloud";
+"settings.library_sync" = "Synchroniser les réunions via iCloud";
+"settings.library_sync_footer" = "Les réunions, transcriptions, résumés et enregistrements se synchronisent avec vos autres appareils connectés au même identifiant Apple. Supprimer une réunion la supprime partout. Désactiver la synchronisation l’arrête seulement ; ce qui est déjà dans iCloud y reste.";
+"settings.library_sync_restart" = "Prend effet à la prochaine ouverture de l’app.";
 "settings.template_name" = "Nom";
 "settings.template_description" = "Description";
 "settings.template_description_placeholder" = "Une ligne affichée dans la liste des modèles";
