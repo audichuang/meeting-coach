@@ -1598,6 +1598,12 @@ keyed by `recordingID` (cascade only through `Meeting`), so
 - Spend: `CoachPricing` is the single price table; `CoachBudgetGuard` warns
   at the per-meeting threshold and stops AI processing (not recording) after
   5 minutes without "Continue".
+  Every cost goes through `CoachRecord.addCost`, which bumps `costUSD` and
+  the per-step `CoachCostBreakdown` (live transcript, cards incl. ask,
+  wrap-up, formal transcript, summary) together; the detail header sums them
+  over the meeting's records. A record that spent before 1.7.0 has no
+  breakdown and never starts one (it would not add up to its total), so any
+  such record makes the meeting show its total only.
 - Session expiry: about 55 minutes in (or 5 minutes before the session's own
   `expires_at`), the transcriber opens a second session at the next commit
   boundary and sends all later audio there; the old socket stays open only

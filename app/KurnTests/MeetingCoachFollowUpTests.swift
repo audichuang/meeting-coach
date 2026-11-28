@@ -129,6 +129,10 @@ struct MeetingCoachFollowUpTests {
         #expect(resumedRequest.taiwanMandarin == true)
         #expect(resumedRequest.resume?.completedChunks == 1)
         #expect(harness.coachRecord.costUSD > 0)
+        // The formal transcript is booked under its own step (the stub summary reports no usage).
+        let breakdown = try #require(harness.coachRecord.costBreakdown)
+        #expect(abs(breakdown.formalTranscript - harness.coachRecord.costUSD) < 1e-9)
+        #expect(breakdown.liveTranscript == 0 && breakdown.cards == 0 && breakdown.wrapUp == 0)
         #expect(harness.meeting.summaries.count == 1)
         #expect(harness.meeting.summaries.first?.providerRaw == AIProvider.meetingCoach.rawValue)
         #expect(harness.meeting.summaries.first?.model == CoachPricing.cardModel)

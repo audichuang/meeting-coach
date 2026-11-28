@@ -11,7 +11,7 @@
 //
 //  Both calls run under `AIProvider.meetingCoach`, i.e. through the Worker
 //  (or, in DEBUG, straight to OpenAI), and their spend is added to the
-//  recording's `CoachRecord.costUSD` so the meeting's coach spend is complete.
+//  recording's `CoachRecord` under their own steps so the meeting's coach spend is complete.
 //
 //  It lives in ViewModels/ because it drives `SummaryViewModel`, which owns
 //  summary persistence and the Summary tab's progress state.
@@ -71,8 +71,8 @@ final class MeetingCoachFollowUp {
         let context = recording.modelContext
         // shortcut: bills the whole recording at the list price; a resumed run that skipped
         // chunks is overcounted. Upgrade by summing the `usage.seconds` each chunk reports.
-        let recordSpend: @MainActor (Double) -> Void = { addSpend($0, toRecordID: recordID, in: context) }
-        recordSpend(recording.duration / 60 * CoachPricing.transcribePerMinute)
+        let recordSpend: @MainActor (Double, CoachCostStep) -> Void = { addSpend($0, to: $1, recordID: recordID, in: context) }
+        recordSpend(recording.duration / 60 * CoachPricing.transcribePerMinute, .formalTranscript)
         let resolver: ProviderFactory.LLMResolver = resolveSummaryProvider ?? { _, model in
             let backend = CoachBackend.current()
             try backend?.requireReady()
@@ -80,8 +80,8 @@ final class MeetingCoachFollowUp {
             guard let backend else { throw AppError.invalidProviderURL }
             return CoachSummaryProvider(client: CoachResponsesClient(backend: backend), model: model) { usage in
                 var meter = CoachCostMeter()
-                meter.addTokens(model: model, usage: usage)
-                Task { await recordSpend(meter.totalUSD) }
+                meter.addTokens(model: model, usage: usage, step: .summary)
+                Task { await recordSpend(meter.totalUSD, .summary) }
             }
         }
         summaries.enqueueCoachSummary(
@@ -90,11 +90,11 @@ final class MeetingCoachFollowUp {
         )
     }
 
-    private static func addSpend(_ usd: Double, toRecordID recordID: UUID?, in context: ModelContext?) {
+    private static func addSpend(_ usd: Double, to step: CoachCostStep, recordID: UUID?, in context: ModelContext?) {
         guard let recordID, let context, usd > 0 else { return }
         let descriptor = FetchDescriptor<CoachRecord>(predicate: #Predicate { $0.id == recordID })
         guard let record = try? context.fetch(descriptor).first, !record.isDeleted else { return }
-        record.costUSD += usd
+        record.addCost(usd, to: step)
         if let failure = context.saveOrError() {
             AppLog.persistence.atError.error("MeetingCoachFollowUp: spend save failed code=\(failure.logCode, privacy: .public)")
         }

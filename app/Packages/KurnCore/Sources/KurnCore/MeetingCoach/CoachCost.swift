@@ -38,22 +38,81 @@ public struct CoachTokenUsage: Codable, Equatable, Sendable {
     public init(input: Int, cached: Int, output: Int) { self.input = input; self.cached = cached; self.output = output }
 }
 
-/// Accumulates the session's spend from usage the API reported.
-public struct CoachCostMeter: Codable, Equatable, Sendable {
-    public private(set) var totalUSD: Double = 0
+/// The steps a meeting's coach spend is split into, in display order.
+public enum CoachCostStep: CaseIterable, Sendable {
+    case liveTranscript, cards, wrapUp, formalTranscript, summary
+}
+
+/// USD spent per step; zero means the step did not run (or cost nothing).
+public struct CoachCostBreakdown: Codable, Equatable, Sendable {
+    public var liveTranscript = 0.0
+    public var cards = 0.0
+    public var wrapUp = 0.0
+    public var formalTranscript = 0.0
+    public var summary = 0.0
+    public init() {}
+
+    public subscript(step: CoachCostStep) -> Double {
+        get {
+            switch step {
+            case .liveTranscript: liveTranscript
+            case .cards: cards
+            case .wrapUp: wrapUp
+            case .formalTranscript: formalTranscript
+            case .summary: summary
+            }
+        }
+        set {
+            switch step {
+            case .liveTranscript: liveTranscript = newValue
+            case .cards: cards = newValue
+            case .wrapUp: wrapUp = newValue
+            case .formalTranscript: formalTranscript = newValue
+            case .summary: summary = newValue
+            }
+        }
+    }
+
+    public var totalUSD: Double { CoachCostStep.allCases.reduce(0) { $0 + self[$1] } }
+
+    public static func + (lhs: Self, rhs: Self) -> Self { lhs.combined(with: rhs, +) }
+    public static func - (lhs: Self, rhs: Self) -> Self { lhs.combined(with: rhs, -) }
+
+    /// A meeting's breakdown over its recordings; unknown if any recording's is unknown,
+    /// since the steps would then not add up to the total.
+    public static func sum(_ parts: [CoachCostBreakdown?]) -> CoachCostBreakdown? {
+        var total = CoachCostBreakdown()
+        for part in parts {
+            guard let part else { return nil }
+            total = total + part
+        }
+        return total
+    }
+
+    private func combined(with other: Self, _ op: (Double, Double) -> Double) -> Self {
+        var result = Self()
+        for step in CoachCostStep.allCases { result[step] = op(self[step], other[step]) }
+        return result
+    }
+}
+
+/// Accumulates the session's spend, per step, from usage the API reported.
+public struct CoachCostMeter: Equatable, Sendable {
+    public private(set) var breakdown = CoachCostBreakdown()
     public private(set) var transcribedSeconds: Double = 0
+    public var totalUSD: Double { breakdown.totalUSD }
     public init() {}
 
     public mutating func addTranscription(seconds: Double) {
         guard seconds.isFinite, seconds > 0 else { return }
         transcribedSeconds += seconds
-        totalUSD += seconds / 60 * CoachPricing.liveTranscribePerMinute
+        breakdown.liveTranscript += seconds / 60 * CoachPricing.liveTranscribePerMinute
     }
 
-    public mutating func addTokens(model: String, usage: CoachTokenUsage) {
+    public mutating func addTokens(model: String, usage: CoachTokenUsage, step: CoachCostStep) {
         guard let rate = CoachPricing.tokenRates(model: model) else { return }
         let uncached = max(0, usage.input - usage.cached)
-        totalUSD += (Double(uncached) * rate.input + Double(usage.cached) * rate.cached + Double(usage.output) * rate.output) / 1_000_000
+        breakdown[step] += (Double(uncached) * rate.input + Double(usage.cached) * rate.cached + Double(usage.output) * rate.output) / 1_000_000
     }
 }
 

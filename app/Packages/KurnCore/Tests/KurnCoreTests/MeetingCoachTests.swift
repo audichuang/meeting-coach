@@ -53,11 +53,60 @@ struct MeetingCoachTests {
     @Test func costMeterUsesPublishedRates() {
         var meter = CoachCostMeter()
         meter.addTranscription(seconds: 600)                 // 10 min * 0.017
-        meter.addTokens(model: "gpt-6.1-terra", usage: .init(input: 3_000, cached: 1_000, output: 200))
-        meter.addTokens(model: "unknown", usage: .init(input: 1_000_000, cached: 0, output: 0))
+        meter.addTokens(model: "gpt-6.1-terra", usage: .init(input: 3_000, cached: 1_000, output: 200), step: .cards)
+        meter.addTokens(model: "unknown", usage: .init(input: 1_000_000, cached: 0, output: 0), step: .cards)
         let tokens: Double = 2_000 * 1 + 1_000 * 0.05 + 200 * 5
         let expected: Double = 0.17 + tokens / 1_000_000
         #expect(abs(meter.totalUSD - expected) < 1e-9)
+    }
+
+    @Test func costMeterAccumulatesEachStepSeparately() {
+        var meter = CoachCostMeter()
+        meter.addTranscription(seconds: 60)
+        meter.addTokens(model: CoachPricing.judgeModel, usage: .init(input: 1_000_000, cached: 0, output: 0), step: .cards)
+        meter.addTokens(model: CoachPricing.cardModel, usage: .init(input: 1_000_000, cached: 0, output: 0), step: .cards)
+        meter.addTokens(model: CoachPricing.cardModel, usage: .init(input: 0, cached: 0, output: 1_000_000), step: .wrapUp)
+        #expect(abs(meter.breakdown[.liveTranscript] - 0.017) < 1e-9)
+        #expect(abs(meter.breakdown[.cards] - 1.10) < 1e-9)
+        #expect(abs(meter.breakdown[.wrapUp] - 5) < 1e-9)
+        #expect(meter.breakdown[.formalTranscript] == 0 && meter.breakdown[.summary] == 0)
+        #expect(abs(meter.totalUSD - meter.breakdown.totalUSD) < 1e-12)
+        #expect(abs(meter.totalUSD - 6.117) < 1e-9)
+    }
+
+    @Test func breakdownDifferenceIsWhatWasAddedSince() {
+        var before = CoachCostBreakdown()
+        before[.cards] = 0.5
+        var after = before
+        after[.cards] += 0.25
+        after[.liveTranscript] = 1
+        let delta = after - before
+        #expect(abs(delta[.cards] - 0.25) < 1e-12)
+        #expect(delta[.liveTranscript] == 1)
+        #expect(abs((before + delta).totalUSD - after.totalUSD) < 1e-12)
+    }
+
+    @Test func meetingBreakdownSumsRecordingsAndIsUnknownIfAnyIsUnknown() {
+        var first = CoachCostBreakdown()
+        first[.liveTranscript] = 1
+        first[.summary] = 0.02
+        var second = CoachCostBreakdown()
+        second[.liveTranscript] = 0.5
+        second[.formalTranscript] = 0.1
+        let sum = CoachCostBreakdown.sum([first, second])
+        #expect(sum?[.liveTranscript] == 1.5)
+        #expect(sum?[.formalTranscript] == 0.1)
+        #expect(sum?[.summary] == 0.02)
+        #expect(sum?[.cards] == 0)
+        #expect(CoachCostBreakdown.sum([first, nil]) == nil)
+        #expect(CoachCostBreakdown.sum([]) == CoachCostBreakdown())
+    }
+
+    @Test func breakdownRoundTripsThroughJSON() throws {
+        var value = CoachCostBreakdown()
+        value[.wrapUp] = 0.03
+        let data = try JSONEncoder().encode(value)
+        #expect(try JSONDecoder().decode(CoachCostBreakdown.self, from: data) == value)
     }
 
     @Test func budgetWarnsThenStopsAfterGrace() {

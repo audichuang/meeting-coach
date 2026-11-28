@@ -76,9 +76,9 @@ final class MeetingCoachSession {
     @ObservationIgnored let eventSink: AsyncStream<LiveTranscriptEvent>.Continuation
     @ObservationIgnored private let llm: any CoachLLM
     @ObservationIgnored private let backend: CoachBackend
-    /// The live meter's total as last written, so `save()` adds only new live
-    /// spend to `CoachRecord.costUSD`, which the post-meeting run also adds to.
-    @ObservationIgnored private var savedLiveCost = 0.0
+    /// The live meter as last written, so `save()` adds only new live spend to
+    /// the `CoachRecord`, which the post-meeting run also adds to.
+    @ObservationIgnored private var savedLiveCost = CoachCostBreakdown()
     @ObservationIgnored private var trigger: any SuggestionTriggerStrategy
     @ObservationIgnored private let throttle: SuggestionThrottle
     /// Stamped on every automatic card, so the ledger records the throttle it ran under.
@@ -408,14 +408,14 @@ final class MeetingCoachSession {
                                             instructions: CoachMessages.instructions(CoachPrompts.judge, user: userName),
                                             input: input, tools: [judgeTool], force: "judge")
             guard !Task.isCancelled, !isCancelled, !isAIStopped else { return }
-            account(model: CoachPricing.judgeModel, judged.usage)
+            account(model: CoachPricing.judgeModel, judged.usage, step: .cards)
             let verdict = judged.calls.first.flatMap { try? JSONDecoder().decode(CoachJudgeArguments.self, from: $0.arguments) }
             logTrigger(offset: segment.arrivedAt, labels: labels, decision: verdict?.decision ?? "error", reason: verdict?.reason ?? "")
             guard verdict?.decision == "emit", !Task.isCancelled, !isCancelled, !isAIStopped else { return }
             let carded = try await llm.call(model: CoachPricing.cardModel, instructions: cardInstructions,
                                             input: input, tools: [cardTool], force: nil)
             guard !Task.isCancelled, !isCancelled, !isAIStopped else { return }
-            account(model: CoachPricing.cardModel, carded.usage)
+            account(model: CoachPricing.cardModel, carded.usage, step: .cards)
             guard let args = Self.card(from: carded) else {
                 logTrigger(offset: segment.arrivedAt, labels: labels, decision: "card_declined", reason: "")
                 return
@@ -456,7 +456,7 @@ final class MeetingCoachSession {
                 task.cancel()
             }
             guard !Task.isCancelled, !task.isCancelled, !isCancelled, !isAIStopped else { return }
-            account(model: CoachPricing.cardModel, result.usage)
+            account(model: CoachPricing.cardModel, result.usage, step: .cards)
             guard let args = Self.card(from: result) else { return }
             try addCandidate(args, evidence: last, policy: "ask", gated: false)
         } catch {
@@ -487,7 +487,7 @@ final class MeetingCoachSession {
                 task.cancel()
             }
             guard !Task.isCancelled, !task.isCancelled, !isCancelled, !isAIStopped else { return }
-            account(model: CoachPricing.cardModel, result.usage)
+            account(model: CoachPricing.cardModel, result.usage, step: .wrapUp)
             wrapUp = result.calls.first.flatMap { try? JSONDecoder().decode(CoachWrapUpArguments.self, from: $0.arguments) }
             record?.wrapUp = wrapUp
             save()
@@ -560,8 +560,8 @@ final class MeetingCoachSession {
 
     // MARK: Persistence and accounting
 
-    private func account(model: String, _ usage: CoachTokenUsage) {
-        cost.addTokens(model: model, usage: usage)
+    private func account(model: String, _ usage: CoachTokenUsage, step: CoachCostStep) {
+        cost.addTokens(model: model, usage: usage, step: step)
         updateBudget()
         save()
     }
@@ -578,8 +578,8 @@ final class MeetingCoachSession {
         record.ledgers = ledgers
         record.triggerLog = triggerLog
         record.selfSpeakerLabel = selfSpeakerLabel
-        record.costUSD += cost.totalUSD - savedLiveCost
-        savedLiveCost = cost.totalUSD
+        record.addCost(cost.breakdown - savedLiveCost)
+        savedLiveCost = cost.breakdown
         record.transcribedSeconds = cost.transcribedSeconds
         if let failure = modelContext.saveOrError() {
             AppLog.persistence.atError.error("MeetingCoachSession: save failed code=\(failure.logCode, privacy: .public)")

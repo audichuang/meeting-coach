@@ -1088,7 +1088,14 @@
 "coach.sign_in.title" = "Sign in to the meeting coach";
 "coach.sign_in.message" = "The meeting coach turns the room's audio into a live transcript and suggests what you could say. Sign in with Apple to use it; recording works without signing in.";
 "coach.sign_in.later" = "Not Now";
-"detail.coach_cost" = "Coach US$%.2f";
+"detail.coach_cost.total" = "AI cost for this meeting (estimate) %@";
+"detail.coach_cost.live_transcript" = "Live transcript";
+"detail.coach_cost.cards" = "Suggestion cards";
+"detail.coach_cost.wrap_up" = "Wrap-up";
+"detail.coach_cost.formal_transcript" = "Final transcript";
+"detail.coach_cost.summary" = "Meeting summary";
+"detail.coach_cost.expanded" = "Expanded";
+"detail.coach_cost.collapsed" = "Collapsed";
 "settings.meeting_coach_cooldown" = "At least %d s between automatic cards";
 "settings.meeting_coach_max_cards" = "At most %d automatic cards per 10 minutes";
 "template.meeting_coach.name" = "Meeting Coach Recap";

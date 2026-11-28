@@ -34,7 +34,31 @@ enum ScreenshotSeedData {
         seedOnboardingMeeting(into: context, text: text)
         seedCustomerInterviewMeeting(into: context, text: text)
         seedArchivedStandup(into: context, text: text)
+        if ProcessInfo.processInfo.environment["KURN_DEBUG_SEED_COACH_COST"] == "1" {
+            seedCoachCost(into: context)
+        }
         try? context.save()
+    }
+
+    /// Synthetic coach spend for checking the detail header's cost line: the newest
+    /// meeting gets a per-step record on each recording, the next one a total-only
+    /// record as written before steps were tracked. Off by default so store
+    /// screenshots stay as they were.
+    private static func seedCoachCost(into context: ModelContext) {
+        let meetings = (try? context.fetch(FetchDescriptor<Meeting>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)]))) ?? []
+        guard meetings.count >= 2 else { return }
+        let steps: [[(CoachCostStep, Double)]] = [
+            [(.liveTranscript, 0.31), (.cards, 0.06), (.wrapUp, 0.012), (.formalTranscript, 0.08), (.summary, 0.004)],
+            [(.liveTranscript, 0.03), (.formalTranscript, 0.007)]
+        ]
+        for (recording, costs) in zip(meetings[0].recordings.sorted { $0.recordedAt < $1.recordedAt }, steps) {
+            let record = CoachRecord(meeting: meetings[0], recordingID: recording.id, userName: "Demo")
+            context.insert(record)
+            for (step, usd) in costs { record.addCost(usd, to: step) }
+        }
+        let legacy = CoachRecord(meeting: meetings[1], recordingID: meetings[1].recordings.first?.id, userName: "Demo")
+        legacy.costUSD = 0.27
+        context.insert(legacy)
     }
 
     /// Transcript segments for `lines`, one per line, on the timings and

@@ -193,12 +193,62 @@ struct SchemaV3MigrationTests {
         #expect(frozenV6.subtracting(frozenV5) == ["PaperNote"])
     }
 
-    @Test func theCurrentSchemaIsV7AndAddsSelfSpeakerLabelToCoachRecord() {
-        #expect(KurnModelGraph.currentSchemaVersion == Schema.Version(1, 6, 0))
-        let frozenV6 = Set(Schema(KurnSchemaV6.models).entities.map(\.name))
-        let current = Set(KurnModelGraph.schema.entities.map(\.name))
-        #expect(current == frozenV6)
-        let liveIdentifiers = Set(KurnSchemaV7.models.map { ObjectIdentifier($0) })
-        #expect(KurnSchemaV6.models.allSatisfy { !liveIdentifiers.contains(ObjectIdentifier($0)) })
+    /// Property names per entity, so a test can see a field added to an existing entity.
+    private func properties(_ schema: Schema) -> [String: Set<String>] {
+        Dictionary(uniqueKeysWithValues: schema.entities.map { ($0.name, Set($0.properties.map(\.name))) })
+    }
+
+    @Test func v7AddsOnlySelfSpeakerLabelToCoachRecord() {
+        var expected = properties(Schema(KurnSchemaV6.models))
+        expected["CoachRecord"]?.insert("selfSpeakerLabel")
+        #expect(properties(Schema(KurnSchemaV7.models)) == expected)
+    }
+
+    @Test func theCurrentSchemaIsV8AndAddsOnlyCostBreakdownToCoachRecord() {
+        #expect(KurnModelGraph.currentSchemaVersion == Schema.Version(1, 7, 0))
+        var expected = properties(Schema(KurnSchemaV7.models))
+        expected["CoachRecord"]?.insert("costBreakdownData")
+        #expect(properties(KurnModelGraph.schema) == expected)
+        let liveIdentifiers = Set(KurnSchemaV8.models.map { ObjectIdentifier($0) })
+        #expect(KurnSchemaV7.models.allSatisfy { !liveIdentifiers.contains(ObjectIdentifier($0)) })
+    }
+
+    /// A coach record written at 1.6.0 keeps its total and has no breakdown, so the
+    /// detail screen shows the total only.
+    @Test func aV7CoachRecordMigratesWithItsTotalAndNoBreakdown() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SchemaV7MigrationTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent("v7.store")
+        let recordingID = UUID()
+        do {
+            let schema = Schema(versionedSchema: KurnSchemaV7.self)
+            let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, url: storeURL)])
+            let context = container.mainContext
+            let meeting = KurnSchemaV7.Meeting(title: "Before the breakdown", createdAt: Date(timeIntervalSince1970: 1_790_000_000),
+                                               notes: "", languageRaw: MeetingLanguage.chinese.rawValue)
+            context.insert(meeting)
+            let record = KurnSchemaV7.CoachRecord(meeting: meeting, recordingID: recordingID, userName: "Tester")
+            record.costUSD = 0.42
+            record.selfSpeakerLabel = "B"
+            context.insert(record)
+            try context.save()
+        }
+
+        let container = try ModelContainer(
+            for: KurnModelGraph.schema,
+            migrationPlan: KurnModelGraph.migrationPlan,
+            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+        )
+        let context = container.mainContext
+        let meeting = try #require(try context.fetch(FetchDescriptor<Meeting>()).first)
+        let record = try #require(meeting.coachRecords.first)
+        #expect(record.recordingID == recordingID)
+        #expect(record.costUSD == 0.42)
+        #expect(record.selfSpeakerLabel == "B")
+        #expect(record.costBreakdownData == nil)
+        #expect(meeting.coachCostUSD == 0.42)
+        #expect(meeting.coachCostBreakdown == nil)
     }
 }
