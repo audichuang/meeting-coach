@@ -49,11 +49,12 @@ enum CoachUsageStatus: Equatable, Sendable {
 @Observable
 final class CoachServerSettingsController {
     private(set) var usage: CoachUsageStatus = .unknown
-    /// Keychain read failure surfaced to `RecordingSettingsView`'s `.errorAlert`.
+    /// Keychain failure (reading on load, deleting on sign-out) surfaced to `RecordingSettingsView`'s `.errorAlert`.
     var error: AppError?
     @ObservationIgnored private(set) var usageTask: Task<Void, Never>?
     @ObservationIgnored private let resolveBackend: @Sendable (String) -> CoachBackend?
     @ObservationIgnored private let loadUsage: @Sendable (CoachBackend) async -> CoachUsageStatus
+    @ObservationIgnored private let revoke: CoachSignIn.Revoke
 
     init(
         resolveBackend: @escaping @Sendable (String) -> CoachBackend? = { token in
@@ -61,10 +62,12 @@ final class CoachServerSettingsController {
         },
         loadUsage: @escaping @Sendable (CoachBackend) async -> CoachUsageStatus = { backend in
             await CoachUsageStatus.load(backend: { backend })
-        }
+        },
+        revoke: @escaping CoachSignIn.Revoke = { await CoachSignIn.revoke(token: $0) }
     ) {
         self.resolveBackend = resolveBackend
         self.loadUsage = loadUsage
+        self.revoke = revoke
     }
 
     /// Reads the stored token and reloads usage; call on appear and after signing in.
@@ -89,8 +92,12 @@ final class CoachServerSettingsController {
         }
     }
 
-    func signOut(settings: AppSettings) {
-        CoachSignIn.signOut(settings: settings)
+    func signOut(settings: AppSettings) async {
+        do {
+            try await CoachSignIn.signOut(settings: settings, revoke: revoke)
+        } catch {
+            self.error = error
+        }
         load(settings: settings)
     }
 

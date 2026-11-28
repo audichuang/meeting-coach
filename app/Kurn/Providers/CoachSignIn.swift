@@ -42,6 +42,7 @@ enum CoachSignIn {
     }
 
     typealias Exchange = @Sendable (_ identityToken: String) async throws -> Session
+    typealias Revoke = @Sendable (_ token: String) async -> Void
 
     /// Signed in when the Keychain holds a Worker token (or a build 1 invite code);
     /// the DEBUG invite override counts too, so the simulator can show the signed-in state.
@@ -101,19 +102,45 @@ enum CoachSignIn {
             throw .keychainAccessFailed(reason.rawValue)
         }
         settings.coachAppleUserID = credential.userID
+        settings.coachSignOutPending = false
         // Apple sends the name and email only on the first authorization; the Worker remembers the email.
         let name = credential.fullName.map { PersonNameComponentsFormatter().string(from: $0) } ?? ""
         settings.coachAccountLabel = [name, credential.email ?? "", session.email ?? ""].first { !$0.isEmpty } ?? ""
         settings.coachSignInPromptShown = true
     }
 
+    /// `POST /v1/auth/signout`, best effort: the Worker deletes that session, so a copy that
+    /// survives anywhere stops working. Failures are ignored; local sign-out does not depend on it.
+    static func revoke(token: String, session: URLSession = .shared) async {
+        guard let backend = CoachBackend.workerBackend(invite: token), !backend.notConfigured else { return }
+        var request = URLRequest(url: backend.baseURL.appending(path: "auth/signout"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10
+        backend.authorize(&request)
+        _ = try? await LLMHTTP.sendValidated(request, session: session)
+    }
+
+    /// Deletes the token locally, then revokes it at the Worker. If the Keychain refuses the delete,
+    /// the Apple user id stays (so revocation checks keep running), `coachSignOutPending` keeps
+    /// every coach request off the surviving token, and the failure is thrown for the alert.
     @MainActor
-    static func signOut(settings: AppSettings) {
-        settings.credentials.saveKey("", for: .meetingCoach)
-        settings.coachAppleUserID = ""
-        settings.coachAccountLabel = ""
-        // Settings offers sign-in again; the first-launch screen must not pop over it.
-        settings.coachSignInPromptShown = true
+    static func signOut(
+        settings: AppSettings,
+        revoke: Revoke = { await CoachSignIn.revoke(token: $0) }
+    ) async throws(AppError) {
+        let stored = settings.credentials.readKey(for: .meetingCoach)
+        let deleted = settings.credentials.saveKey("", for: .meetingCoach)
+        if case .failed = deleted {
+            settings.coachSignOutPending = true
+        } else {
+            settings.coachSignOutPending = false
+            settings.coachAppleUserID = ""
+            settings.coachAccountLabel = ""
+            // Settings offers sign-in again; the first-launch screen must not pop over it.
+            settings.coachSignInPromptShown = true
+        }
+        if case .found(let token) = stored { await revoke(token) }
+        if case .failed(let reason) = deleted { throw .keychainAccessFailed(reason.rawValue) }
     }
 
     /// Signs out once Apple says the credential was revoked or no longer exists. An install with
@@ -121,6 +148,7 @@ enum CoachSignIn {
     @MainActor
     static func signOutIfRevoked(
         settings: AppSettings,
+        revoke: Revoke = { await CoachSignIn.revoke(token: $0) },
         state: @Sendable (String) async -> ASAuthorizationAppleIDProvider.CredentialState = { userID in
             // Not the async `credentialState(forUserID:)`: Apple reports `.notFound` together with
             // an error, which that overload turns into a throw and loses the state.
@@ -135,7 +163,8 @@ enum CoachSignIn {
         guard !userID.isEmpty else { return }
         let current = await state(userID)
         if current == .revoked || current == .notFound, settings.coachAppleUserID == userID {
-            signOut(settings: settings)
+            // A failed delete leaves `coachSignOutPending` set and the user id kept, so the next activation retries.
+            try? await signOut(settings: settings, revoke: revoke)
         }
     }
 }

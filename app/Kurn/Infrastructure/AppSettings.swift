@@ -40,6 +40,7 @@ final class AppSettings {
         static let coachAppleUserID = "settings.coachAppleUserID"
         static let coachAccountLabel = "settings.coachAccountLabel"
         static let coachSignInPromptShown = "settings.coachSignInPromptShown"
+        static let coachSignOutPending = AppSettings.coachSignOutPendingKey
         static let coachBudgetUSD = "settings.coachBudgetUSD"
         static let coachCooldownSeconds = "settings.coachCooldownSeconds"
         static let coachMaxCardsPerWindow = "settings.coachMaxCardsPerWindow"
@@ -196,6 +197,14 @@ final class AppSettings {
     var coachSignInPromptShown: Bool {
         didSet { defaults.set(coachSignInPromptShown, forKey: Keys.coachSignInPromptShown) }
     }
+
+    /// A coach sign-out could not delete the Worker token from the Keychain. While set,
+    /// `CoachBackend.current()` refuses to use it, so no AI request goes out on a token the user signed out of.
+    var coachSignOutPending: Bool {
+        didSet { defaults.set(coachSignOutPending, forKey: Keys.coachSignOutPending) }
+    }
+    /// Read off the main actor by `CoachBackend.current()`, which cannot reach `AppSettings`.
+    nonisolated static let coachSignOutPendingKey = "settings.coachSignOutPending"
 
     /// Per-meeting spend that triggers the coach's budget warning, in USD.
     var coachBudgetUSD: Double {
@@ -694,6 +703,7 @@ final class AppSettings {
         coachAppleUserID = defaults.string(forKey: Keys.coachAppleUserID) ?? ""
         coachAccountLabel = defaults.string(forKey: Keys.coachAccountLabel) ?? ""
         coachSignInPromptShown = defaults.bool(forKey: Keys.coachSignInPromptShown)
+        coachSignOutPending = defaults.bool(forKey: Keys.coachSignOutPending)
         coachBudgetUSD = (defaults.object(forKey: Keys.coachBudgetUSD) as? Double) ?? 10
         coachCooldownSeconds = (defaults.object(forKey: Keys.coachCooldownSeconds) as? Double) ?? 90
         coachMaxCardsPerWindow = (defaults.object(forKey: Keys.coachMaxCardsPerWindow) as? Int) ?? 3

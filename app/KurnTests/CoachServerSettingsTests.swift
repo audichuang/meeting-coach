@@ -80,7 +80,8 @@ struct CoachServerSettingsTests {
 
     private func makeController(
         recorded: Recorded<CoachBackend>,
-        status: CoachUsageStatus = .loaded(CoachBackend.Usage(month: .init(usd: 1.25), monthlyCapUSD: 20))
+        status: CoachUsageStatus = .loaded(CoachBackend.Usage(month: .init(usd: 1.25), monthlyCapUSD: 20)),
+        revoke: @escaping CoachSignIn.Revoke = { _ in }
     ) -> CoachServerSettingsController {
         CoachServerSettingsController(
             resolveBackend: { invite in
@@ -90,7 +91,8 @@ struct CoachServerSettingsTests {
             loadUsage: { backend in
                 recorded.append(backend)
                 return status
-            }
+            },
+            revoke: revoke
         )
     }
 
@@ -202,10 +204,46 @@ struct CoachServerSettingsTests {
     @Test func signOutClearsTokenAndAccount() async throws {
         let settings = try makeSettings()
         try await CoachSignIn.signIn(credential(name: "Synthetic"), settings: settings) { _ in .init(token: "mcs", email: nil) }
-        CoachSignIn.signOut(settings: settings)
+        let revoked = Recorded<String>()
+        try await CoachSignIn.signOut(settings: settings) { revoked.append($0) }
+        #expect(revoked.values == ["mcs"])
         #expect(settings.credentials.readKey(for: .meetingCoach) == .absent)
         #expect(settings.coachAppleUserID.isEmpty)
         #expect(settings.coachAccountLabel.isEmpty)
+        #expect(!CoachSignIn.isSignedIn(settings: settings))
+    }
+
+    @Test func failedKeychainDeleteKeepsRevocationChecksAndStopsTheCoach() async throws {
+        let keychain = MemoryKeychain()
+        let settings = try makeSettings(keychain: keychain)
+        try await CoachSignIn.signIn(credential(name: "Synthetic"), settings: settings) { _ in .init(token: "mcs_kept", email: nil) }
+        keychain.failWrite = .locked
+        let revoked = Recorded<String>()
+        let controller = makeController(recorded: Recorded<CoachBackend>(), revoke: { revoked.append($0) })
+
+        await controller.signOut(settings: settings)
+
+        guard case .keychainAccessFailed(let reason) = controller.error else {
+            Issue.record("expected keychainAccessFailed, got \(String(describing: controller.error))")
+            return
+        }
+        #expect(reason == KeychainFailureReason.locked.rawValue)
+        #expect(revoked.values == ["mcs_kept"])
+        #expect(settings.coachSignOutPending)
+        #expect(CoachBackend.current(signOutPending: true) == nil)
+        #expect(settings.coachAppleUserID == "001234.synthetic")
+        let asked = Recorded<String>()
+        await CoachSignIn.signOutIfRevoked(settings: settings, revoke: { _ in }) { userID in
+            asked.append(userID)
+            return .authorized
+        }
+        #expect(asked.values == ["001234.synthetic"])
+
+        // Once the Keychain works again, signing out finishes and the coach may run again.
+        keychain.failWrite = nil
+        try await CoachSignIn.signOut(settings: settings) { _ in }
+        #expect(!settings.coachSignOutPending)
+        #expect(settings.coachAppleUserID.isEmpty)
         #expect(!CoachSignIn.isSignedIn(settings: settings))
     }
 
@@ -214,7 +252,7 @@ struct CoachServerSettingsTests {
                                    (.notFound, true), (.authorized, false), (.transferred, false)] {
             let settings = try makeSettings()
             try await CoachSignIn.signIn(credential(), settings: settings) { _ in .init(token: "mcs", email: nil) }
-            await CoachSignIn.signOutIfRevoked(settings: settings) { userID in
+            await CoachSignIn.signOutIfRevoked(settings: settings, revoke: { _ in }) { userID in
                 #expect(userID == "001234.synthetic")
                 return state
             }
@@ -225,7 +263,7 @@ struct CoachServerSettingsTests {
     @Test func build1InviteIsSignedInAndNeverCheckedWithApple() async throws {
         let settings = try makeSettings(initialInvite: "mc_build1_invite")
         let asked = Recorded<String>()
-        await CoachSignIn.signOutIfRevoked(settings: settings) { userID in
+        await CoachSignIn.signOutIfRevoked(settings: settings, revoke: { _ in }) { userID in
             asked.append(userID)
             return .revoked
         }
@@ -233,7 +271,7 @@ struct CoachServerSettingsTests {
         #expect(CoachSignIn.isSignedIn(settings: settings))
         #expect(!CoachSignInPromptView.isNeeded(settings: settings, arguments: []))
         // Signing out of the invite in Settings must not bring the first-launch screen up.
-        CoachSignIn.signOut(settings: settings)
+        try await CoachSignIn.signOut(settings: settings) { _ in }
         #expect(!CoachSignIn.isSignedIn(settings: settings))
         #expect(!CoachSignInPromptView.isNeeded(settings: settings, arguments: []))
     }
@@ -258,7 +296,7 @@ struct CoachServerSettingsTests {
         #expect(recorded.values.map(\.token) == ["mcs_session"])
         #expect(controller.usage != .unknown)
 
-        controller.signOut(settings: settings)
+        await controller.signOut(settings: settings)
         await controller.usageTask?.value
         #expect(controller.usage == .unknown)
         #expect(recorded.values.count == 1)
