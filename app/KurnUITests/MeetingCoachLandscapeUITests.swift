@@ -24,6 +24,8 @@ final class MeetingCoachLandscapeUITests: XCTestCase {
         app.launchEnvironment["KURN_DEBUG_OPENAI_API_KEY"] = key
         // The queries below use English labels; the simulator may run in zh-Hant or ja.
         app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        // Skip the first-launch Sign in with Apple screen.
+        app.launchArguments += ["-settings.coachSignInPromptShown", "YES"]
         app.launch()
         XCUIDevice.shared.orientation = .landscapeLeft
 

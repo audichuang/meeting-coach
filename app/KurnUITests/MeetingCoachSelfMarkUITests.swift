@@ -38,6 +38,8 @@ final class MeetingCoachSelfMarkUITests: XCTestCase {
         }
 
         XCUIDevice.shared.orientation = .landscapeLeft
+        // Skip the first-launch Sign in with Apple screen.
+        app.launchArguments += ["-settings.coachSignInPromptShown", "YES"]
         app.launch()
 
         let recordButton = app.buttons["meetings.record"].firstMatch

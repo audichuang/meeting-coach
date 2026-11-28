@@ -112,6 +112,8 @@ enum CoachSignIn {
         settings.credentials.saveKey("", for: .meetingCoach)
         settings.coachAppleUserID = ""
         settings.coachAccountLabel = ""
+        // Settings offers sign-in again; the first-launch screen must not pop over it.
+        settings.coachSignInPromptShown = true
     }
 
     /// Signs out once Apple says the credential was revoked or no longer exists. An install with
@@ -132,7 +134,7 @@ enum CoachSignIn {
         let userID = settings.coachAppleUserID
         guard !userID.isEmpty else { return }
         let current = await state(userID)
-        if (current == .revoked || current == .notFound), settings.coachAppleUserID == userID {
+        if current == .revoked || current == .notFound, settings.coachAppleUserID == userID {
             signOut(settings: settings)
         }
     }

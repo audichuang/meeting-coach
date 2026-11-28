@@ -232,6 +232,10 @@ struct CoachServerSettingsTests {
         #expect(asked.values.isEmpty)
         #expect(CoachSignIn.isSignedIn(settings: settings))
         #expect(!CoachSignInPromptView.isNeeded(settings: settings, arguments: []))
+        // Signing out of the invite in Settings must not bring the first-launch screen up.
+        CoachSignIn.signOut(settings: settings)
+        #expect(!CoachSignIn.isSignedIn(settings: settings))
+        #expect(!CoachSignInPromptView.isNeeded(settings: settings, arguments: []))
     }
 
     @Test func firstLaunchPromptShowsOnceWhileSignedOut() throws {

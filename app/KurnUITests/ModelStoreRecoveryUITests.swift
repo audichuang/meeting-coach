@@ -31,6 +31,8 @@ final class ModelStoreRecoveryUITests: XCTestCase {
     private func launchedApp(reasonRawValue: String) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["UI_TESTING_STORE_OPEN_FAILURE_REASON"] = reasonRawValue
+        // Skip the first-launch Sign in with Apple screen.
+        app.launchArguments += ["-settings.coachSignInPromptShown", "YES"]
         app.launch()
         return app
     }
@@ -90,6 +92,8 @@ final class ModelStoreRecoveryUITests: XCTestCase {
     func testLockedBackgroundLaunchShowsProgressShellWithoutCrashing() {
         let app = XCUIApplication()
         app.launchArguments += ["UI-Testing-StoreWaitingForProtectedData"]
+        // Skip the first-launch Sign in with Apple screen.
+        app.launchArguments += ["-settings.coachSignInPromptShown", "YES"]
         app.launch()
 
         // `.any` rather than a specific element-type query: SwiftUI maps an

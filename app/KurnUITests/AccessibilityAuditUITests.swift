@@ -28,6 +28,8 @@ final class AccessibilityAuditUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchArguments += ["UI-Testing-Screenshots"]
+        // Skip the first-launch Sign in with Apple screen.
+        app.launchArguments += ["-settings.coachSignInPromptShown", "YES"]
         app.launch()
     }
 

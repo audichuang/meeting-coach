@@ -35,6 +35,8 @@ class FlowUITestCase: XCTestCase {
             "-AppleLanguages", "(en)",
             "-AppleLocale", "en_US"
         ]
+        // Skip the first-launch Sign in with Apple screen.
+        app.launchArguments += ["-settings.coachSignInPromptShown", "YES"]
         app.launch()
     }
 

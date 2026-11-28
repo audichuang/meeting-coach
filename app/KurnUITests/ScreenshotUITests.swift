@@ -20,6 +20,8 @@ final class ScreenshotUITests: XCTestCase {
         app = XCUIApplication()
         setupSnapshot(app)
         app.launchArguments += ["UI-Testing-Screenshots"]
+        // Skip the first-launch Sign in with Apple screen.
+        app.launchArguments += ["-settings.coachSignInPromptShown", "YES"]
         app.launch()
     }
 

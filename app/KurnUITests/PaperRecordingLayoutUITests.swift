@@ -48,6 +48,8 @@ final class PaperRecordingLayoutUITests: XCTestCase {
         }
 
         XCUIDevice.shared.orientation = .portrait
+        // Skip the first-launch Sign in with Apple screen.
+        app.launchArguments += ["-settings.coachSignInPromptShown", "YES"]
         app.launch()
 
         // Open the recording screen from the primary Record button.
@@ -191,6 +193,8 @@ final class PaperRecordingLayoutUITests: XCTestCase {
         }
 
         XCUIDevice.shared.orientation = .portrait
+        // Skip the first-launch Sign in with Apple screen.
+        app.launchArguments += ["-settings.coachSignInPromptShown", "YES"]
         app.launch()
 
         let recordButton = app.buttons["meetings.record"].firstMatch
@@ -244,6 +248,8 @@ final class PaperRecordingLayoutUITests: XCTestCase {
             app.launchEnvironment["KURN_DEBUG_CAPTURE_FILE"] = captureFile
         }
         XCUIDevice.shared.orientation = .portrait
+        // Skip the first-launch Sign in with Apple screen.
+        app.launchArguments += ["-settings.coachSignInPromptShown", "YES"]
         app.launch()
 
         let recordButton = app.buttons["meetings.record"].firstMatch
