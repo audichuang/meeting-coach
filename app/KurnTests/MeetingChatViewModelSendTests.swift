@@ -25,11 +25,13 @@ struct MeetingChatViewModelSendTests {
         func embed(_ texts: [String]) async throws -> [[Float]] { texts.map { _ in [1, 0, 0] } }
     }
 
-    private static func viewModel(_ llm: ScriptedLLMProvider) -> MeetingChatViewModel {
+    private static func viewModel(
+        _ llm: ScriptedLLMProvider, meeting: Meeting? = nil, modelContext: ModelContext? = nil
+    ) -> MeetingChatViewModel {
         MeetingChatViewModel(chatService: MeetingChatService(
             searchService: SemanticSearchService(embedder: ConstantEmbedder()),
             resolveProvider: { _, _ in llm }
-        ))
+        ), meeting: meeting, modelContext: modelContext)
     }
 
     private static func ask(_ viewModel: MeetingChatViewModel, _ question: String, transcript: String? = "[00:42] Ana: we ship on monday") {
@@ -51,11 +53,10 @@ struct MeetingChatViewModelSendTests {
 
     @Test func aFinishedExchangeIsRenderedAndSavedIntoOneSession() async throws {
         let llm = ScriptedLLMProvider(chat: { _, index in "Answer \(index) [00:42]." })
-        let viewModel = Self.viewModel(llm)
         let context = ModelContext(TestModelContainer.make())
         let meeting = Meeting(title: "Planning")
         context.insert(meeting)
-        viewModel.configure(meeting: meeting, modelContext: context)
+        let viewModel = Self.viewModel(llm, meeting: meeting, modelContext: context)
 
         Self.ask(viewModel, "  When do we ship?  ")
         #expect(viewModel.isResponding)
@@ -132,10 +133,9 @@ struct MeetingChatViewModelSendTests {
         Self.ask(viewModel, "When do we ship?")
         await Self.waitUntilDone(viewModel)
 
-        guard case .noAPIKey = viewModel.error else {
-            Issue.record("expected the provider's AppError")
-            return
-        }
+        // Inline, not an alert: the detail screen's own alerts would stack on it.
+        #expect(viewModel.error == nil)
+        #expect(viewModel.failureMessage == AppError.noAPIKey(provider: "OpenAI").errorDescription)
         #expect(viewModel.turns.map(\.role) == [.user])
         #expect(viewModel.retryableQuestion == "When do we ship?")
 
@@ -152,11 +152,8 @@ struct MeetingChatViewModelSendTests {
         Self.ask(viewModel, "When do we ship?")
         await Self.waitUntilDone(viewModel)
 
-        guard case .apiError(let statusCode, _) = viewModel.error else {
-            Issue.record("expected an apiError wrapper")
-            return
-        }
-        #expect(statusCode == 0)
+        #expect(viewModel.error == nil)
+        #expect(viewModel.failureMessage?.isEmpty == false)
         #expect(viewModel.retryableQuestion == "When do we ship?")
     }
 

@@ -77,6 +77,7 @@ struct MeetingDetailCoachCost: View {
         case .wrapUp: NSLocalizedString("detail.coach_cost.wrap_up", comment: "Cost step: wrap-up")
         case .formalTranscript: NSLocalizedString("detail.coach_cost.formal_transcript", comment: "Cost step: post-meeting transcript")
         case .summary: NSLocalizedString("detail.coach_cost.summary", comment: "Cost step: post-meeting summary")
+        case .chat: NSLocalizedString("detail.coach_cost.chat", comment: "Cost step: questions asked in the meeting chat")
         }
     }
 }

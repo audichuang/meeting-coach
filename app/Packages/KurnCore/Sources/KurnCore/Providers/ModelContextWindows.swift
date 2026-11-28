@@ -19,6 +19,9 @@ public enum ModelContextWindows {
     /// that includes output.
     static let windowsByPrefix: [(prefix: String, tokens: Int)] = [
         // OpenAI
+        // developers.openai.com/api/docs/models (read 2026-11-28): 1.05M window, 922k max input.
+        ("gpt-6.1-terra", 1_050_000),
+        ("gpt-6-luna", 1_050_000),
         ("gpt-5", 272_000),
         ("gpt-4.1", 1_000_000),
         ("gpt-4o", 128_000),

@@ -25,6 +25,7 @@ struct SettingsView: View {
     /// does not inject the transcription coordinator.
     @Environment(TranscriptionCoordinator.self) var transcription: TranscriptionCoordinator?
     @Environment(SummaryViewModel.self) var summaries: SummaryViewModel?
+    @Environment(MeetingChatStore.self) var meetingChats: MeetingChatStore?
 
     /// The FluidAudio download state shared by the Transcription, Recording and
     /// Storage screens. Owned by `KurnApp` rather than here: the diarization

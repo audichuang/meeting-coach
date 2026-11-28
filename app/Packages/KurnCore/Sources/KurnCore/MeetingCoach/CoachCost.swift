@@ -6,6 +6,8 @@ public enum CoachPricing {
     public static let liveTranscribeModel = "gpt-live-transcribe"
     public static let judgeModel = "gpt-6-luna"
     public static let cardModel = "gpt-6.1-terra"
+    /// Models chat may pick, default first; the Worker forwards no others (backend/src/pricing.ts).
+    public static let chatModels = [cardModel, judgeModel]
 
     /// `gpt-live-transcribe`: USD per audio minute.
     public static let liveTranscribePerMinute = 0.017
@@ -40,7 +42,7 @@ public struct CoachTokenUsage: Codable, Equatable, Sendable {
 
 /// The steps a meeting's coach spend is split into, in display order.
 public enum CoachCostStep: CaseIterable, Sendable {
-    case liveTranscript, cards, wrapUp, formalTranscript, summary
+    case liveTranscript, cards, wrapUp, formalTranscript, summary, chat
 }
 
 /// USD spent per step; zero means the step did not run (or cost nothing).
@@ -50,7 +52,19 @@ public struct CoachCostBreakdown: Codable, Equatable, Sendable {
     public var wrapUp = 0.0
     public var formalTranscript = 0.0
     public var summary = 0.0
+    public var chat = 0.0
     public init() {}
+
+    // Decoded by hand so breakdowns stored before a step existed still decode (missing = 0).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        liveTranscript = try c.decodeIfPresent(Double.self, forKey: .liveTranscript) ?? 0
+        cards = try c.decodeIfPresent(Double.self, forKey: .cards) ?? 0
+        wrapUp = try c.decodeIfPresent(Double.self, forKey: .wrapUp) ?? 0
+        formalTranscript = try c.decodeIfPresent(Double.self, forKey: .formalTranscript) ?? 0
+        summary = try c.decodeIfPresent(Double.self, forKey: .summary) ?? 0
+        chat = try c.decodeIfPresent(Double.self, forKey: .chat) ?? 0
+    }
 
     public subscript(step: CoachCostStep) -> Double {
         get {
@@ -60,6 +74,7 @@ public struct CoachCostBreakdown: Codable, Equatable, Sendable {
             case .wrapUp: wrapUp
             case .formalTranscript: formalTranscript
             case .summary: summary
+            case .chat: chat
             }
         }
         set {
@@ -69,6 +84,7 @@ public struct CoachCostBreakdown: Codable, Equatable, Sendable {
             case .wrapUp: wrapUp = newValue
             case .formalTranscript: formalTranscript = newValue
             case .summary: summary = newValue
+            case .chat: chat = newValue
             }
         }
     }

@@ -44,6 +44,7 @@ final class AppSettings {
         static let coachBudgetUSD = "settings.coachBudgetUSD"
         static let coachCooldownSeconds = "settings.coachCooldownSeconds"
         static let coachMaxCardsPerWindow = "settings.coachMaxCardsPerWindow"
+        static let coachChatModel = "settings.coachChatModel"
         static let diarizationEngine = "settings.diarizationEngine"
         static let fluidAudioSpeakerCount = "settings.fluidAudioSpeakerCount"
         /// Superseded by `fluidAudioSpeakerCount`; read once at init to migrate.
@@ -219,6 +220,11 @@ final class AppSettings {
     /// Most automatic suggestion cards shown in any 10-minute window.
     var coachMaxCardsPerWindow: Int {
         didSet { defaults.set(coachMaxCardsPerWindow, forKey: Keys.coachMaxCardsPerWindow) }
+    }
+
+    /// The Worker model meeting and library chat use when the coach backend is configured.
+    var coachChatModel: String {
+        didSet { defaults.set(coachChatModel, forKey: Keys.coachChatModel) }
     }
 
     /// Whether on-device semantic indexing, search, and meeting chat retrieval
@@ -707,6 +713,8 @@ final class AppSettings {
         coachBudgetUSD = (defaults.object(forKey: Keys.coachBudgetUSD) as? Double) ?? 10
         coachCooldownSeconds = (defaults.object(forKey: Keys.coachCooldownSeconds) as? Double) ?? 90
         coachMaxCardsPerWindow = (defaults.object(forKey: Keys.coachMaxCardsPerWindow) as? Int) ?? 3
+        coachChatModel = defaults.string(forKey: Keys.coachChatModel)
+            .flatMap { CoachPricing.chatModels.contains($0) ? $0 : nil } ?? CoachPricing.cardModel
         semanticSearchEnabled = defaults.bool(forKey: Keys.semanticSearchEnabled, default: true)
         // Off by default: wiki generation makes paid cloud LLM calls, so it is an
         // explicit opt-in.

@@ -87,8 +87,8 @@ struct CoachResponsesClient: CoachLLM {
     }
 }
 
-/// The post-meeting summary over Responses, reporting each call's usage so the
-/// coach's per-meeting spend includes it. Chat is not offered for this provider.
+/// The post-meeting summary and meeting chat over Responses, reporting each
+/// call's usage so the coach's per-meeting spend includes it.
 struct CoachSummaryProvider: LLMProvider {
     let client: CoachResponsesClient
     let model: String
@@ -112,7 +112,45 @@ struct CoachSummaryProvider: LLMProvider {
     }
 
     func chat(systemPrompt: String, messages: [ChatMessage], options: TextGenerationOptions) async throws -> String {
-        throw AppError.summarizationUnsupported(provider: provider.displayName)
+        try await respond(systemPrompt: systemPrompt, messages: messages, options: options).text
+    }
+
+    /// The Worker refuses `stream`, so the whole reply arrives as one fragment.
+    @discardableResult
+    func streamChat(
+        systemPrompt: String,
+        messages: [ChatMessage],
+        options: TextGenerationOptions,
+        onDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> TokenUsage? {
+        let reply = try await respond(systemPrompt: systemPrompt, messages: messages, options: options)
+        onDelta(reply.text)
+        return TokenUsage(promptTokens: reply.usage.input, completionTokens: reply.usage.output)
+    }
+
+    private func respond(
+        systemPrompt: String, messages: [ChatMessage], options: TextGenerationOptions
+    ) async throws -> (text: String, usage: CoachTokenUsage) {
+        let input = messages.filter { $0.role != .system }.map { message -> [String: String] in
+            ["role": message.role == .assistant ? "assistant" : "user", "content": message.content]
+        }
+        // Not streamed, so a long answer is bounded by the summary's total timeout, not chat's.
+        let data = try await client.send([
+            "model": model,
+            "instructions": systemPrompt,
+            "input": input,
+            "reasoning": ["effort": "low"],
+            "max_output_tokens": options.maxOutputTokens
+        ], timeout: max(options.timeout, LLMHTTP.summaryTimeout))
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AppError.decodingError("invalid response")
+        }
+        let usage = CoachResponsesClient.usage(root)
+        onUsage(usage)
+        let text = Self.outputText(root).trimmingCharacters(in: .whitespacesAndNewlines)
+        if root["status"] as? String == "incomplete", text.isEmpty { throw AppError.generationTruncated }
+        guard !text.isEmpty else { throw AppError.decodingError("empty response") }
+        return (text, usage)
     }
 
     static func outputText(_ root: [String: Any]) -> String {

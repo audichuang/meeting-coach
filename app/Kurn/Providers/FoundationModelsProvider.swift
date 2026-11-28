@@ -83,7 +83,7 @@ struct FoundationModelsProvider: LLMProvider {
         let session = LanguageModelSession(instructions: systemPrompt)
         let options = GenerationOptions(maximumResponseTokens: Self.clampedOutputTokens(LLMHTTP.summaryMaxOutputTokens))
         let generated = try await Self.withTimeout(seconds: LLMHTTP.summaryTimeout) {
-            try await session.respond(to: userPrompt, options: options).content
+            try await Self.readable { try await session.respond(to: userPrompt, options: options).content }
         }
         return SummaryResult(sections: try SummaryMarkdown.sections(from: generated))
     }
@@ -99,7 +99,7 @@ struct FoundationModelsProvider: LLMProvider {
         let prompt = Self.foldPrompt(messages)
         let genOptions = GenerationOptions(maximumResponseTokens: Self.clampedOutputTokens(options.maxOutputTokens))
         let generated = try await Self.withTimeout(seconds: options.timeout) {
-            try await session.respond(to: prompt, options: genOptions).content
+            try await Self.readable { try await session.respond(to: prompt, options: genOptions).content }
         }
         let content = generated.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !content.isEmpty else {
@@ -109,6 +109,41 @@ struct FoundationModelsProvider: LLMProvider {
     }
 
     // MARK: - Helpers
+
+    /// The framework's own errors bridge to "The operation couldn't be
+    /// completed. (FoundationModels.LanguageModelError error -1.)", which is
+    /// what a user saw when the app went to the background mid-answer.
+    static func readable<T: Sendable>(_ operation: () async throws -> T) async throws -> T {
+        do {
+            return try await operation()
+        } catch {
+            throw readableError(error)
+        }
+    }
+
+    // Not `private`: unit-tested directly.
+    static func readableError(_ error: Error) -> Error {
+        if error is CancellationError || error is AppError { return error }
+        func unavailable(_ key: String) -> AppError {
+            .onDeviceModelUnavailable(NSLocalizedString(key, comment: "Why the on-device model stopped"))
+        }
+        if #available(iOS 27.0, macOS 27.0, *), let modelError = error as? LanguageModelError {
+            switch modelError {
+            case .contextSizeExceeded:
+                // 413 is what `isContextOverflow` reads, so chat falls back to retrieval.
+                return AppError.apiError(statusCode: 413, message: NSLocalizedString("error.on_device_too_long", comment: "Input too long"))
+            case .guardrailViolation, .refusal:
+                return unavailable("error.on_device_refused")
+            case .rateLimited:
+                return unavailable("error.on_device_busy")
+            default:
+                break
+            }
+        }
+        // Includes the case seen in the field: the app left the foreground
+        // and the system stopped on-device generation.
+        return unavailable("error.on_device_interrupted")
+    }
 
     /// The on-device session window is shared across instructions, input, and
     /// output (~4096 tokens total as of iOS 26) — `LLMHTTP`'s cloud output

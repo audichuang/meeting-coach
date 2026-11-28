@@ -90,7 +90,7 @@ final class MeetingCoachFollowUp {
         )
     }
 
-    private static func addSpend(_ usd: Double, to step: CoachCostStep, recordID: UUID?, in context: ModelContext?) {
+    static func addSpend(_ usd: Double, to step: CoachCostStep, recordID: UUID?, in context: ModelContext?) {
         guard let recordID, let context, usd > 0 else { return }
         let descriptor = FetchDescriptor<CoachRecord>(predicate: #Predicate { $0.id == recordID })
         guard let record = try? context.fetch(descriptor).first, !record.isDeleted else { return }

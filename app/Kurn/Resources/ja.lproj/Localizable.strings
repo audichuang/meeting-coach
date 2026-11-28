@@ -843,6 +843,14 @@
 "chat.no_index.subtitle" = "先に会議を文字起こししてから、話された内容について質問してください。";
 "chat.ask.title" = "会議に質問";
 "chat.retry" = "再試行";
+"chat.interrupted" = "中断されました。もう一度質問してください。";
+"chat.model.coach_label" = "OpenAI · %@";
+"chat.model.default" = "%@（デフォルト）";
+"chat.model.faster" = "%@（高速・低コスト）";
+"error.on_device_interrupted" = "Apple Intelligence が回答を完了できませんでした。アプリがバックグラウンドにある間はデバイス上のモデルを使えません。アプリに戻ってもう一度お試しください。";
+"error.on_device_refused" = "Apple Intelligence の安全ルールにより、この内容には回答できませんでした。";
+"error.on_device_busy" = "Apple Intelligence が混み合っています。少し待ってからもう一度お試しください。";
+"error.on_device_too_long" = "Apple Intelligence で扱える長さを超えています。";
 "chat.usage.tokens" = "%dトークン";
 "chat.usage.cost" = "約$%.4f";
 "chat.usage.duration" = "%.1f秒";
@@ -1131,5 +1139,6 @@
 "detail.coach_cost.wrap_up" = "まとめ";
 "detail.coach_cost.formal_transcript" = "正式な文字起こし";
 "detail.coach_cost.summary" = "会議後の要約";
+"detail.coach_cost.chat" = "質問";
 "detail.coach_cost.expanded" = "展開";
 "detail.coach_cost.collapsed" = "折りたたみ";

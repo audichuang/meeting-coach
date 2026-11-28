@@ -843,6 +843,14 @@
 "chat.no_index.subtitle" = "請先轉寫一次會議，然後就所說內容提問。";
 "chat.ask.title" = "詢問你的會議";
 "chat.retry" = "重試";
+"chat.interrupted" = "已中斷，請再問一次。";
+"chat.model.coach_label" = "OpenAI · %@";
+"chat.model.default" = "%@（預設）";
+"chat.model.faster" = "%@（較快、較便宜）";
+"error.on_device_interrupted" = "Apple Intelligence 沒有完成回答：App 在背景時無法使用裝置上的模型。請回到 App 再試一次。";
+"error.on_device_refused" = "Apple Intelligence 的安全規則擋下了這段內容，無法回答。";
+"error.on_device_busy" = "Apple Intelligence 目前忙碌中，請稍候再試。";
+"error.on_device_too_long" = "內容太長，超過 Apple Intelligence 能處理的範圍。";
 "chat.usage.tokens" = "%d 個詞元";
 "chat.usage.cost" = "~$%.4f";
 "chat.usage.duration" = "%.1f 秒";
@@ -1131,5 +1139,6 @@
 "detail.coach_cost.wrap_up" = "收尾";
 "detail.coach_cost.formal_transcript" = "正式逐字稿";
 "detail.coach_cost.summary" = "會後摘要";
+"detail.coach_cost.chat" = "詢問";
 "detail.coach_cost.expanded" = "已展開";
 "detail.coach_cost.collapsed" = "已收合";

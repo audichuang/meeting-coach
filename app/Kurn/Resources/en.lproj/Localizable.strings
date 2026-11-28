@@ -843,6 +843,14 @@
 "chat.no_index.subtitle" = "Transcribe a meeting first, then ask questions about what was said.";
 "chat.ask.title" = "Ask your meetings";
 "chat.retry" = "Retry";
+"chat.interrupted" = "Interrupted. Please ask again.";
+"chat.model.coach_label" = "OpenAI · %@";
+"chat.model.default" = "%@ (default)";
+"chat.model.faster" = "%@ (faster, cheaper)";
+"error.on_device_interrupted" = "Apple Intelligence stopped before answering; it can't run while the app is in the background. Return to the app and try again.";
+"error.on_device_refused" = "Apple Intelligence declined to answer this content.";
+"error.on_device_busy" = "Apple Intelligence is busy. Wait a moment and try again.";
+"error.on_device_too_long" = "The input is too long for Apple Intelligence.";
 "chat.usage.tokens" = "%d tokens";
 "chat.usage.cost" = "~$%.4f";
 "chat.usage.duration" = "%.1fs";
@@ -1131,5 +1139,6 @@
 "detail.coach_cost.wrap_up" = "Wrap-up";
 "detail.coach_cost.formal_transcript" = "Final transcript";
 "detail.coach_cost.summary" = "Meeting summary";
+"detail.coach_cost.chat" = "Questions";
 "detail.coach_cost.expanded" = "Expanded";
 "detail.coach_cost.collapsed" = "Collapsed";

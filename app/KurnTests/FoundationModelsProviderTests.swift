@@ -9,6 +9,8 @@
 //
 
 import Foundation
+import FoundationModels
+import KurnCore
 import Testing
 @testable import Kurn
 
@@ -49,6 +51,33 @@ struct FoundationModelsProviderTests {
     }
 
     // MARK: - AIProvider.isUsable
+
+    // MARK: - readableError
+
+    @Test func anUnrecognisedFrameworkErrorReadsAsInterruptedNotAsAPIErrorZero() {
+        // What the field report showed: "API 錯誤 0：… LanguageModelError 錯誤-1".
+        let raw = NSError(domain: "FoundationModels.LanguageModelError", code: -1)
+        guard case .onDeviceModelUnavailable(let reason)? = FoundationModelsProvider.readableError(raw) as? AppError else {
+            Issue.record("expected an on-device AppError")
+            return
+        }
+        #expect(reason == NSLocalizedString("error.on_device_interrupted", comment: ""))
+    }
+
+    @Test func cancellationAndAppErrorsPassThrough() {
+        #expect(FoundationModelsProvider.readableError(CancellationError()) is CancellationError)
+        guard case .summaryTruncated? = FoundationModelsProvider.readableError(AppError.summaryTruncated) as? AppError else {
+            Issue.record("expected the AppError unchanged")
+            return
+        }
+    }
+
+    @Test func aContextOverflowLetsChatFallBackToRetrieval() throws {
+        guard #available(iOS 27.0, macOS 27.0, *) else { return }
+        let overflow = LanguageModelError.contextSizeExceeded(.init(contextSize: 4_096, tokenCount: 9_000, debugDescription: "too long"))
+        let mapped = try #require(FoundationModelsProvider.readableError(overflow) as? AppError)
+        #expect(mapped.isContextOverflow)
+    }
 
     @Test func appleOnDeviceIsUsableMatchesOnDeviceModelAvailability() {
         #expect(AIProvider.appleOnDevice.isUsable == (OnDeviceModelAvailability.unavailableReason == nil))

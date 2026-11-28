@@ -5,11 +5,14 @@
 //  "Chat with your meetings": a grounded Q&A over transcripts. Used two ways —
 //  as a tab inside a single meeting (`meeting` non-nil), and as a library-wide
 //  "Ask" sheet from the meetings list (`meeting` nil, searching every indexed
-//  chunk). Answers come from the configured summary LLM provider, grounded in
-//  on-device retrieved passages; tapping a citation calls `onJump`.
+//  chunk). Answers come from `ChatRoute` (the coach's Worker when configured,
+//  otherwise the summary provider); tapping a citation calls `onJump`. The
+//  conversation lives in `MeetingChatStore`, not in this view, so leaving
+//  and returning shows a reply still in progress or already finished.
 //
 
 import Combine
+import KurnCore
 import SwiftData
 import SwiftUI
 import UIKit
@@ -26,13 +29,11 @@ struct MeetingChatView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(MeetingChatStore.self) private var chats
 
-    @State private var vm = MeetingChatViewModel()
+    private var vm: MeetingChatViewModel { chats.viewModel(for: meeting) }
     @State private var input = ""
     @FocusState private var inputFocused: Bool
-    /// Anchor for the "thinking for Ns" live timer in `respondingRow`, reset
-    /// each time a new reply starts.
-    @State private var respondingStartedAt = Date()
     @State private var showingHistory = false
     /// Measured height of the floating composer card. The transcript scrolls
     /// beneath it (see `conversation`), so scrolling to the latest message has
@@ -66,7 +67,7 @@ struct MeetingChatView: View {
             composer
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerHeight = $0 }
         }
-        .errorAlert($vm.error)
+        .errorAlert(Binding(get: { vm.error }, set: { vm.error = $0 }))
         .toolbar { historyToolbar }
         .sheet(isPresented: $showingHistory) {
             ChatSessionListView(
@@ -76,10 +77,6 @@ struct MeetingChatView: View {
                 onDelete: { vm.delete($0) }
             )
         }
-        // Wiring the persistence scope is cheap and idempotent, so redoing it
-        // on every appearance (rather than a one-shot `.task`) needs no extra
-        // state to guard against `meeting`/`modelContext` changing under it.
-        .onAppear { vm.configure(meeting: meeting, modelContext: modelContext) }
     }
 
     /// "New conversation" and "History" — mirrors Claude's own chat history
@@ -177,9 +174,6 @@ struct MeetingChatView: View {
                 } else {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
-            }
-            .onChange(of: vm.isResponding) { _, isResponding in
-                if isResponding { respondingStartedAt = Date() }
             }
             // Claude's own composer floats over the transcript instead of
             // pushing it up: the keyboard and the composer read as a layer in
@@ -341,7 +335,7 @@ struct MeetingChatView: View {
     /// shimmer and a live elapsed-time readout, so a long wait still reads as
     /// active work rather than a stall.
     private var respondingRow: some View {
-        ThinkingRow(phase: vm.currentPhase, detail: vm.currentPhaseDetail, startedAt: respondingStartedAt)
+        ThinkingRow(phase: vm.currentPhase, detail: vm.currentPhaseDetail, startedAt: vm.respondingSince ?? Date())
     }
 
     /// Shown under an unanswered question — cancelled mid-stream, or failed
@@ -349,6 +343,18 @@ struct MeetingChatView: View {
     /// end. Only one can exist at a time (there's at most one trailing
     /// unanswered question), mirroring Claude/ChatGPT's own retry affordance.
     private func retryRow(question: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let message = vm.failureMessage {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(Theme.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .accessibilityIdentifier("chat.failure")
+            }
+            retryButton(question: question)
+        }
+    }
+
+    private func retryButton(question: String) -> some View {
         Button {
             retry(question: question)
         } label: {
@@ -417,14 +423,36 @@ struct MeetingChatView: View {
         .padding(.bottom, 8)
     }
 
-    /// Which model answers — the summary provider's model, since chat shares
-    /// it (see `sendQuestion`). Informational; the choice lives in Settings.
+    /// Which provider and model answer (`ChatRoute`). On the coach route it is
+    /// also the model picker, limited to what the Worker forwards.
+    @ViewBuilder
     private var modelChip: some View {
-        let provider = settings.aiProvider
-        let model = provider.kind == .appleOnDevice
-            ? NSLocalizedString("settings.on_device_model_name", comment: "Apple Intelligence")
-            : settings.summaryModel(for: provider)
-        return Text(model)
+        let route = ChatRoute.resolve(settings: settings)
+        if route.viaCoach {
+            Menu {
+                Picker(selection: Binding(get: { settings.coachChatModel }, set: { settings.coachChatModel = $0 })) {
+                    ForEach(CoachPricing.chatModels, id: \.self) { model in
+                        Text(Self.coachModelOption(model)).tag(model)
+                    }
+                } label: { EmptyView() }
+            } label: {
+                chipLabel(String(format: NSLocalizedString("chat.model.coach_label", comment: "Provider and model"), route.model))
+            }
+            .accessibilityIdentifier("chat.model_chip")
+        } else {
+            chipLabel(route.provider.kind == .appleOnDevice
+                ? NSLocalizedString("settings.on_device_model_name", comment: "Apple Intelligence")
+                : route.model)
+        }
+    }
+
+    private static func coachModelOption(_ model: String) -> String {
+        let key = model == CoachPricing.cardModel ? "chat.model.default" : "chat.model.faster"
+        return String(format: NSLocalizedString(key, comment: "Chat model option"), model)
+    }
+
+    private func chipLabel(_ text: String) -> some View {
+        Text(text)
             .font(.footnote)
             .lineLimit(1)
             .truncationMode(.middle)
@@ -434,7 +462,7 @@ struct MeetingChatView: View {
             .background(Theme.fill, in: Capsule())
             .accessibilityLabel(String(
                 format: NSLocalizedString("chat.model_chip", comment: "Model in use"),
-                model
+                text
             ))
     }
 
@@ -545,16 +573,15 @@ struct MeetingChatView: View {
     }
 
     private func sendQuestion(_ question: String) {
-        let provider = settings.aiProvider
-        let model = settings.summaryModel(for: provider)
+        let route = ChatRoute.resolve(settings: settings)
         vm.send(
             question: question,
             transcriptText: meetingTranscriptText(),
             candidates: candidates(),
             summariesByMeeting: summariesByMeeting(),
             articlesByMeeting: articlesByMeeting(),
-            provider: provider,
-            model: model
+            provider: route.provider,
+            model: route.model
         )
     }
 

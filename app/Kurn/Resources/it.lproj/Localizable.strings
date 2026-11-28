@@ -843,6 +843,14 @@
 "chat.no_index.subtitle" = "Trascrivi prima una riunione, poi fai domande su ciò che è stato detto.";
 "chat.ask.title" = "Interroga le tue riunioni";
 "chat.retry" = "Riprova";
+"chat.interrupted" = "Interrupted. Please ask again.";
+"chat.model.coach_label" = "OpenAI · %@";
+"chat.model.default" = "%@ (default)";
+"chat.model.faster" = "%@ (faster, cheaper)";
+"error.on_device_interrupted" = "Apple Intelligence stopped before answering; it can't run while the app is in the background. Return to the app and try again.";
+"error.on_device_refused" = "Apple Intelligence declined to answer this content.";
+"error.on_device_busy" = "Apple Intelligence is busy. Wait a moment and try again.";
+"error.on_device_too_long" = "The input is too long for Apple Intelligence.";
 "chat.usage.tokens" = "%d token";
 "chat.usage.cost" = "~$%.4f";
 "chat.usage.duration" = "%.1f s";
@@ -1131,5 +1139,6 @@
 "detail.coach_cost.wrap_up" = "Wrap-up";
 "detail.coach_cost.formal_transcript" = "Final transcript";
 "detail.coach_cost.summary" = "Meeting summary";
+"detail.coach_cost.chat" = "Questions";
 "detail.coach_cost.expanded" = "Expanded";
 "detail.coach_cost.collapsed" = "Collapsed";

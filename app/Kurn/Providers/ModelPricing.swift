@@ -13,6 +13,7 @@
 //
 
 import Foundation
+import KurnCore
 
 enum ModelPricing {
     /// USD per single token. Vendors quote per 1M tokens; dividing once here
@@ -49,6 +50,10 @@ enum ModelPricing {
     /// Estimated USD cost of `usage` under `model`, or `nil` when the model
     /// isn't recognized.
     static func estimatedCostUSD(model: String, usage: TokenUsage) -> Double? {
+        // The coach's Worker models are priced in one place; cached input isn't in `TokenUsage`, so this errs high.
+        if let coach = CoachPricing.tokenRates(model: model) {
+            return (Double(usage.promptTokens) * coach.input + Double(usage.completionTokens) * coach.output) / 1_000_000
+        }
         let lowerModel = model.lowercased()
         guard let rate = rates
             .filter({ lowerModel.hasPrefix($0.prefix) })
