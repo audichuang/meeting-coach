@@ -21,6 +21,9 @@ final class Recording {
     var recordedAt: Date = Date()
     var transcriptionStatusRaw: String = ""
     var transcriptionModeRaw: String = ""
+    /// The install that recorded this (`DeviceIdentity`). nil only on rows
+    /// from before schema 1.8.0, until the launch sweep stamps them.
+    var originDeviceID: String?
     var captureStateRaw: String = RecordingCaptureState.ready.rawValue
     var captureRecoveryReasonRaw: String?
     /// JSON-encoded `TranscriptionCheckpoint` while a chunked transcription is
@@ -116,6 +119,13 @@ final class Recording {
         self.captureRecoveryReasonRaw = captureRecoveryReason?.rawValue
         self.fileSize = fileSize
         self.highlightsData = JSONStorage.encode(highlights)
+        self.originDeviceID = DeviceIdentity.current
+    }
+
+    /// Whether this device may reconcile the row's capture and transcription
+    /// state: another device's rows arrive through iCloud without their audio.
+    var isRecordedOnThisDevice: Bool {
+        originDeviceID == nil || originDeviceID == DeviceIdentity.current
     }
 
     var captureState: RecordingCaptureState {

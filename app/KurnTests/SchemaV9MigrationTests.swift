@@ -88,6 +88,14 @@ struct SchemaV9MigrationTests {
         let recording = try #require(meeting.recordings.first)
         #expect(recording.fileName == "a.m4a")
         #expect(recording.photos.map(\.fileName) == ["p.jpg"])
+        #expect(recording.originDeviceID == nil)
+        #expect(recording.isRecordedOnThisDevice)
+        #expect(RecordingRecovery.stampOriginDevice(on: [recording]))
+        #expect(recording.originDeviceID == DeviceIdentity.current)
+        #expect(!RecordingRecovery.stampOriginDevice(on: [recording]))
+        let foreign = Recording(fileName: "b.m4a", duration: 1)
+        foreign.originDeviceID = "another-device"
+        #expect(!foreign.isRecordedOnThisDevice)
         #expect(meeting.coachRecords.map(\.userName) == ["Tester"])
 
         // The renamed storage still writes through the computed accessors.
