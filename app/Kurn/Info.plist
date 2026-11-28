@@ -75,13 +75,13 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>
-	<string>Kurn needs the camera to capture photos (e.g. a whiteboard or slide) during a recording.</string>
+	<string>Meeting Coach needs the camera to capture photos (e.g. a whiteboard or slide) during a recording.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Kurn uses Face ID to protect your meeting recordings from unauthorized access.</string>
+	<string>Meeting Coach uses Face ID to protect your meeting recordings from unauthorized access.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Kurn needs the microphone to record meetings.</string>
+	<string>Meeting Coach needs the microphone to record meetings.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Kurn uses speech recognition to transcribe your meetings on-device.</string>
+	<string>Meeting Coach uses speech recognition to transcribe your meetings on-device.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

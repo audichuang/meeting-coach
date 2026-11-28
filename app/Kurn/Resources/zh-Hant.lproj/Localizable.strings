@@ -6,7 +6,7 @@
 "error.api" = "API 錯誤 %1$d：%2$@";
 "error.invalid_provider_url" = "供應商 URL 無效或不被允許。請使用不含憑證、查詢引數、片段或自訂埠的公共 HTTPS 主機名。";
 "error.provider_response_too_large" = "供應商響應超過了安全大小限制。";
-"error.ambiguous_provider_result" = "連線在供應商結果得到確認前中斷。為避免重複計費，Kurn 未自動重試。請先檢查供應商，再重試。";
+"error.ambiguous_provider_result" = "連線在供應商結果得到確認前中斷。為避免重複計費，Meeting Coach 未自動重試。請先檢查供應商，再重試。";
 "error.network_policy_restricted" = "音訊上傳和模型下載設定為僅使用 Wi-Fi，而此裝置正在使用蜂窩資料或低資料模式。請連線 Wi-Fi，或在「轉寫」設定的「大型傳輸」中允許蜂窩網路和低資料模式，然後重試。";
 "error.network_policy_restricted.title" = "需要 Wi-Fi";
 "error.network_policy_restricted.open_settings" = "開啟設定";
@@ -250,7 +250,7 @@
 "photo.delete.message" = "其辨識的文字以及摘要中對它的引用也將一併刪除。";
 "recorder.paused" = "已暫停";
 "recorder.permission.title" = "需要麥克風權限";
-"recorder.permission.message" = "Kurn 需要麥克風權限來錄製會議。請在設定中啟用。";
+"recorder.permission.message" = "Meeting Coach 需要麥克風權限來錄製會議。請在設定中啟用。";
 "recorder.live_listening" = "正在聆聽…";
 "recorder.live_loading" = "正在準備即時轉寫…";
 "recorder.live_unavailable" = "即時轉寫不可用。";
@@ -651,7 +651,7 @@
 "settings.diagnostic_reports_footer" = "儲存在本裝置上捕獲的崩潰和卡死報告。";
 "settings.diagnostic_reports_share_footer" = "不會自動傳送到任何地方——只有當你點選某條報告的「分享」時，報告才會離開裝置。";
 "settings.diagnostic_reports.consent_title" = "啟用診斷報告";
-"settings.diagnostic_reports.consent_message" = "Kurn 只會將崩潰和卡死報告儲存在本裝置上，不會自動傳送到任何地方——是否以及何時分享報告由你決定。";
+"settings.diagnostic_reports.consent_message" = "Meeting Coach 只會將崩潰和卡死報告儲存在本裝置上，不會自動傳送到任何地方——是否以及何時分享報告由你決定。";
 "settings.diagnostic_reports.enable" = "啟用";
 "settings.diagnostic_reports.view" = "檢視診斷報告";
 "settings.diagnostic_reports.empty" = "尚無診斷報告";
@@ -698,7 +698,7 @@
 "settings.diarization_engine_footer" = "神經網路引擎更準確但需要下載；啟發式引擎可立即離線使用。";
 "settings.diarization_speaker_count" = "講者數";
 "settings.diarization_speaker_count_auto" = "自動";
-"settings.diarization_speaker_count_footer" = "如果你知道會議有多少人參加，請在此設定。選擇「自動」時由引擎判斷；若引擎把所有人合併成了一位講者，Kurn 會自行重新聚類音訊。";
+"settings.diarization_speaker_count_footer" = "如果你知道會議有多少人參加，請在此設定。選擇「自動」時由引擎判斷；若引擎把所有人合併成了一位講者，Meeting Coach 會自行重新聚類音訊。";
 "settings.diarization_preprocessing" = "講者分離音訊清理";
 "detail.playback_enhancement" = "增強音訊";
 "common.on" = "開啟";
@@ -719,11 +719,11 @@
 "settings.model_download.downloading" = "正在下載模型…";
 "settings.model_download.preparing" = "正在準備模型…";
 "settings.model_download.compiling" = "正在編譯模型…";
-"settings.fluid_audio.package_missing" = "使用此功能前，請先將 FluidAudio Swift 包新增到 Kurn target 中。";
-"settings.sherpa_onnx.package_missing" = "使用此功能前，請先將 sherpa-onnx Swift 包新增到 Kurn target 中。";
+"settings.fluid_audio.package_missing" = "此版本未包含 FluidAudio，因此無法使用此功能。";
+"settings.sherpa_onnx.package_missing" = "此版本未包含 sherpa-onnx，因此無法使用此功能。";
 "settings.model_download.message_whisper_cpp" = "此引擎會從 Hugging Face 下載所選大小的 Whisper 模型，使轉寫完全在本裝置上執行。模型會保留，並遵循您的大型傳輸網路策略。";
 "settings.model_download.message_sherpa_onnx" = "此引擎會從 Hugging Face 下載分割和講者嵌入模型（共約 35 MB），使講者分離完全在本裝置上執行，且不使用 Apple 神經網路引擎加速。模型會保留。";
-"settings.whisper_cpp.package_missing" = "使用此功能前，請先將 whisper.cpp Swift 包新增到 Kurn target 中。";
+"settings.whisper_cpp.package_missing" = "此版本未包含 whisper.cpp，因此無法使用此功能。";
 "settings.whisper_cpp.model" = "Whisper 模型";
 "settings.whisper_cpp.model_footer" = "模型越大轉寫越準確，但下載資料更多、速度更慢。每個模型單獨下載，可在「儲存」中刪除。";
 "settings.whisper_cpp.choose_model" = "選擇 Whisper 模型";
@@ -736,8 +736,9 @@
 /* 關於與致謝 */
 "settings.about" = "關於";
 "settings.acknowledgements" = "致謝";
-"settings.sponsor" = "贊助 Kurn";
-"ack.intro" = "裝置端語音辨識、講者分離和語音活動偵測由 Fluid Inference 與 whisper.cpp 提供支援。Kurn 使用下列套件，並按需下載其機器學習模型。每個元件均在各自的授權條款下使用。";
+"settings.sponsor" = "贊助原始 Kurn 專案";
+"ack.intro" = "裝置端語音辨識、講者分離和語音活動偵測由 Fluid Inference 與 whisper.cpp 提供支援。Meeting Coach 使用下列套件，並按需下載其機器學習模型。每個元件均在各自的授權條款下使用。";
+"ack.based_on" = "Meeting Coach 以 Carlos Mazzei 的開源專案 Kurn 為基礎，依 MIT 授權條款使用。";
 "ack.packages" = "Swift 包";
 "ack.models" = "機器學習模型";
 "ack.footer" = "模型按需下載，並未內建於 App 中。點選某一項可開啟其專案頁面及完整授權條款。涵蓋 Sortformer 的 NVIDIA Open Model License 有其自身條款。";
@@ -937,13 +938,13 @@
 "health.all_clear" = "一切正常，無需處理";
 "health.untitled_meeting" = "未命名會議";
 "health.recovery_needed" = "待恢復項";
-"health.recovery_needed_footer" = "在 Kurn 寫入完成前收音就被中斷的錄音。重試會執行 Kurn 在啟動時已自動嘗試的相同恢復流程。";
+"health.recovery_needed_footer" = "在 Meeting Coach 寫入完成前收音就被中斷的錄音。重試會執行 Meeting Coach 在啟動時已自動嘗試的相同恢復流程。";
 "health.stalled_transcriptions" = "失敗或延遲的轉寫";
 "health.stalled_transcriptions_footer" = "轉寫失敗或尚未開始的錄音。重試會用目前設定重新開始轉寫。";
 "health.degraded_transcripts" = "已完成但有警告";
 "health.degraded_transcripts_footer" = "某個處理階段降級或回退的轉寫記錄。重試僅適用於支援該操作的階段。";
 "health.model_verification" = "模型驗證";
-"health.model_verification_footer" = "驗證失敗的裝置端模型。移除後，Kurn 會在下次使用該功能時重新下載模型。";
+"health.model_verification_footer" = "驗證失敗的裝置端模型。移除後，Meeting Coach 會在下次使用該功能時重新下載模型。";
 "health.blocked_providers" = "已阻止的 AI 供應商";
 "health.blocked_provider_subtitle" = "因反覆失敗，自動產生已暫停";
 "health.blocked_providers_footer" = "由於反覆失敗（例如 API 金鑰無效），自動產生維基和 AI 標題已停止的供應商。點選重試可解除阻止；如果原始問題尚未解決，請先在設定中修正該供應商的設定。";
@@ -951,25 +952,25 @@
 "health.view_all_events" = "檢視所有可靠性事件";
 
 "intent.startRecording.title" = "開始錄音";
-"intent.startRecording.description" = "無需開啟 App即可開始一段新的 Kurn 錄音。";
+"intent.startRecording.description" = "無需開啟 App即可開始一段新的 Meeting Coach 錄音。";
 "intent.startRecording.shortTitle" = "開始錄音";
-"intent.startRecording.notReady" = "Kurn 尚未準備好開始錄音。請在 App 中重試。";
+"intent.startRecording.notReady" = "Meeting Coach 尚未準備好開始錄音。請在 App 中重試。";
 "control.startRecording.title" = "開始錄音";
 "control.startRecording.displayName" = "開始錄音";
-"control.startRecording.description" = "開始一段新的 Kurn 錄音。將其新增到鎖定螢幕後，即使裝置處於鎖定狀態，也可以透過點一下觸發。";
+"control.startRecording.description" = "開始一段新的 Meeting Coach 錄音。將其新增到鎖定螢幕後，即使裝置處於鎖定狀態，也可以透過點一下觸發。";
 
 /* Store boot recovery (H2 boot state machine) */
-"store_recovery.title" = "Kurn 無法開啟你的資料";
+"store_recovery.title" = "Meeting Coach 無法開啟你的資料";
 "store_recovery.retry" = "重試";
 "store_recovery.reason_protected_data_unavailable" = "裝置已鎖定。請解鎖後重試。";
 "store_recovery.reason_storage_full" = "裝置儲存空間不足。請清理空間後重試。";
-"store_recovery.reason_migration_incompatible" = "此版本的 Kurn 無法讀取你現有的資料。請更新 App 或聯絡支援。";
+"store_recovery.reason_migration_incompatible" = "此版本的 Meeting Coach 無法讀取你現有的資料。請更新 App 或聯絡支援。";
 "store_recovery.reason_corrupt_or_unknown" = "開啟資料時出現問題。你的錄音未被刪除。";
 "store_launch.opening" = "正在開啟";
 
 /* Store recovery: backup, restore, salvage, fresh start (H2 PR 4) */
-"store_recovery.reason_protection_verification_failed" = "Kurn 無法確認你的資料已進行靜態加密。";
-"store_recovery.reason_application_support_unavailable" = "Kurn 在此裝置上找不到安全的位置來儲存你的資料。請重新啟動 App 後重試。";
+"store_recovery.reason_protection_verification_failed" = "Meeting Coach 無法確認你的資料已進行靜態加密。";
+"store_recovery.reason_application_support_unavailable" = "Meeting Coach 在此裝置上找不到安全的位置來儲存你的資料。請重新啟動 App 後重試。";
 "store_recovery.backups_title" = "從備份恢復";
 "store_recovery.restore_button" = "恢復";
 "store_recovery.restore_confirm_title" = "恢復此備份?";
@@ -985,7 +986,7 @@
 /* Protected storage / recording quarantine (H3) */
 "error.protected_storage" = "受保護的儲存不可用：%@";
 "quarantine.section" = "已保留的錄音";
-"quarantine.footer" = "Kurn 無法歸位的音訊檔案被保留在此處而不是被刪除。你可以將其恢復到資料庫、匯出原始檔案，或永久刪除。";
+"quarantine.footer" = "Meeting Coach 無法歸位的音訊檔案被保留在此處而不是被刪除。你可以將其恢復到資料庫、匯出原始檔案，或永久刪除。";
 "quarantine.recover" = "恢復錄音";
 "quarantine.export" = "匯出錄音";
 "quarantine.delete" = "刪除錄音";

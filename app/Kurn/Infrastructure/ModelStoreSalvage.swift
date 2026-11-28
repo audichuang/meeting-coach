@@ -145,7 +145,7 @@ enum ModelStoreSalvage {
     }
 
     private static func exportMarkdown(for meetings: [Meeting]) -> String {
-        var out = "# Kurn salvage export\n\n\(meetings.count) meeting(s) recovered.\n\n"
+        var out = "# Meeting Coach salvage export\n\n\(meetings.count) meeting(s) recovered.\n\n"
         for meeting in meetings.sorted(by: { $0.createdAt < $1.createdAt }) {
             out += "---\n\n"
             out += MeetingExport.markdown(for: meeting, summary: meeting.latestSummary)

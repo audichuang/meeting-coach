@@ -202,7 +202,7 @@ public enum DOCXExportRenderer {
 
     static let appProperties = xmlDeclaration
         + "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\">"
-        + "<Application>Kurn</Application></Properties>"
+        + "<Application>Meeting Coach</Application></Properties>"
 
     /// Title, keywords (the meeting's tags) and creation date, which is what
     /// Finder, Files and Word's own document info show.

@@ -29,7 +29,7 @@ enum PDFExportRenderer {
         let output = NSMutableData()
         let info: [CFString: Any] = [
             kCGPDFContextTitle: document.title,
-            kCGPDFContextCreator: "Kurn"
+            kCGPDFContextCreator: "Meeting Coach"
         ]
         guard let consumer = CGDataConsumer(data: output as CFMutableData),
               let context = CGContext(consumer: consumer, mediaBox: &mediaBox, info as CFDictionary)

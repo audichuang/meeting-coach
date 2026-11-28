@@ -70,7 +70,7 @@ struct ReliabilityEventsListView: View {
     private func share() {
         let text = events.map(\.logLine).joined(separator: "\n")
         do {
-            let url = try MeetingExport.temporaryFile(markdown: text, suggestedName: "kurn-reliability-events")
+            let url = try MeetingExport.temporaryFile(markdown: text, suggestedName: "meeting-coach-reliability-events")
             shareItem = ShareItem(urls: [url])
         } catch {
             shareError = .logExportFailed(error.localizedDescription)
