@@ -1,5 +1,6 @@
-// Identity layer. Today: invite tokens. Swap `authenticate` for Sign in with
-// Apple / StoreKit later; the rest of the Worker only needs a stable user id.
+// Identity layer: Worker session tokens minted after Sign in with Apple, plus the
+// older invite tokens build 1 still sends. The rest of the Worker only needs a stable user id.
+import type { AppleIdentity } from "./apple";
 import type { Env } from "./env";
 
 export interface Caller {
@@ -19,10 +20,34 @@ function bearer(request: Request): string | null {
 export async function authenticate(request: Request, env: Env): Promise<Caller | null> {
   const token = bearer(request);
   if (!token) return null;
-  const row = await env.DB.prepare("SELECT id FROM invites WHERE token_hash = ? AND revoked_at IS NULL")
-    .bind(await sha256Hex(token))
-    .first<{ id: string }>();
+  const hash = await sha256Hex(token);
+  const row = await env.DB.prepare(
+    `SELECT u.id FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?1 AND u.blocked_at IS NULL
+     UNION ALL SELECT id FROM invites WHERE token_hash = ?1 AND revoked_at IS NULL`,
+  ).bind(hash).first<{ id: string }>();
   return row ? { id: row.id } : null;
+}
+
+export type SignInResult = { token: string; user_id: string; email: string | null } | "blocked";
+
+/** Upserts the Apple user and mints a new session token for this device. */
+export async function signInWithApple(env: Env, identity: AppleIdentity): Promise<SignInResult> {
+  const user = await env.DB.prepare(
+    `INSERT INTO users (id, apple_sub, email, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT (apple_sub) DO UPDATE SET email = COALESCE(excluded.email, users.email)
+     RETURNING id, email, blocked_at`,
+  ).bind(crypto.randomUUID(), identity.sub, identity.email, Date.now())
+    .first<{ id: string; email: string | null; blocked_at: number | null }>();
+  if (!user || user.blocked_at !== null) return "blocked";
+  const token = newToken("mcs_");
+  await env.DB.prepare("INSERT INTO sessions (token_hash, user_id, created_at) VALUES (?, ?, ?)")
+    .bind(await sha256Hex(token), user.id, Date.now()).run();
+  return { token, user_id: user.id, email: user.email };
+}
+
+function newToken(prefix: string): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return prefix + btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 export async function isAdmin(request: Request, env: Env): Promise<boolean> {
@@ -35,8 +60,7 @@ export async function isAdmin(request: Request, env: Env): Promise<boolean> {
 }
 
 export async function createInvite(env: Env, label: string | null): Promise<{ id: string; token: string }> {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  const token = "mc_" + btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const token = newToken("mc_");
   const id = crypto.randomUUID();
   await env.DB.prepare("INSERT INTO invites (id, token_hash, label, created_at) VALUES (?, ?, ?, ?)")
     .bind(id, await sha256Hex(token), label, Date.now())

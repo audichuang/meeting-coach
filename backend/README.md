@@ -1,6 +1,6 @@
 # backend
 
-Cloudflare Worker that holds the OpenAI key for the iPad App. The App authenticates with an invite token; the Worker mints Realtime client secrets and proxies Responses calls and post-meeting file transcription (`/v1/audio/transcriptions`, `gpt-transcribe` only).
+Cloudflare Worker that holds the OpenAI key for the iPad App. The App signs in with Apple and exchanges the identity token for a Worker session token (build 1 still sends an invite token, which keeps working); the Worker mints Realtime client secrets and proxies Responses calls and post-meeting file transcription (`/v1/audio/transcriptions`, `gpt-transcribe` only).
 
 ## Deploy
 
@@ -24,7 +24,7 @@ op read "op://<vault>/<item>/credential" | tr -d '\n' | npx wrangler secret put 
 op read "op://<vault>/<admin-item>/credential" | tr -d '\n' | npx wrangler secret put ADMIN_SECRET
 ```
 
-Generate `ADMIN_SECRET` (for example `openssl rand -base64 36`) straight into the password manager first; it is the only way to issue invites.
+Generate `ADMIN_SECRET` (for example `openssl rand -base64 36`) straight into the password manager first; it is the only way into `/admin/*`.
 
 ## Cloudflare Access (front door)
 
@@ -34,7 +34,7 @@ The Worker's `workers.dev` URL sits behind a Cloudflare Access self-hosted appli
 curl -H "CF-Access-Client-Id: $ID" -H "CF-Access-Client-Secret: $SECRET" ...
 ```
 
-The invite code stays the per-person identity; the token only proves the request comes from the App build. Anyone who unpacks the IPA can extract it, so it filters drive-by traffic and does not replace the invite code or the monthly cap.
+The Apple ID (or, for build 1, the invite code) stays the per-person identity; the token only proves the request comes from the App build. Anyone who unpacks the IPA can extract it, so it filters drive-by traffic and does not replace sign-in or the monthly cap.
 
 Setup (account of the Worker, `cf` CLI, `CLOUDFLARE_ACCOUNT_ID` set):
 
@@ -45,7 +45,23 @@ Build the App with the token and the Worker address: copy `app/Config/Secrets.ex
 
 Rotate (the token expires after one year, `expires_at` in `cf zero-trust access service-tokens list`): `cf zero-trust access service-tokens rotate <id>` (or refresh in the dashboard) issues a new secret with the same client id and keeps the old one valid for a grace period you choose. Update the password manager and `Secrets.xcconfig`, ship a new App build, and let the old secret lapse. Installed builds stop working when it does, so ship the build first. If the token leaks, rotate with no grace period.
 
-## Invites
+## Sign in with Apple
+
+`POST /v1/auth/apple` with `{"identity_token": "<JWT from ASAuthorizationAppleIDCredential>"}` is the only `/v1` route without a bearer. The Worker checks the RS256 signature against Apple's keys (`https://appleid.apple.com/auth/keys`, cached for an hour, refetched on an unseen `kid` at most once a minute), `iss`, `aud` (`com.audichuang.meetingcoach`) and `exp`, upserts a `users` row keyed by `sub`, and answers `201 {"token": "mcs_…", "user_id", "email"}`. Each sign-in mints a new session (one per device); only its SHA-256 is stored, in `sessions`. 401 carries why the token failed (`malformed token`, `unknown key`, `bad signature`, `wrong audience`, …); 403 means the user is blocked.
+
+Every other `/v1` route takes either a session token or an invite token as `Authorization: Bearer`. Usage, caps and the rate limit key on `users.id` or the invite id, so a person moving from an invite to Apple starts a fresh monthly allowance.
+
+```sh
+# users with this month's spend
+curl "$WORKER/admin/users" -H "Authorization: Bearer $ADMIN_SECRET"
+# block (ends every session at once and refuses new sign-ins) / unblock
+curl -X POST "$WORKER/admin/users/<id>/block" -H "Authorization: Bearer $ADMIN_SECRET"
+curl -X POST "$WORKER/admin/users/<id>/unblock" -H "Authorization: Bearer $ADMIN_SECRET"
+```
+
+## Invites (build 1 only)
+
+Kept until build 1 is gone; do not revoke the review invite while it is in Beta App Review.
 
 ```sh
 # issue: the token is shown once, only its SHA-256 is stored
@@ -62,5 +78,6 @@ curl -X DELETE "$WORKER/admin/invites/<id>" -H "Authorization: Bearer $ADMIN_SEC
 - **Realtime spend is an estimate.** The Worker never sees audio duration, so each minted session is billed as `REALTIME_SESSION_EST_MINUTES` minutes. Responses spend is exact, from OpenAI's `usage`.
 - **File transcription is billed from OpenAI's `usage.seconds`** (`gpt-transcribe` has only a per-minute price). If a response ever lacks it, the file size is read at 16 kbps, about half what the App's AAC averages, which overestimates. Uploads over 8 MB are refused: the App's 300 s chunks are about 2.4 MB at its highest bit rate.
 - **One OpenAI key is shared by every user**, so `/v1/responses` forces `store: false` and rejects `previous_response_id`, `conversation`, streaming, hosted tools and any other unlisted parameter; otherwise one user could read another's stored responses or run up costs that are never metered.
-- **Identity is one function** (`authenticate` in `src/auth.ts`). Replace it with Sign in with Apple or StoreKit later; accounting only needs a stable user id.
+- **Identity is one function** (`authenticate` in `src/auth.ts`): session tokens, then invite tokens. Accounting only needs a stable user id, so StoreKit can slot in the same way.
+- **The Worker mints its own session token** instead of accepting Apple's identity token on every call: Apple's token expires after 10 minutes and the App only gets a new one by showing the sign-in sheet again.
 - **D1, not KV**, because spend and rate counters need atomic increments.

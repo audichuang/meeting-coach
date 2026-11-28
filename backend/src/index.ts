@@ -1,4 +1,5 @@
-import { authenticate, createInvite, isAdmin, type Caller } from "./auth";
+import { AppleTokenError, verifyAppleIdentityToken } from "./apple";
+import { authenticate, createInvite, isAdmin, signInWithApple, type Caller } from "./auth";
 import type { Env } from "./env";
 import {
   LIVE_TRANSCRIBE_MODEL, RESPONSE_MODELS, TRANSCRIBE_MODEL,
@@ -56,6 +57,8 @@ export default {
       return admin(request, env, route);
     }
     if (!url.pathname.startsWith("/v1/")) return error(404, "not found");
+    // The only unauthenticated /v1 route: it is how a caller gets a bearer.
+    if (route === "POST /v1/auth/apple") return appleSignIn(request, env);
 
     const caller = await authenticate(request, env);
     if (!caller) return error(401, "unauthorized");
@@ -96,7 +99,35 @@ async function admin(request: Request, env: Env, route: string): Promise<Respons
       .bind(Date.now(), revoke[1]).run();
     return meta.changes ? json({ revoked: revoke[1] }) : error(404, "not found");
   }
+  if (route === "GET /admin/users") {
+    const month = new Date().toISOString().slice(0, 7);
+    const { results } = await env.DB.prepare(
+      `SELECT u.id, u.email, u.created_at, u.blocked_at, COALESCE(g.usd, 0) AS month_usd, COALESCE(g.requests, 0) AS month_requests
+       FROM users u LEFT JOIN usage g ON g.user_id = u.id AND g.period = ? ORDER BY u.created_at`,
+    ).bind(month).all();
+    return json({ month, users: results });
+  }
+  const block = /^POST \/admin\/users\/([\w-]+)\/(block|unblock)$/.exec(route);
+  if (block) {
+    const { meta } = await env.DB.prepare("UPDATE users SET blocked_at = ? WHERE id = ?")
+      .bind(block[2] === "block" ? Date.now() : null, block[1]).run();
+    return meta.changes ? json({ [block[2] === "block" ? "blocked" : "unblocked"]: block[1] }) : error(404, "not found");
+  }
   return error(404, "not found");
+}
+
+async function appleSignIn(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json().catch(() => null)) as { identity_token?: unknown } | null;
+  if (typeof body?.identity_token !== "string") return error(400, "identity_token is required");
+  let identity;
+  try {
+    identity = await verifyAppleIdentityToken(body.identity_token);
+  } catch (e) {
+    if (e instanceof AppleTokenError) return error(401, e.message);
+    return error(502, "could not reach Apple");
+  }
+  const result = await signInWithApple(env, identity);
+  return result === "blocked" ? error(403, "account blocked") : json(result, 201);
 }
 
 async function usage(env: Env, caller: Caller): Promise<Response> {
