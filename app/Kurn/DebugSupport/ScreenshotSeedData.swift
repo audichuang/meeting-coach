@@ -42,11 +42,12 @@ enum ScreenshotSeedData {
 
     /// Synthetic coach spend for checking the detail header's cost line: the newest
     /// meeting gets a per-step record on each recording, the next one a total-only
-    /// record as written before steps were tracked. Off by default so store
+    /// record as written before steps were tracked, the third one where only some
+    /// steps ran (imported, so no cards or wrap-up). Off by default so store
     /// screenshots stay as they were.
     private static func seedCoachCost(into context: ModelContext) {
         let meetings = (try? context.fetch(FetchDescriptor<Meeting>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)]))) ?? []
-        guard meetings.count >= 2 else { return }
+        guard meetings.count >= 3 else { return }
         let steps: [[(CoachCostStep, Double)]] = [
             [(.liveTranscript, 0.31), (.cards, 0.06), (.wrapUp, 0.012), (.formalTranscript, 0.08), (.summary, 0.004)],
             [(.liveTranscript, 0.03), (.formalTranscript, 0.007)]
@@ -59,6 +60,9 @@ enum ScreenshotSeedData {
         let legacy = CoachRecord(meeting: meetings[1], recordingID: meetings[1].recordings.first?.id, userName: "Demo")
         legacy.costUSD = 0.27
         context.insert(legacy)
+        let imported = CoachRecord(meeting: meetings[2], recordingID: meetings[2].recordings.first?.id, userName: "Demo")
+        context.insert(imported)
+        imported.addCost(0.03, to: .formalTranscript)
     }
 
     /// Transcript segments for `lines`, one per line, on the timings and
