@@ -43,6 +43,27 @@ jobs:
       - name: swift test
         working-directory: app/Packages/KurnCore
         run: swift test
+      # Xcode silently collapses duplicate .strings keys, so neither tests nor
+      # SwiftLint see them; parallel branches adding keys left duplicates on merge.
+      - name: Check localization files
+        working-directory: app
+        run: |
+          keys() { grep -o '^"[^"]*"' "$1" | sort; }
+          reference=Kurn/Resources/en.lproj/Localizable.strings
+          status=0
+          for f in Kurn/Resources/*.lproj/Localizable.strings; do
+            dupes=$(keys "$f" | uniq -d)
+            if [ -n "$dupes" ]; then
+              echo "::error file=$f::duplicate keys: $(echo $dupes | tr '\n' ' ')"
+              status=1
+            fi
+            if ! diff -q <(keys "$reference" | uniq) <(keys "$f" | uniq) >/dev/null; then
+              echo "::error file=$f::key set differs from en.lproj"
+              diff <(keys "$reference" | uniq) <(keys "$f" | uniq) || true
+              status=1
+            fi
+          done
+          exit $status
 
   app-tests:
     runs-on: xcode-27
