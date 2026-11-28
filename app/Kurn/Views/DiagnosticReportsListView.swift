@@ -69,7 +69,7 @@ struct DiagnosticReportsListView: View {
             let text = try String(contentsOf: entry.url, encoding: .utf8)
             let url = try MeetingExport.temporaryFile(
                 markdown: text,
-                suggestedName: "kurn-diagnostic-\(entry.kind.rawValue)-\(entry.id)"
+                suggestedName: "meeting-coach-diagnostic-\(entry.kind.rawValue)-\(entry.id)"
             )
             shareItem = ShareItem(urls: [url])
         } catch {

@@ -116,7 +116,7 @@ struct MeetingListSelectionTests {
         for meeting in [shown, hidden] { context.insert(meeting) }
 
         var selection = MeetingListSelection()
-        #expect(selection.navigationTitle(visible: [shown]) == "Kurn")
+        #expect(selection.navigationTitle(visible: [shown]) == "Meeting Coach")
 
         selection.begin(with: shown.id)
         selection.toggle(hidden.id)

@@ -35,7 +35,7 @@ enum LogExport {
     /// oldest first (matching the order `OSLogStore` yields them in).
     static func formatText(entries: [LogEntrySnapshot], generatedAt: Date) -> String {
         let formatter = ISO8601DateFormatter()
-        var out = "# Kurn log export\n"
+        var out = "# Meeting Coach log export\n"
         out += "Generated: \(formatter.string(from: generatedAt))\n"
         out += "Entries: \(entries.count)\n\n"
         for entry in entries {
@@ -81,6 +81,6 @@ enum LogExport {
     static func temporaryFile(hoursBack: Int = 24) throws -> URL {
         let entries = try fetchRecentEntries(hoursBack: hoursBack)
         let text = formatText(entries: entries, generatedAt: Date())
-        return try MeetingExport.temporaryFile(markdown: text, suggestedName: "kurn-logs-\(Date().timeIntervalSince1970)")
+        return try MeetingExport.temporaryFile(markdown: text, suggestedName: "meeting-coach-logs-\(Date().timeIntervalSince1970)")
     }
 }

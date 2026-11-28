@@ -80,7 +80,7 @@ struct MeetingListSelection: Equatable {
     /// "Selected: 3" while selecting, the app name otherwise.
     @MainActor
     func navigationTitle(visible: [Meeting]) -> String {
-        guard isActive else { return "Kurn" }
+        guard isActive else { return "Meeting Coach" }
         return String(
             format: NSLocalizedString("meetings.selection.count", comment: "N meetings selected"),
             selected(from: visible).count

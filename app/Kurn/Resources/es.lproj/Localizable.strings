@@ -6,7 +6,7 @@
 "error.api" = "Error de la API %1$d: %2$@";
 "error.invalid_provider_url" = "La URL del proveedor no es válida o no está permitida. Usa un nombre de host HTTPS público sin credenciales, parámetros de consulta, fragmentos ni puertos personalizados.";
 "error.provider_response_too_large" = "La respuesta del proveedor superó el límite de tamaño seguro.";
-"error.ambiguous_provider_result" = "La conexión terminó antes de poder confirmar el resultado del proveedor. Kurn no reintentó automáticamente para evitar cargos duplicados. Comprueba el proveedor antes de volver a intentarlo.";
+"error.ambiguous_provider_result" = "La conexión terminó antes de poder confirmar el resultado del proveedor. Meeting Coach no reintentó automáticamente para evitar cargos duplicados. Comprueba el proveedor antes de volver a intentarlo.";
 "error.network_policy_restricted" = "Las cargas de audio y descargas de modelos están configuradas solo para Wi-Fi, y este dispositivo usa datos móviles o el modo de datos reducidos. Conéctate a Wi-Fi, o permite datos móviles y el modo de datos reducidos en Transferencias grandes, en los ajustes de Transcripción, y vuelve a intentarlo.";
 "error.network_policy_restricted.title" = "Se requiere Wi-Fi";
 "error.network_policy_restricted.open_settings" = "Abrir ajustes";
@@ -250,7 +250,7 @@
 "photo.delete.message" = "Su texto reconocido y cualquier referencia en el resumen también se eliminarán.";
 "recorder.paused" = "EN PAUSA";
 "recorder.permission.title" = "Se Necesita Acceso al Micrófono";
-"recorder.permission.message" = "Kurn necesita acceso al micrófono para grabar reuniones. Actívalo en Ajustes.";
+"recorder.permission.message" = "Meeting Coach necesita acceso al micrófono para grabar reuniones. Actívalo en Ajustes.";
 "recorder.live_listening" = "Escuchando…";
 "recorder.live_loading" = "Preparando transcripción en vivo…";
 "recorder.live_unavailable" = "Transcripción en vivo no disponible.";
@@ -651,7 +651,7 @@
 "settings.diagnostic_reports_footer" = "Guarda los informes de fallos y bloqueos capturados en este dispositivo.";
 "settings.diagnostic_reports_share_footer" = "Nunca se envía nada automáticamente a ningún lugar — un informe solo sale del dispositivo si tocas Compartir en él.";
 "settings.diagnostic_reports.consent_title" = "Activar Informes de Diagnóstico";
-"settings.diagnostic_reports.consent_message" = "Kurn guardará los informes de fallos y bloqueos solo en este dispositivo. Nunca se envía nada automáticamente a ningún lugar — tú decides si y cuándo compartir un informe.";
+"settings.diagnostic_reports.consent_message" = "Meeting Coach guardará los informes de fallos y bloqueos solo en este dispositivo. Nunca se envía nada automáticamente a ningún lugar — tú decides si y cuándo compartir un informe.";
 "settings.diagnostic_reports.enable" = "Activar";
 "settings.diagnostic_reports.view" = "Ver Informes de Diagnóstico";
 "settings.diagnostic_reports.empty" = "Aún no hay informes de diagnóstico";
@@ -698,7 +698,7 @@
 "settings.diarization_engine_footer" = "Los motores neuronales son más precisos, pero requieren descarga; el Heurístico funciona sin conexión de inmediato.";
 "settings.diarization_speaker_count" = "Número de Hablantes";
 "settings.diarization_speaker_count_auto" = "Automático";
-"settings.diarization_speaker_count_footer" = "Indícalo cuando sepas cuántas personas participaron en la reunión. En automático decide el motor, y Kurn vuelve a agrupar el audio por su cuenta si el motor unió a todos en un solo hablante.";
+"settings.diarization_speaker_count_footer" = "Indícalo cuando sepas cuántas personas participaron en la reunión. En automático decide el motor, y Meeting Coach vuelve a agrupar el audio por su cuenta si el motor unió a todos en un solo hablante.";
 "settings.diarization_preprocessing" = "Limpieza de Audio para Diarización";
 "detail.playback_enhancement" = "Audio mejorado";
 "common.on" = "Activado";
@@ -719,11 +719,11 @@
 "settings.model_download.downloading" = "Descargando modelo…";
 "settings.model_download.preparing" = "Preparando modelo…";
 "settings.model_download.compiling" = "Compilando modelo…";
-"settings.fluid_audio.package_missing" = "Añade el paquete Swift de FluidAudio al target de Kurn antes de usar esta función.";
-"settings.sherpa_onnx.package_missing" = "Añade el paquete Swift de sherpa-onnx al target de Kurn antes de usar esta función.";
+"settings.fluid_audio.package_missing" = "FluidAudio no está incluido en esta compilación, así que esta función no está disponible.";
+"settings.sherpa_onnx.package_missing" = "sherpa-onnx no está incluido en esta compilación, así que esta función no está disponible.";
 "settings.model_download.message_whisper_cpp" = "Este motor descarga desde Hugging Face el modelo Whisper del tamaño seleccionado para transcripción totalmente local. El modelo se conserva y sigue tu política de transferencias grandes.";
 "settings.model_download.message_sherpa_onnx" = "Este motor descarga desde Hugging Face modelos de segmentación e identificación de voz (unos 35 MB en total) para diarización totalmente local, sin aceleración del Apple Neural Engine. Los modelos se conservan.";
-"settings.whisper_cpp.package_missing" = "Añade el paquete Swift whisper.cpp al target de Kurn antes de usar esta función.";
+"settings.whisper_cpp.package_missing" = "whisper.cpp no está incluido en esta compilación, así que esta función no está disponible.";
 "settings.whisper_cpp.model" = "Modelo de Whisper";
 "settings.whisper_cpp.model_footer" = "Los modelos más grandes transcriben con mayor precisión, pero descargan más datos y son más lentos. Cada uno se descarga por separado y puede eliminarse en Almacenamiento.";
 "settings.whisper_cpp.choose_model" = "Elige un Modelo de Whisper";
@@ -736,8 +736,9 @@
 /* Acerca de y agradecimientos */
 "settings.about" = "Acerca de";
 "settings.acknowledgements" = "Agradecimientos";
-"settings.sponsor" = "Patrocinar Kurn";
-"ack.intro" = "El reconocimiento de voz en el dispositivo, la diarización de hablantes y la detección de actividad de voz funcionan gracias a Fluid Inference y whisper.cpp. Kurn usa los paquetes indicados a continuación y descarga bajo demanda sus modelos de aprendizaje automático. Cada componente se usa bajo su propia licencia.";
+"settings.sponsor" = "Patrocinar el proyecto original Kurn";
+"ack.intro" = "El reconocimiento de voz en el dispositivo, la diarización de hablantes y la detección de actividad de voz funcionan gracias a Fluid Inference y whisper.cpp. Meeting Coach usa los paquetes indicados a continuación y descarga bajo demanda sus modelos de aprendizaje automático. Cada componente se usa bajo su propia licencia.";
+"ack.based_on" = "Meeting Coach se basa en el proyecto de código abierto Kurn de Carlos Mazzei, usado bajo la licencia MIT.";
 "ack.packages" = "Paquetes Swift";
 "ack.models" = "Modelos de Aprendizaje Automático";
 "ack.footer" = "Los modelos se descargan bajo demanda y no vienen incluidos en la app. Toca un elemento para abrir su proyecto y la licencia completa. La NVIDIA Open Model License que cubre Sortformer tiene sus propios términos.";
@@ -937,13 +938,13 @@
 "health.all_clear" = "Nada requiere atención";
 "health.untitled_meeting" = "Reunión sin título";
 "health.recovery_needed" = "Recuperación Pendiente";
-"health.recovery_needed_footer" = "Grabaciones cuya captura se interrumpió antes de que Kurn terminara de escribirlas. Reintentar ejecuta la misma recuperación que Kurn ya intenta automáticamente al iniciar.";
+"health.recovery_needed_footer" = "Grabaciones cuya captura se interrumpió antes de que Meeting Coach terminara de escribirlas. Reintentar ejecuta la misma recuperación que Meeting Coach ya intenta automáticamente al iniciar.";
 "health.stalled_transcriptions" = "Transcripciones Fallidas o Pendientes";
 "health.stalled_transcriptions_footer" = "Grabaciones cuya transcripción falló o aún no ha comenzado. Reintentar inicia la transcripción de nuevo con tu configuración actual.";
 "health.degraded_transcripts" = "Completadas con Advertencias";
 "health.degraded_transcripts_footer" = "Transcripciones en las que una etapa del proceso se degradó o usó una alternativa. Reintentar solo se ofrece para etapas que lo permiten.";
 "health.model_verification" = "Verificación de Modelos";
-"health.model_verification_footer" = "Modelos en el dispositivo que fallaron la verificación. Elimínalos y Kurn descargará el modelo de nuevo la próxima vez que se use la función.";
+"health.model_verification_footer" = "Modelos en el dispositivo que fallaron la verificación. Elimínalos y Meeting Coach descargará el modelo de nuevo la próxima vez que se use la función.";
 "health.blocked_providers" = "Proveedores de IA Bloqueados";
 "health.blocked_provider_subtitle" = "Generación automática pausada tras fallos repetidos";
 "health.blocked_providers_footer" = "Proveedores cuya generación automática de wiki y título por IA se detuvo tras fallos repetidos, como una clave de API inválida. Reintentar libera el bloqueo; corrige antes la configuración del proveedor si el problema original persiste.";
@@ -951,25 +952,25 @@
 "health.view_all_events" = "Ver Todos los Eventos de Fiabilidad";
 
 "intent.startRecording.title" = "Iniciar grabación";
-"intent.startRecording.description" = "Inicia una nueva grabación en Kurn sin abrir la app.";
+"intent.startRecording.description" = "Inicia una nueva grabación en Meeting Coach sin abrir la app.";
 "intent.startRecording.shortTitle" = "Iniciar grabación";
-"intent.startRecording.notReady" = "Kurn no estaba listo para iniciar la grabación. Inténtalo de nuevo desde la app.";
+"intent.startRecording.notReady" = "Meeting Coach no estaba listo para iniciar la grabación. Inténtalo de nuevo desde la app.";
 "control.startRecording.title" = "Iniciar grabación";
 "control.startRecording.displayName" = "Iniciar grabación";
-"control.startRecording.description" = "Inicia una nueva grabación en Kurn. Si lo añades a la pantalla bloqueada, se puede activar con un solo toque mientras el dispositivo está bloqueado.";
+"control.startRecording.description" = "Inicia una nueva grabación en Meeting Coach. Si lo añades a la pantalla bloqueada, se puede activar con un solo toque mientras el dispositivo está bloqueado.";
 
 /* Store boot recovery (H2 boot state machine) */
-"store_recovery.title" = "Kurn no pudo abrir tus datos";
+"store_recovery.title" = "Meeting Coach no pudo abrir tus datos";
 "store_recovery.retry" = "Reintentar";
 "store_recovery.reason_protected_data_unavailable" = "Tu dispositivo está bloqueado. Desbloquéalo e inténtalo de nuevo.";
 "store_recovery.reason_storage_full" = "Tu dispositivo se quedó sin espacio de almacenamiento. Libera espacio e inténtalo de nuevo.";
-"store_recovery.reason_migration_incompatible" = "Esta versión de Kurn no puede leer tus datos existentes. Actualiza la app o contacta con soporte.";
+"store_recovery.reason_migration_incompatible" = "Esta versión de Meeting Coach no puede leer tus datos existentes. Actualiza la app o contacta con soporte.";
 "store_recovery.reason_corrupt_or_unknown" = "Algo salió mal al abrir tus datos. Tus grabaciones no se eliminaron.";
 "store_launch.opening" = "Abriendo";
 
 /* Store recovery: backup, restore, salvage, fresh start (H2 PR 4) */
-"store_recovery.reason_protection_verification_failed" = "Kurn no pudo confirmar que tus datos están cifrados en reposo.";
-"store_recovery.reason_application_support_unavailable" = "Kurn no encontró un lugar seguro en este dispositivo para guardar tus datos. Reinicia la app para volver a intentarlo.";
+"store_recovery.reason_protection_verification_failed" = "Meeting Coach no pudo confirmar que tus datos están cifrados en reposo.";
+"store_recovery.reason_application_support_unavailable" = "Meeting Coach no encontró un lugar seguro en este dispositivo para guardar tus datos. Reinicia la app para volver a intentarlo.";
 "store_recovery.backups_title" = "Restaurar desde una copia de seguridad";
 "store_recovery.restore_button" = "Restaurar";
 "store_recovery.restore_confirm_title" = "¿Restaurar esta copia de seguridad?";
@@ -985,7 +986,7 @@
 /* Protected storage / recording quarantine (H3) */
 "error.protected_storage" = "El almacenamiento protegido no está disponible: %@";
 "quarantine.section" = "Grabaciones Preservadas";
-"quarantine.footer" = "Los archivos de audio que Kurn no pudo ubicar se preservaron aquí en lugar de eliminarse. Puedes recuperarlos a tu biblioteca, exportar el archivo original o eliminarlos permanentemente.";
+"quarantine.footer" = "Los archivos de audio que Meeting Coach no pudo ubicar se preservaron aquí en lugar de eliminarse. Puedes recuperarlos a tu biblioteca, exportar el archivo original o eliminarlos permanentemente.";
 "quarantine.recover" = "Recuperar grabación";
 "quarantine.export" = "Exportar grabación";
 "quarantine.delete" = "Eliminar grabación";

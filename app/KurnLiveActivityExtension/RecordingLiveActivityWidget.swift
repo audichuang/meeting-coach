@@ -91,7 +91,7 @@ private struct LockScreenRecordingView: View {
                     // the state without relying on color, and VoiceOver
                     // reads it as is.
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Kurn")
+                        Text(verbatim: "Meeting Coach")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.55))
                         Text(statusText(context))

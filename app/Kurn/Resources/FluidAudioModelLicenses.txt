@@ -1,6 +1,6 @@
 FluidAudio ASR and diarization model licenses
 
-This resource accompanies the following optional Core ML models in Kurn:
+This resource accompanies the following optional Core ML models in Meeting Coach:
 - NVIDIA Nemotron Labs Unified ASR 0.6B (batch and live)
 - Nemotron 3.5 Transcribe Lite (Fluid Inference's unofficial port of NVIDIA components)
 - Underdog Bark 3.0 and Underdog Bark 3.0 Clean (Conway Research)
@@ -13,12 +13,12 @@ Nemotron 3 Diarization. The CC-BY-4.0 license below applies to Bark 3.0/Clean
 and Phonon-2. No endorsement by the model authors is implied.
 
 Headings, source references and explanatory text outside BEGIN/END blocks
-are Kurn's compilation notes. Text inside each block is copied verbatim from
+are Meeting Coach's compilation notes. Text inside each block is copied verbatim from
 the identified public license, NOTICE or model-card section. Markdown links
 inside model-card excerpts are retained as supplied by the upstream authors.
 Upstream runtime and training-data notices are preserved as attribution;
 they do not mean those Python/MLX runtimes or training datasets are bundled
-in Kurn. No model weights or training audio are included in this text.
+in Meeting Coach. No model weights or training audio are included in this text.
 
 ===============================================================================
 OPENMDW 1.1 — FULL LICENSE AND NVIDIA NOTICE

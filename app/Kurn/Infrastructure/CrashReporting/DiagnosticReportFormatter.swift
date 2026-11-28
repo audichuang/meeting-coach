@@ -28,7 +28,7 @@ enum DiagnosticReportFormatter {
         jsonRepresentation: Data
     ) -> String {
         let formatter = ISO8601DateFormatter()
-        var out = "# Kurn diagnostic report (\(kind.rawValue))\n"
+        var out = "# Meeting Coach diagnostic report (\(kind.rawValue))\n"
         out += "Received: \(formatter.string(from: receivedAt))\n"
         out += "App version: \(appVersion)\n"
         out += "OS version: \(osVersion)\n\n"

@@ -21,6 +21,13 @@ struct AcknowledgementsView: View {
         var url: URL? { URL(string: urlString) }
     }
 
+    /// The upstream project this app is forked from; its MIT license requires the credit.
+    private let upstream = Credit(
+        name: "Kurn — © 2019–2026 Carlos Mazzei",
+        license: "MIT License",
+        urlString: "https://github.com/carlosmazzei/Kurn"
+    )
+
     private let packages: [Credit] = [
         Credit(
             name: "FluidAudio",
@@ -143,6 +150,12 @@ struct AcknowledgementsView: View {
                 Text(NSLocalizedString("ack.intro", comment: "Acknowledgements intro"))
                     .font(Theme.footnote)
                     .foregroundStyle(Theme.textSecondary)
+            }
+
+            Section {
+                creditRow(upstream)
+            } footer: {
+                Text(NSLocalizedString("ack.based_on", comment: "Credit for the upstream Kurn project"))
             }
 
             Section(NSLocalizedString("ack.packages", comment: "Swift packages")) {

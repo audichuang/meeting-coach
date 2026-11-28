@@ -89,7 +89,7 @@ final class ModelStoreRecoveryViewModel {
             salvageResult = result
             if let markdown {
                 let url = try MeetingExport.temporaryFile(
-                    markdown: markdown, suggestedName: "kurn-salvage-\(Int(Date().timeIntervalSince1970))"
+                    markdown: markdown, suggestedName: "meeting-coach-salvage-\(Int(Date().timeIntervalSince1970))"
                 )
                 shareItem = ShareItem(urls: [url])
             }
@@ -103,14 +103,14 @@ final class ModelStoreRecoveryViewModel {
         performAction {
             let url = try MeetingExport.temporaryFile(
                 markdown: diagnosticsText(failure: failure),
-                suggestedName: "kurn-store-diagnostics-\(Int(Date().timeIntervalSince1970))"
+                suggestedName: "meeting-coach-store-diagnostics-\(Int(Date().timeIntervalSince1970))"
             )
             shareItem = ShareItem(urls: [url])
         }
     }
 
     private func diagnosticsText(failure: ModelStoreOpenFailure) -> String {
-        var out = "# Kurn store recovery diagnostics\n\n"
+        var out = "# Meeting Coach store recovery diagnostics\n\n"
         out += "Reason: \(failure.reason.rawValue)\n"
         out += "Log code: \(failure.logCode)\n\n"
         out += "## Backup generations\n\n"

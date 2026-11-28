@@ -6,7 +6,7 @@
 "error.api" = "APIエラー %1$d: %2$@";
 "error.invalid_provider_url" = "プロバイダのURLが無効か、使用できません。認証情報、クエリパラメータ、フラグメント、カスタムポートを含まない公開HTTPSホスト名を使用してください。";
 "error.provider_response_too_large" = "プロバイダの応答が安全なサイズの上限を超えました。";
-"error.ambiguous_provider_result" = "プロバイダの結果を確認する前に接続が終了しました。二重課金を避けるため、Kurnは自動的に再試行しませんでした。再試行する前にプロバイダ側を確認してください。";
+"error.ambiguous_provider_result" = "プロバイダの結果を確認する前に接続が終了しました。二重課金を避けるため、Meeting Coachは自動的に再試行しませんでした。再試行する前にプロバイダ側を確認してください。";
 "error.network_policy_restricted" = "アップロードとモデルのダウンロードはWi-Fiのみに設定されていますが、このデバイスはモバイルデータ通信または低データモードで使用しています。Wi-Fiに接続するか、文字起こし設定の「大容量転送」でモバイルデータ通信と低データモードを許可してから、もう一度お試しください。";
 "error.network_policy_restricted.title" = "Wi-Fiが必要です";
 "error.network_policy_restricted.open_settings" = "設定を開く";
@@ -250,7 +250,7 @@
 "photo.delete.message" = "認識されたテキストと、要約内のこの写真への参照も削除されます。";
 "recorder.paused" = "一時停止中";
 "recorder.permission.title" = "マイクへのアクセスが必要です";
-"recorder.permission.message" = "会議を録音するには、Kurnにマイクへのアクセスが必要です。設定で有効にしてください。";
+"recorder.permission.message" = "会議を録音するには、Meeting Coachにマイクへのアクセスが必要です。設定で有効にしてください。";
 "recorder.live_listening" = "聞き取り中…";
 "recorder.live_loading" = "ライブ文字起こしを準備中…";
 "recorder.live_unavailable" = "ライブ文字起こしを利用できません。";
@@ -651,7 +651,7 @@
 "settings.diagnostic_reports_footer" = "このデバイスで記録されたクラッシュとフリーズのレポートを保存します。";
 "settings.diagnostic_reports_share_footer" = "自動的に送信されることはありません — レポートは、「共有」をタップした場合にのみデバイスの外に出ます。";
 "settings.diagnostic_reports.consent_title" = "診断レポートを有効にする";
-"settings.diagnostic_reports.consent_message" = "Kurnは、クラッシュとフリーズのレポートをこのデバイスにのみ保存します。自動的に送信されることはありません。レポートを共有するかどうか、いつ共有するかはあなたが決められます。";
+"settings.diagnostic_reports.consent_message" = "Meeting Coachは、クラッシュとフリーズのレポートをこのデバイスにのみ保存します。自動的に送信されることはありません。レポートを共有するかどうか、いつ共有するかはあなたが決められます。";
 "settings.diagnostic_reports.enable" = "有効にする";
 "settings.diagnostic_reports.view" = "診断レポートを表示";
 "settings.diagnostic_reports.empty" = "診断レポートはまだありません";
@@ -698,7 +698,7 @@
 "settings.diarization_engine_footer" = "ニューラルエンジンはより正確ですがダウンロードが必要です。ヒューリスティックはすぐにオフラインで使えます。";
 "settings.diarization_speaker_count" = "話者の人数";
 "settings.diarization_speaker_count_auto" = "自動";
-"settings.diarization_speaker_count_footer" = "会議の参加人数がわかっている場合に設定してください。「自動」ではエンジンが判断し、エンジンが全員を1人の話者にまとめた場合は、Kurn自身が音声を再クラスタリングします。";
+"settings.diarization_speaker_count_footer" = "会議の参加人数がわかっている場合に設定してください。「自動」ではエンジンが判断し、エンジンが全員を1人の話者にまとめた場合は、Meeting Coach自身が音声を再クラスタリングします。";
 "settings.diarization_preprocessing" = "話者分離用の音声クリーンアップ";
 "detail.playback_enhancement" = "補正済みオーディオ";
 "common.on" = "オン";
@@ -719,11 +719,11 @@
 "settings.model_download.downloading" = "モデルをダウンロード中…";
 "settings.model_download.preparing" = "モデルを準備中…";
 "settings.model_download.compiling" = "モデルをコンパイル中…";
-"settings.fluid_audio.package_missing" = "この機能を使用する前に、KurnターゲットにFluidAudio Swiftパッケージを追加してください。";
-"settings.sherpa_onnx.package_missing" = "この機能を使用する前に、Kurnターゲットにsherpa-onnx Swiftパッケージを追加してください。";
+"settings.fluid_audio.package_missing" = "このビルドにはFluidAudioが含まれていないため、この機能は使用できません。";
+"settings.sherpa_onnx.package_missing" = "このビルドにはsherpa-onnxが含まれていないため、この機能は使用できません。";
 "settings.model_download.message_whisper_cpp" = "このエンジンは、文字起こしをすべてこのデバイス上で実行するために、選択したサイズのWhisperモデルをHugging Faceからダウンロードします。モデルはその後も保持され、大容量転送のネットワークポリシーに従います。";
 "settings.model_download.message_sherpa_onnx" = "このエンジンは、Apple Neural Engineによる高速化なしで話者分離をすべてこのデバイス上で実行するために、セグメンテーションと話者埋め込みのモデル（合計約35 MB）をHugging Faceからダウンロードします。モデルはその後も保持されます。";
-"settings.whisper_cpp.package_missing" = "この機能を使用する前に、Kurnターゲットにwhisper.cpp Swiftパッケージを追加してください。";
+"settings.whisper_cpp.package_missing" = "このビルドにはwhisper.cppが含まれていないため、この機能は使用できません。";
 "settings.whisper_cpp.model" = "Whisperモデル";
 "settings.whisper_cpp.model_footer" = "大きいモデルほど文字起こしは正確ですが、ダウンロードするデータが増え、動作も遅くなります。それぞれ個別にダウンロードされ、「ストレージ」で削除できます。";
 "settings.whisper_cpp.choose_model" = "Whisperモデルを選択";
@@ -736,8 +736,9 @@
 /* About & acknowledgements */
 "settings.about" = "情報";
 "settings.acknowledgements" = "謝辞";
-"settings.sponsor" = "Kurnを支援";
-"ack.intro" = "デバイス上の音声認識、話者分離、音声区間検出は、Fluid Inferenceとwhisper.cppによって実現されています。Kurnは以下のパッケージを使用し、その機械学習モデルを必要に応じてダウンロードします。各コンポーネントはそれぞれのライセンスに基づいて使用されます。";
+"settings.sponsor" = "オリジナルのKurnプロジェクトを支援";
+"ack.intro" = "デバイス上の音声認識、話者分離、音声区間検出は、Fluid Inferenceとwhisper.cppによって実現されています。Meeting Coachは以下のパッケージを使用し、その機械学習モデルを必要に応じてダウンロードします。各コンポーネントはそれぞれのライセンスに基づいて使用されます。";
+"ack.based_on" = "Meeting Coachは、Carlos MazzeiによるオープンソースプロジェクトKurnをベースにしており、MITライセンスに基づいて使用しています。";
 "ack.packages" = "Swiftパッケージ";
 "ack.models" = "機械学習モデル";
 "ack.footer" = "モデルは必要に応じてダウンロードされ、Appには同梱されていません。項目をタップすると、そのプロジェクトと完全なライセンスを開きます。Sortformerに適用されるNVIDIA Open Model Licenseには、独自の条件があります。";
@@ -937,13 +938,13 @@
 "health.all_clear" = "対応が必要な項目はありません";
 "health.untitled_meeting" = "名称未設定の会議";
 "health.recovery_needed" = "復元待ち";
-"health.recovery_needed_footer" = "Kurnが書き込みを完了する前に収録が中断された録音です。再試行すると、Kurnが起動時にすでに自動で行っているのと同じ復元をもう一度実行します。";
+"health.recovery_needed_footer" = "Meeting Coachが書き込みを完了する前に収録が中断された録音です。再試行すると、Meeting Coachが起動時にすでに自動で行っているのと同じ復元をもう一度実行します。";
 "health.stalled_transcriptions" = "失敗または保留中の文字起こし";
 "health.stalled_transcriptions_footer" = "文字起こしに失敗した、またはまだ開始されていない録音です。再試行すると、現在の設定で文字起こしをもう一度開始します。";
 "health.degraded_transcripts" = "警告付きで完了";
 "health.degraded_transcripts_footer" = "パイプラインのいずれかの段階で品質が低下した、または代替処理になった文字起こしです。再試行できるのは、対応している段階のみです。";
 "health.model_verification" = "モデルの検証";
-"health.model_verification_footer" = "検証に失敗したデバイス上のモデルです。削除すると、次にその機能を使用するときにKurnがモデルを再ダウンロードします。";
+"health.model_verification_footer" = "検証に失敗したデバイス上のモデルです。削除すると、次にその機能を使用するときにMeeting Coachがモデルを再ダウンロードします。";
 "health.blocked_providers" = "ブロックされたAIプロバイダ";
 "health.blocked_provider_subtitle" = "失敗が続いたため、自動生成を一時停止しました";
 "health.blocked_providers_footer" = "無効なAPIキーなど、失敗が続いたためWikiとAIタイトルの自動生成が停止したプロバイダです。再試行するとブロックが解除されます。根本的な問題が解決していない場合は、先にプロバイダの設定を修正してください。";
@@ -951,25 +952,25 @@
 "health.view_all_events" = "すべての信頼性イベントを表示";
 
 "intent.startRecording.title" = "録音を開始";
-"intent.startRecording.description" = "Appを開かずに、Kurnの新しい録音を開始します。";
+"intent.startRecording.description" = "Appを開かずに、Meeting Coachの新しい録音を開始します。";
 "intent.startRecording.shortTitle" = "録音を開始";
-"intent.startRecording.notReady" = "Kurnは録音を開始する準備ができていませんでした。Appからもう一度お試しください。";
+"intent.startRecording.notReady" = "Meeting Coachは録音を開始する準備ができていませんでした。Appからもう一度お試しください。";
 "control.startRecording.title" = "録音を開始";
 "control.startRecording.displayName" = "録音を開始";
-"control.startRecording.description" = "Kurnの新しい録音を開始します。ロック画面に追加すると、デバイスがロックされている間もワンタップで開始できます。";
+"control.startRecording.description" = "Meeting Coachの新しい録音を開始します。ロック画面に追加すると、デバイスがロックされている間もワンタップで開始できます。";
 
 /* Store boot recovery (H2 boot state machine) */
-"store_recovery.title" = "Kurnがデータを開けませんでした";
+"store_recovery.title" = "Meeting Coachがデータを開けませんでした";
 "store_recovery.retry" = "再試行";
 "store_recovery.reason_protected_data_unavailable" = "デバイスがロックされています。ロックを解除して、もう一度お試しください。";
 "store_recovery.reason_storage_full" = "デバイスのストレージの空きがありません。空き容量を確保して、もう一度お試しください。";
-"store_recovery.reason_migration_incompatible" = "このバージョンのKurnでは既存のデータを読み取れません。Appをアップデートするか、サポートにお問い合わせください。";
+"store_recovery.reason_migration_incompatible" = "このバージョンのMeeting Coachでは既存のデータを読み取れません。Appをアップデートするか、サポートにお問い合わせください。";
 "store_recovery.reason_corrupt_or_unknown" = "データを開く際に問題が発生しました。録音は削除されていません。";
 "store_launch.opening" = "開いています";
 
 /* Store recovery: backup, restore, salvage, fresh start (H2 PR 4) */
-"store_recovery.reason_protection_verification_failed" = "Kurnは、データが保存時に暗号化されていることを確認できませんでした。";
-"store_recovery.reason_application_support_unavailable" = "Kurnは、このデバイス上でデータを保存できる安全な場所を見つけられませんでした。Appを再起動して、もう一度お試しください。";
+"store_recovery.reason_protection_verification_failed" = "Meeting Coachは、データが保存時に暗号化されていることを確認できませんでした。";
+"store_recovery.reason_application_support_unavailable" = "Meeting Coachは、このデバイス上でデータを保存できる安全な場所を見つけられませんでした。Appを再起動して、もう一度お試しください。";
 "store_recovery.backups_title" = "バックアップから復元";
 "store_recovery.restore_button" = "復元";
 "store_recovery.restore_confirm_title" = "このバックアップを復元しますか？";
@@ -985,7 +986,7 @@
 /* Protected storage / recording quarantine (H3) */
 "error.protected_storage" = "保護されたストレージを利用できません：%@";
 "quarantine.section" = "保全された録音";
-"quarantine.footer" = "Kurnが配置できなかったオーディオファイルは、削除されずにここに保全されています。ライブラリに復元したり、元のファイルを書き出したり、完全に削除したりできます。";
+"quarantine.footer" = "Meeting Coachが配置できなかったオーディオファイルは、削除されずにここに保全されています。ライブラリに復元したり、元のファイルを書き出したり、完全に削除したりできます。";
 "quarantine.recover" = "録音を復元";
 "quarantine.export" = "録音を書き出す";
 "quarantine.delete" = "録音を削除";

@@ -6,14 +6,14 @@
 "live_activity.highlight" = "ハイライト";
 
 "intent.startRecording.title" = "録音を開始";
-"intent.startRecording.description" = "Appを開かずに、Kurnの新しい録音を開始します。";
+"intent.startRecording.description" = "Appを開かずに、Meeting Coachの新しい録音を開始します。";
 "intent.startRecording.shortTitle" = "録音を開始";
-"intent.startRecording.notReady" = "Kurnは録音を開始する準備ができていませんでした。Appからもう一度お試しください。";
+"intent.startRecording.notReady" = "Meeting Coachは録音を開始する準備ができていませんでした。Appからもう一度お試しください。";
 "control.startRecording.title" = "録音を開始";
 "control.startRecording.displayName" = "録音を開始";
-"control.startRecording.description" = "Kurnの新しい録音を開始します。ロック画面に追加すると、デバイスがロックされている間もワンタップで開始できます。";
+"control.startRecording.description" = "Meeting Coachの新しい録音を開始します。ロック画面に追加すると、デバイスがロックされている間もワンタップで開始できます。";
 "widget.startRecording.displayName" = "録音を開始";
-"widget.startRecording.description" = "ホーム画面、ロック画面、スタンバイからKurnの新しい録音を開始します。ウィジェットに会議の内容が表示されることはありません。";
+"widget.startRecording.description" = "ホーム画面、ロック画面、スタンバイからMeeting Coachの新しい録音を開始します。ウィジェットに会議の内容が表示されることはありません。";
 "widget.startRecording.title" = "録音";
 "widget.startRecording.subtitle" = "新しい会議を開始";
 
