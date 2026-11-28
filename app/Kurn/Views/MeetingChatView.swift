@@ -44,7 +44,7 @@ struct MeetingChatView: View {
         VStack(spacing: 0) {
             if !settings.semanticSearchEnabled {
                 disabledState
-            } else if !hasIndex {
+            } else if !hasIndex && !readsWholeTranscript {
                 emptyIndexState
             } else {
                 conversation
@@ -537,7 +537,14 @@ struct MeetingChatView: View {
         return (try? modelContext.fetchCount(FetchDescriptor<SemanticChunk>())) ?? 0 > 0
     }
 
-    private var canChat: Bool { settings.semanticSearchEnabled && hasIndex }
+    /// The coach route reads a meeting's whole transcript in one call, so it
+    /// does not wait for the on-device index (which may still be building).
+    private var readsWholeTranscript: Bool {
+        guard let meeting, ChatRoute.resolve(settings: settings).viaCoach else { return false }
+        return meeting.recordings.contains { $0.transcript != nil }
+    }
+
+    private var canChat: Bool { settings.semanticSearchEnabled && (hasIndex || readsWholeTranscript) }
     private var canSend: Bool {
         canChat && !vm.isResponding && !input.trimmingCharacters(in: .whitespaces).isEmpty
     }
