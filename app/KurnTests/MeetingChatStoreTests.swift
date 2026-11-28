@@ -175,6 +175,27 @@ struct MeetingChatStoreTests {
         #expect(vm.failureMessage == nil)
     }
 
+    @Test func coachChatSpendGoesToTheMeetingsNewestCoachRecord() throws {
+        let context = ModelContext(TestModelContainer.make())
+        let meeting = Meeting(title: "Planning")
+        let bare = Meeting(title: "No coach")
+        context.insert(meeting)
+        context.insert(bare)
+        let older = CoachRecord(meeting: meeting, recordingID: UUID(), userName: "", createdAt: Date(timeIntervalSince1970: 1))
+        let newer = CoachRecord(meeting: meeting, recordingID: UUID(), userName: "", createdAt: Date(timeIntervalSince1970: 2))
+        context.insert(older)
+        context.insert(newer)
+        try context.save()
+
+        MeetingChatStore.recordSpend(0.04, meetingID: meeting.id, in: context)
+        MeetingChatStore.recordSpend(0.5, meetingID: bare.id, in: context)
+        MeetingChatStore.recordSpend(0.5, meetingID: nil, in: context)
+
+        #expect(abs(newer.costUSD - 0.04) < 1e-9)
+        #expect(older.costUSD == 0)
+        #expect(try context.fetch(FetchDescriptor<CoachRecord>()).count == 2)
+    }
+
     @Test func deletingAMeetingThroughTheLibraryDiscardsItsChat() throws {
         let container = TestModelContainer.make()
         let defaults = try #require(UserDefaults(suiteName: "MeetingChatStoreTests-\(UUID().uuidString)"))

@@ -2145,8 +2145,9 @@ loaded once via the `EmbeddingModelStore` actor — same coalesced-load pattern 
   under which the owner's question died when they switched away. A cloud
   reply runs inside a `BackgroundActivity`; when iOS reclaims the window the
   turn ends as "interrupted" with the retry row. A failed or interrupted
-  turn shows its reason inline (`failureMessage`), not as an alert: it
-  stacked with the detail screen's own alerts. `ChatRoute` sends chat to the
+  turn shows its reason inline (`failureMessage`), not as an alert: the
+  owner saw two identical alerts stacked over the chat (cause not
+  reproduced; the detail screen layers its own alerts above the tab's). `ChatRoute` sends chat to the
   Worker's `/v1/responses` (`CoachSummaryProvider.chat`, not streamed) when
   `CoachBackend.current()` is ready, with `AppSettings.coachChatModel`
   (`CoachPricing.chatModels`, picked from the composer's chip); both models

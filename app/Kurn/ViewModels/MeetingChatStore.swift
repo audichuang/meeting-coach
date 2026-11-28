@@ -60,7 +60,7 @@ final class MeetingChatStore {
 
     /// shortcut: library-wide chat and meetings without a `CoachRecord` are not
     /// counted anywhere; give spend its own per-meeting home to count those.
-    private static func recordSpend(_ usd: Double, meetingID: UUID?, in context: ModelContext) {
+    static func recordSpend(_ usd: Double, meetingID: UUID?, in context: ModelContext) {
         guard let meetingID else { return }
         let descriptor = FetchDescriptor<Meeting>(predicate: #Predicate { $0.id == meetingID })
         guard let meeting = try? context.fetch(descriptor).first,

@@ -847,7 +847,7 @@
 "chat.model.coach_label" = "OpenAI · %@";
 "chat.model.default" = "%@ (default)";
 "chat.model.faster" = "%@ (faster, cheaper)";
-"error.on_device_interrupted" = "Apple Intelligence stopped before answering; it can't run while the app is in the background. Return to the app and try again.";
+"error.on_device_interrupted" = "Apple Intelligence did not finish the answer. It stops if the app goes to the background; return to the app and try again.";
 "error.on_device_refused" = "Apple Intelligence declined to answer this content.";
 "error.on_device_busy" = "Apple Intelligence is busy. Wait a moment and try again.";
 "error.on_device_too_long" = "The input is too long for Apple Intelligence.";

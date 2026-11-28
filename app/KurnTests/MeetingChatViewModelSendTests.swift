@@ -133,7 +133,7 @@ struct MeetingChatViewModelSendTests {
         Self.ask(viewModel, "When do we ship?")
         await Self.waitUntilDone(viewModel)
 
-        // Inline, not an alert: the detail screen's own alerts would stack on it.
+        // Inline, not an alert, so it cannot stack with the detail screen's alerts.
         #expect(viewModel.error == nil)
         #expect(viewModel.failureMessage == AppError.noAPIKey(provider: "OpenAI").errorDescription)
         #expect(viewModel.turns.map(\.role) == [.user])

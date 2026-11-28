@@ -96,7 +96,7 @@ final class MeetingChatViewModel {
     var error: AppError?
     /// Why the last question got no answer, shown inline above its retry
     /// button rather than as an alert: the question is still on screen, and
-    /// an alert here stacked on the detail screen's own alerts.
+    /// the owner saw two identical error alerts stacked over the chat.
     private(set) var failureMessage: String?
 
     private let chatService: MeetingChatService
