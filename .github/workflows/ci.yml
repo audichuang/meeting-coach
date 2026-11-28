@@ -61,7 +61,8 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_27.2.app
           xcodebuild -version
           xcrun simctl boot 'iPad mini (A20 Pro)' || true
-          xcrun simctl bootstatus 'iPad mini (A20 Pro)' -b
+          # bootstatus itself crashed (NSException) on a runner once; one retry.
+          xcrun simctl bootstatus 'iPad mini (A20 Pro)' -b || { sleep 15; xcrun simctl bootstatus 'iPad mini (A20 Pro)' -b; }
       # Package sources only (not build products), keyed on what pins them; same idea
       # as upstream's app/.github/actions/cache-spm-packages.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
