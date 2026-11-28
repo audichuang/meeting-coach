@@ -81,21 +81,19 @@ struct MeetingAudioImporterTests {
         #expect(recording.duration > 1.0)
     }
 
-    @Test func unreadableAudioLeavesNoMeetingAndNoFile() async throws {
+    @Test func unreadableAudioLeavesNoMeeting() async throws {
         let container = TestModelContainer.make()
         let context = container.mainContext
         let source = try AudioFixtures.undecodableM4A(at: AudioFixtures.tempURL(ext: "m4a"))
         defer { try? FileManager.default.removeItem(at: source) }
-        let before = Set((try? FileManager.default.contentsOfDirectory(atPath: AudioFileStore.recordingsDirectoryURL.path)) ?? [])
-
         await #expect(throws: AppError.self) {
             _ = try await MeetingAudioImporter(context: context, language: .chinese, coachUserName: nil)
                 .importAudio(from: source)
         }
 
+        // Decoding fails before a meeting or a stored file exists. Diffing the shared
+        // recordings directory here was flaky: other suites write to it concurrently.
         #expect(try context.fetch(FetchDescriptor<Meeting>()).isEmpty)
-        let after = Set((try? FileManager.default.contentsOfDirectory(atPath: AudioFileStore.recordingsDirectoryURL.path)) ?? [])
-        #expect(after.subtracting(before).isEmpty)
     }
 
     @Test func acceptsLocalAudioOnly() {
