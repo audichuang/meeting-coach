@@ -39,15 +39,15 @@ enum DocumentSourceKind: String, Codable, CaseIterable, Identifiable, Sendable {
 
 @Model
 final class GeneratedDocument {
-    @Attribute(.unique) var id: UUID
-    var title: String
-    var bodyMarkdown: String
-    var userPrompt: String
-    var sourceKindRaw: String
-    var sourceNamesData: Data
-    var sourceMeetingIDsData: Data
-    var generatorModelIdentifier: String
-    var createdAt: Date
+    var id: UUID = UUID()
+    var title: String = ""
+    var bodyMarkdown: String = ""
+    var userPrompt: String = ""
+    var sourceKindRaw: String = ""
+    var sourceNamesData: Data = Data()
+    var sourceMeetingIDsData: Data = Data()
+    var generatorModelIdentifier: String = ""
+    var createdAt: Date = Date()
 
     init(
         id: UUID = UUID(),

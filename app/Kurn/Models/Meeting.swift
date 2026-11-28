@@ -12,16 +12,16 @@ import SwiftData
 
 @Model
 final class Meeting {
-    @Attribute(.unique) var id: UUID
-    var title: String
-    var createdAt: Date
-    var notes: String
+    var id: UUID = UUID()
+    var title: String = ""
+    var createdAt: Date = Date()
+    var notes: String = ""
     /// Short AI-generated title produced after the first transcription completes.
     /// Nil until generated; displayed in the meetings list instead of a raw
     /// transcript excerpt. Cleared on re-transcription so it stays in sync.
     var aiTitle: String?
     /// Stored raw value of `MeetingLanguage` for the transcription preference.
-    var languageRaw: String
+    var languageRaw: String = ""
     /// User-pinned meeting. Surfaced as a star on the card and as the
     /// `Favorites` library bucket. Lightweight-additive: defaults to `false`
     /// for meetings created before this field existed.
@@ -40,25 +40,46 @@ final class Meeting {
     /// User-defined tags attached to this meeting. The inverse is defined on
     /// `Tag.meetings` with `.nullify`, so deleting a tag detaches it from
     /// meetings without deleting them.
-    var tags: [Tag] = []
+    @Relationship(originalName: "tags")
+    var tagsStorage: [Tag]? = []
+    var tags: [Tag] {
+        get { tagsStorage ?? [] }
+        set { tagsStorage = newValue }
+    }
 
     // Deleting a meeting tears down everything that belongs to it.
-    @Relationship(deleteRule: .cascade, inverse: \Recording.meeting)
-    var recordings: [Recording]
+    @Relationship(deleteRule: .cascade, originalName: "recordings", inverse: \Recording.meeting)
+    var recordingsStorage: [Recording]? = []
+    var recordings: [Recording] {
+        get { recordingsStorage ?? [] }
+        set { recordingsStorage = newValue }
+    }
 
-    @Relationship(deleteRule: .cascade, inverse: \Speaker.meeting)
-    var speakers: [Speaker]
+    @Relationship(deleteRule: .cascade, originalName: "speakers", inverse: \Speaker.meeting)
+    var speakersStorage: [Speaker]? = []
+    var speakers: [Speaker] {
+        get { speakersStorage ?? [] }
+        set { speakersStorage = newValue }
+    }
 
     /// All AI-generated summaries for this meeting. A meeting can accumulate
     /// one per generation run/template; see `latestSummary` for the default.
-    @Relationship(deleteRule: .cascade, inverse: \Summary.owningMeeting)
-    var summaries: [Summary]
+    @Relationship(deleteRule: .cascade, originalName: "summaries", inverse: \Summary.owningMeeting)
+    var summariesStorage: [Summary]? = []
+    var summaries: [Summary] {
+        get { summariesStorage ?? [] }
+        set { summariesStorage = newValue }
+    }
 
     /// Embedded transcript passages backing semantic search and chat retrieval.
     /// Rebuilt (not appended) whenever the meeting is re-indexed; cascade-deleted
     /// so a removed meeting takes its on-device index with it.
-    @Relationship(deleteRule: .cascade, inverse: \SemanticChunk.meeting)
-    var semanticChunks: [SemanticChunk]
+    @Relationship(deleteRule: .cascade, originalName: "semanticChunks", inverse: \SemanticChunk.meeting)
+    var semanticChunksStorage: [SemanticChunk]? = []
+    var semanticChunks: [SemanticChunk] {
+        get { semanticChunksStorage ?? [] }
+        set { semanticChunksStorage = newValue }
+    }
 
     /// LLM-generated condensed "wiki" of this meeting, used by the library-wide
     /// chat's synthesis path. One per meeting; regenerated when the transcript or
@@ -71,25 +92,41 @@ final class Meeting {
     /// Saved "chat with your meetings" conversations scoped to this meeting.
     /// A meeting can accumulate several, like `summaries`; cascade-deleted
     /// with the meeting, same as every other transcript-derived artifact.
-    @Relationship(deleteRule: .cascade, inverse: \ChatSession.meeting)
-    var chatSessions: [ChatSession]
+    @Relationship(deleteRule: .cascade, originalName: "chatSessions", inverse: \ChatSession.meeting)
+    var chatSessionsStorage: [ChatSession]? = []
+    var chatSessions: [ChatSession] {
+        get { chatSessionsStorage ?? [] }
+        set { chatSessionsStorage = newValue }
+    }
 
     /// Documents (PDFs) attached to this meeting as reference material.
     /// Cascade-deleted with the meeting like every other meeting-derived
     /// artifact; their files go through the same journaled delete as audio
     /// (`MeetingLibrary.deleteMeeting`).
-    @Relationship(deleteRule: .cascade, inverse: \MeetingAttachment.meeting)
-    var attachments: [MeetingAttachment] = []
+    @Relationship(deleteRule: .cascade, originalName: "attachments", inverse: \MeetingAttachment.meeting)
+    var attachmentsStorage: [MeetingAttachment]? = []
+    var attachments: [MeetingAttachment] {
+        get { attachmentsStorage ?? [] }
+        set { attachmentsStorage = newValue }
+    }
 
     /// Meeting-coach records (live transcript, suggestion ledgers, spend), one
     /// per coached recording. Cascade-deleted so deleting the meeting erases them.
-    @Relationship(deleteRule: .cascade, inverse: \CoachRecord.meeting)
-    var coachRecords: [CoachRecord] = []
+    @Relationship(deleteRule: .cascade, originalName: "coachRecords", inverse: \CoachRecord.meeting)
+    var coachRecordsStorage: [CoachRecord]? = []
+    var coachRecords: [CoachRecord] {
+        get { coachRecordsStorage ?? [] }
+        set { coachRecordsStorage = newValue }
+    }
 
     /// Handwritten paper notes authored while recording, one per recording that
     /// has ink strokes. Cascade-deleted so deleting the meeting erases them.
-    @Relationship(deleteRule: .cascade, inverse: \PaperNote.meeting)
-    var paperNotes: [PaperNote] = []
+    @Relationship(deleteRule: .cascade, originalName: "paperNotes", inverse: \PaperNote.meeting)
+    var paperNotesStorage: [PaperNote]? = []
+    var paperNotes: [PaperNote] {
+        get { paperNotesStorage ?? [] }
+        set { paperNotesStorage = newValue }
+    }
 
     /// JSON-encoded `SummaryMapCheckpoint` while a staged (map-reduce) summary
     /// or wiki generation is in flight for this meeting (SwiftData can't store
@@ -120,12 +157,6 @@ final class Meeting {
         self.isFavorite = isFavorite
         self.archivedAt = archivedAt
         self.folder = folder
-        self.recordings = []
-        self.speakers = []
-        self.summaries = []
-        self.semanticChunks = []
-        self.wikiArticle = nil
-        self.chatSessions = []
     }
 
     /// Convenience: whether the meeting is currently archived.

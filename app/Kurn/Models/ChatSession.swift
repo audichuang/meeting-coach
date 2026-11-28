@@ -23,15 +23,15 @@ import SwiftData
 
 @Model
 final class ChatSession {
-    @Attribute(.unique) var id: UUID
+    var id: UUID = UUID()
     /// Derived once, from the conversation's first question, the moment it's
     /// first saved — see `title(from:)`. Never regenerated afterward, so a
     /// later question in the same conversation doesn't retitle it.
-    var title: String
-    var createdAt: Date
+    var title: String = ""
+    var createdAt: Date = Date()
     /// Bumped on every saved exchange; drives the history list's
     /// most-recently-active-first ordering.
-    var updatedAt: Date
+    var updatedAt: Date = Date()
     /// Owning meeting, or `nil` for a library-wide "Ask" conversation. The
     /// inverse `Meeting.chatSessions` is `.cascade`, so deleting a meeting
     /// removes its conversations with the rest of its data.
@@ -42,7 +42,7 @@ final class ChatSession {
     /// this is the user's own questions and the answers grounded in their
     /// meetings, so corruption must read as corruption, never as silently
     /// empty history.
-    var turnsData: Data
+    var turnsData: Data = Data()
 
     init(meeting: Meeting?, title: String, createdAt: Date = Date()) {
         self.id = UUID()

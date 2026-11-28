@@ -204,13 +204,10 @@ struct SchemaV3MigrationTests {
         #expect(properties(Schema(KurnSchemaV7.models)) == expected)
     }
 
-    @Test func theCurrentSchemaIsV8AndAddsOnlyCostBreakdownToCoachRecord() {
-        #expect(KurnModelGraph.currentSchemaVersion == Schema.Version(1, 7, 0))
+    @Test func v8AddsOnlyCostBreakdownToCoachRecord() {
         var expected = properties(Schema(KurnSchemaV7.models))
         expected["CoachRecord"]?.insert("costBreakdownData")
-        #expect(properties(KurnModelGraph.schema) == expected)
-        let liveIdentifiers = Set(KurnSchemaV8.models.map { ObjectIdentifier($0) })
-        #expect(KurnSchemaV7.models.allSatisfy { !liveIdentifiers.contains(ObjectIdentifier($0)) })
+        #expect(properties(Schema(KurnSchemaV8.models)) == expected)
     }
 
     /// A coach record written at 1.6.0 keeps its total and has no breakdown, so the

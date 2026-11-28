@@ -12,15 +12,15 @@ import SwiftData
 
 @Model
 final class Recording {
-    @Attribute(.unique) var id: UUID
+    var id: UUID = UUID()
     var meeting: Meeting?
     /// File name (not absolute path) within Documents. Resolved lazily so the
     /// recording survives the container path changing between launches.
-    var fileName: String
-    var duration: TimeInterval
-    var recordedAt: Date
-    var transcriptionStatusRaw: String
-    var transcriptionModeRaw: String
+    var fileName: String = ""
+    var duration: TimeInterval = 0
+    var recordedAt: Date = Date()
+    var transcriptionStatusRaw: String = ""
+    var transcriptionModeRaw: String = ""
     var captureStateRaw: String = RecordingCaptureState.ready.rawValue
     var captureRecoveryReasonRaw: String?
     /// JSON-encoded `TranscriptionCheckpoint` while a chunked transcription is
@@ -85,8 +85,12 @@ final class Recording {
     /// Photos captured while this recording was active, timestamped on its
     /// own clock (`MeetingPhoto.capturedAt`). Cascade-deleted with the
     /// recording, same as its transcript.
-    @Relationship(deleteRule: .cascade, inverse: \MeetingPhoto.recording)
-    var photos: [MeetingPhoto] = []
+    @Relationship(deleteRule: .cascade, originalName: "photos", inverse: \MeetingPhoto.recording)
+    var photosStorage: [MeetingPhoto]? = []
+    var photos: [MeetingPhoto] {
+        get { photosStorage ?? [] }
+        set { photosStorage = newValue }
+    }
 
     init(
         id: UUID = UUID(),

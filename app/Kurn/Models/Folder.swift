@@ -13,15 +13,15 @@ import SwiftData
 
 @Model
 final class Folder {
-    @Attribute(.unique) var id: UUID
-    var name: String
+    var id: UUID = UUID()
+    var name: String = ""
     /// SF Symbol name used by the sidebar list and any future folder chip.
     /// Folder picker defaults this to `"folder.fill"`.
-    var iconName: String
+    var iconName: String = ""
     /// Hex string ("#RRGGBB") rendered through `Color(hex:)`. Used to tint the
     /// folder's icon and any folder chip on the meeting card.
-    var colorHex: String
-    var createdAt: Date
+    var colorHex: String = ""
+    var createdAt: Date = Date()
 
     /// Parent folder for nested folders; `nil` for root-level folders. The
     /// sidebar in this version only shows root folders; subfolder navigation
@@ -31,14 +31,22 @@ final class Folder {
     /// Subfolders. `.nullify` so deleting a parent makes children root-level
     /// rather than removing them — destructive cascade here would silently
     /// wipe entire trees on a single user mistake.
-    @Relationship(deleteRule: .nullify, inverse: \Folder.parent)
-    var children: [Folder] = []
+    @Relationship(deleteRule: .nullify, originalName: "children", inverse: \Folder.parent)
+    var childrenStorage: [Folder]? = []
+    var children: [Folder] {
+        get { childrenStorage ?? [] }
+        set { childrenStorage = newValue }
+    }
 
     /// Meetings filed into this folder. `.nullify` so deleting a folder only
     /// detaches its meetings (they fall back to the `Inbox` virtual bucket);
     /// the audio, transcripts, and summaries are preserved.
-    @Relationship(deleteRule: .nullify, inverse: \Meeting.folder)
-    var meetings: [Meeting] = []
+    @Relationship(deleteRule: .nullify, originalName: "meetings", inverse: \Meeting.folder)
+    var meetingsStorage: [Meeting]? = []
+    var meetings: [Meeting] {
+        get { meetingsStorage ?? [] }
+        set { meetingsStorage = newValue }
+    }
 
     init(
         id: UUID = UUID(),

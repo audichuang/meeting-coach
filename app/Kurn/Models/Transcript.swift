@@ -13,12 +13,12 @@ import SwiftData
 
 @Model
 final class Transcript {
-    @Attribute(.unique) var id: UUID
+    var id: UUID = UUID()
     var recording: Recording?
     /// JSON-encoded `[TranscriptSegment]`.
-    var segmentsData: Data
+    var segmentsData: Data = Data()
     /// Detected BCP-47 locale, e.g. "pt-BR".
-    var language: String
+    var language: String = ""
     /// JSON-encoded `PipelineReport`: which engine each stage was asked for,
     /// which one ran, and whether it succeeded, degraded, was skipped or
     /// failed. Optional because transcripts written before H5 PR 11 have no
@@ -29,7 +29,7 @@ final class Transcript {
     /// provider message, file name, URL, or transcript text ever reaches this
     /// field, so it stays safe to export in a diagnostics bundle.
     var pipelineReportData: Data?
-    var createdAt: Date
+    var createdAt: Date = Date()
 
     init(
         id: UUID = UUID(),

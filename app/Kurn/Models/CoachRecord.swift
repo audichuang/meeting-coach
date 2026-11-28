@@ -21,10 +21,10 @@ struct CoachLedgerRecord: Codable, Equatable {
 
 @Model
 final class CoachRecord {
-    @Attribute(.unique) var id: UUID
+    var id: UUID = UUID()
     var meeting: Meeting?
     var recordingID: UUID?
-    var createdAt: Date
+    var createdAt: Date = Date()
     var userName: String = ""
     var segmentsData = Data()
     var gapsData = Data()

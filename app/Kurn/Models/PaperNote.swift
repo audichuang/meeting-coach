@@ -27,7 +27,7 @@ final class PaperNote {
     /// Default logical page width in points (iPad mini portrait width).
     static let defaultPageWidth: Double = 744
 
-    @Attribute(.unique) var id: UUID
+    var id: UUID = UUID()
     var meeting: Meeting?
     var recordingID: UUID?
     /// `PKDrawing.dataRepresentation()` in page coordinates. Stored inline in
@@ -41,8 +41,8 @@ final class PaperNote {
     var pageWidth: Double = PaperNote.defaultPageWidth
     /// JSON-encoded `[PaperStrokeAnchor]` carrying recording time offsets.
     var anchorsData: Data = Data()
-    var createdAt: Date
-    var updatedAt: Date
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
 
     init(
         id: UUID = UUID(),

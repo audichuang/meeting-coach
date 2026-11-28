@@ -225,10 +225,41 @@ enum KurnSchemaV7: VersionedSchema {
 
 /// Version 1.7.0: adds `CoachRecord.costBreakdownData` (the coach's spend per
 /// step). Optional, so existing records migrate to nil and show their total
-/// only. Purely additive, so a lightweight stage covers it. This is the
-/// *current* version, so it lists the live `@Model` classes.
+/// only. Purely additive, so a lightweight stage covers it. Frozen (see
+/// `KurnSchemaV8Models.swift`) now that `KurnSchemaV9` is current.
 enum KurnSchemaV8: VersionedSchema {
     static var versionIdentifier: Schema.Version { Schema.Version(1, 7, 0) }
+
+    static var models: [any PersistentModel.Type] {
+        [
+            Meeting.self,
+            Recording.self,
+            Transcript.self,
+            Speaker.self,
+            Summary.self,
+            Folder.self,
+            Tag.self,
+            SmartFolder.self,
+            SemanticChunk.self,
+            WikiArticle.self,
+            GeneratedDocument.self,
+            ChatSession.self,
+            MeetingPhoto.self,
+            MeetingAttachment.self,
+            CoachRecord.self,
+            PaperNote.self
+        ]
+    }
+}
+
+/// Version 1.8.0: makes the graph CloudKit compatible so the opt-in iCloud
+/// sync can mirror it — no unique constraints, every attribute defaulted,
+/// every to-many relationship optional (stored as `…Storage` under its old
+/// name, read through a non-optional computed property). Stored data does not
+/// change shape, so a lightweight stage covers it. This is the *current*
+/// version, so it lists the live `@Model` classes.
+enum KurnSchemaV9: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(1, 8, 0) }
 
     static var models: [any PersistentModel.Type] {
         [
@@ -255,9 +286,9 @@ enum KurnSchemaV8: VersionedSchema {
 /// The app's migration plan. `KurnSchemaV1` shipped with no stages — the
 /// correct, documented shape for "this is the first version we've ever
 /// declared", nothing to migrate *from* yet. `KurnSchemaV2` through
-/// `KurnSchemaV8` are all purely additive, so a lightweight stage covers each.
-/// The next *non*-additive model change adds `KurnSchemaV9` here with a
-/// `.custom` stage; it must never edit an earlier version in place.
+/// `KurnSchemaV9` are all lightweight (V9 only relaxes constraints and renames
+/// to-many storage), so a lightweight stage covers each. The next change that
+/// needs a data transform adds a `.custom` stage; it must never edit an earlier version in place.
 enum KurnSchemaMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
         [
@@ -268,7 +299,8 @@ enum KurnSchemaMigrationPlan: SchemaMigrationPlan {
             KurnSchemaV5.self,
             KurnSchemaV6.self,
             KurnSchemaV7.self,
-            KurnSchemaV8.self
+            KurnSchemaV8.self,
+            KurnSchemaV9.self
         ]
     }
 
@@ -280,7 +312,8 @@ enum KurnSchemaMigrationPlan: SchemaMigrationPlan {
             .lightweight(fromVersion: KurnSchemaV4.self, toVersion: KurnSchemaV5.self),
             .lightweight(fromVersion: KurnSchemaV5.self, toVersion: KurnSchemaV6.self),
             .lightweight(fromVersion: KurnSchemaV6.self, toVersion: KurnSchemaV7.self),
-            .lightweight(fromVersion: KurnSchemaV7.self, toVersion: KurnSchemaV8.self)
+            .lightweight(fromVersion: KurnSchemaV7.self, toVersion: KurnSchemaV8.self),
+            .lightweight(fromVersion: KurnSchemaV8.self, toVersion: KurnSchemaV9.self)
         ]
     }
 }
@@ -292,12 +325,12 @@ enum KurnModelGraph {
     /// The current model graph, for call sites that need the bare type list
     /// (e.g. an in-memory test container with no migration concerns).
     static var currentModels: [any PersistentModel.Type] {
-        KurnSchemaV8.models
+        KurnSchemaV9.models
     }
 
     /// The versioned schema production and screenshot containers should use.
     static var schema: Schema {
-        Schema(versionedSchema: KurnSchemaV8.self)
+        Schema(versionedSchema: KurnSchemaV9.self)
     }
 
     /// The version a store written by the current graph is at — what backup
@@ -305,7 +338,7 @@ enum KurnModelGraph {
     /// rather than being pinned to whichever version happened to be current
     /// when the call site was written.
     static var currentSchemaVersion: Schema.Version {
-        KurnSchemaV8.versionIdentifier
+        KurnSchemaV9.versionIdentifier
     }
 
     /// The migration plan production and screenshot containers should use.
