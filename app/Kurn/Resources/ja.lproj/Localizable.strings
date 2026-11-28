@@ -736,7 +736,6 @@
 /* About & acknowledgements */
 "settings.about" = "情報";
 "settings.acknowledgements" = "謝辞";
-"settings.sponsor" = "オリジナルのKurnプロジェクトを支援";
 "ack.intro" = "デバイス上の音声認識、話者分離、音声区間検出は、Fluid Inferenceとwhisper.cppによって実現されています。Meeting Coachは以下のパッケージを使用し、その機械学習モデルを必要に応じてダウンロードします。各コンポーネントはそれぞれのライセンスに基づいて使用されます。";
 "ack.based_on" = "Meeting Coachは、Carlos MazzeiによるオープンソースプロジェクトKurnをベースにしており、MITライセンスに基づいて使用しています。";
 "ack.packages" = "Swiftパッケージ";

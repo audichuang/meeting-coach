@@ -2,7 +2,7 @@
 //  AboutSettingsView.swift
 //  Kurn
 //
-//  Version, third-party acknowledgements, and the sponsorship link.
+//  Version and third-party acknowledgements.
 //
 
 import SwiftUI
@@ -30,12 +30,6 @@ struct AboutSettingsView: View {
                     Label(
                         NSLocalizedString("settings.acknowledgements", comment: "Acknowledgements"),
                         systemImage: "doc.text"
-                    )
-                }
-                Link(destination: URL(string: "https://github.com/sponsors/carlosmazzei")!) {
-                    Label(
-                        NSLocalizedString("settings.sponsor", comment: "Sponsor Kurn"),
-                        systemImage: "heart"
                     )
                 }
             }
