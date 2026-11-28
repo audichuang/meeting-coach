@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Synchronization
 import KurnCore
 import SwiftData
 
@@ -61,7 +62,7 @@ final class Transcript {
     }
 
     var segments: [TranscriptSegment] {
-        get { JSONStorage.decodeAuthoritative([TranscriptSegment].self, from: segmentsData).decodedValue ?? [] }
+        get { decodedSegments.segments }
         // A failed encode leaves the previously-stored bytes untouched
         // rather than blanking them — losing a transcript to a rare
         // encoding failure on an in-place edit would be worse than keeping
@@ -74,7 +75,25 @@ final class Transcript {
     /// tell apart from corruption. Surfaced in `MeetingDetailView`'s
     /// transcript tab rather than rendered as "no speech detected".
     var isSegmentsDataCorrupted: Bool {
-        JSONStorage.decodeAuthoritative([TranscriptSegment].self, from: segmentsData).isUnreadable
+        decodedSegments.isUnreadable
+    }
+
+    /// Decoding is two JSON passes plus a checksum, and SwiftUI reads
+    /// `segments` several times per render, which made a two-hour transcript
+    /// stutter. Reuses the last decode while `segmentsData` is byte-identical.
+    private var decodedSegments: DecodedSegments {
+        let data = segmentsData
+        if let hit = transcriptSegmentsCache.withLock({ $0[id] }), hit.data == data {
+            return hit
+        }
+        let outcome = JSONStorage.decodeAuthoritative([TranscriptSegment].self, from: data)
+        let entry = DecodedSegments(data: data, segments: outcome.decodedValue ?? [], isUnreadable: outcome.isUnreadable)
+        transcriptSegmentsCache.withLock { cache in
+            // shortcut: drop everything past a handful of transcripts; an LRU only if a screen ever shows more.
+            if cache.count >= 8 { cache.removeAll() }
+            cache[id] = entry
+        }
+        return entry
     }
 
     /// Flattened plain text, one line per segment, for sharing/export.
@@ -82,3 +101,11 @@ final class Transcript {
         segments.map { "\($0.speakerLabel): \($0.text)" }.joined(separator: "\n")
     }
 }
+
+private struct DecodedSegments: Sendable {
+    let data: Data
+    let segments: [TranscriptSegment]
+    let isUnreadable: Bool
+}
+
+private let transcriptSegmentsCache = Mutex<[UUID: DecodedSegments]>([:])

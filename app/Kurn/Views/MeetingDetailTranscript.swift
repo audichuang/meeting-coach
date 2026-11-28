@@ -16,7 +16,7 @@ extension MeetingDetailView {
     @ViewBuilder
     var transcriptTab: some View {
         let transcribed = sortedRecordings.filter { $0.transcript?.segments.isEmpty == false }
-        VStack(alignment: .leading, spacing: 12) {
+        LazyVStack(alignment: .leading, spacing: 12) {
             ForEach(sortedRecordings, id: \.id) { recording in
                 if recording.transcript?.isSegmentsDataCorrupted == true {
                     transcriptCorruptedBanner
@@ -39,6 +39,18 @@ extension MeetingDetailView {
                     onDeletePhoto: { deletePhoto($0) }
                 )
             }
+        }
+    }
+
+    @ViewBuilder
+    var transcriptPlaybackBar: some View {
+        if let loaded = sortedRecordings.first(where: { $0.fileName == player.loadedFileName }) {
+            TranscriptPlaybackBar(
+                player: player,
+                recording: loaded,
+                enhancement: enhancement,
+                onToggleEnhancement: { toggleEnhancement(loaded) }
+            )
         }
     }
 

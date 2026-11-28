@@ -11,6 +11,11 @@ struct SegmentPlaybackScrubber: View {
     let onSkip: (TimeInterval) -> Void
     let onCycleRate: () -> Void
     let onToggleEnhancement: () -> Void
+    /// Shows a play/pause button in place of the status glyph, for hosts
+    /// (the Transcript tab's bar) that have no row button of their own.
+    var onTogglePlay: (() -> Void)?
+    /// Aligns the scrubber under the recording row's play button; 0 when standalone.
+    var leadingInset: CGFloat = 46
 
     private var layout: PlaybackScrubberLayout {
         PlaybackScrubberLayout(currentTime: currentTime, duration: duration)
@@ -55,9 +60,25 @@ struct SegmentPlaybackScrubber: View {
             .accessibilityValue("\(boundedCurrentTime.clockDisplay) / \(playableDuration.clockDisplay)")
 
             HStack(spacing: 8) {
-                Image(systemName: isPlaying ? "waveform" : "timer")
-                    .font(Theme.caption2Emphasized)
-                    .foregroundStyle(Theme.textTertiary)
+                if let onTogglePlay {
+                    Button(action: onTogglePlay) {
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            .font(Theme.captionEmphasized)
+                            .foregroundStyle(Theme.textPrimary)
+                            .frame(minWidth: 34)
+                            .padding(.vertical, 3)
+                            .background(Theme.fill, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(NSLocalizedString(
+                        isPlaying ? "detail.pause_recording" : "detail.play_recording",
+                        comment: "Play or pause the recording"
+                    ))
+                } else {
+                    Image(systemName: isPlaying ? "waveform" : "timer")
+                        .font(Theme.caption2Emphasized)
+                        .foregroundStyle(Theme.textTertiary)
+                }
                 Text("0:00")
                 Spacer(minLength: 8)
                 Button { onSkip(-AudioPlayerService.skipInterval) } label: {
@@ -126,7 +147,7 @@ struct SegmentPlaybackScrubber: View {
                 EnhancementProgressView(progress: enhancementProgress)
             }
         }
-        .padding(.leading, 46)
+        .padding(.leading, leadingInset)
         // `.contain` rather than `.combine`: combining flattens the children into
         // one element, which makes the speed and enhancement buttons unreachable
         // to VoiceOver.

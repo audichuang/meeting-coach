@@ -14,7 +14,9 @@ struct TranscriptView: View {
     let segments: [TranscriptSegment]
     let speakers: [Speaker]
     /// Current playback time within the owning recording (or nil if not playing).
-    let activeTime: TimeInterval?
+    /// A closure read inside each row, so the player's 0.1 s tick re-renders
+    /// only the visible rows instead of the whole transcript.
+    let activeTime: () -> TimeInterval?
     /// Seconds from the meeting start to this recording, added only to the
     /// displayed timestamp so a multi-segment transcript reads as one continuous
     /// timeline. Seeking and active-segment highlighting still use the raw,
@@ -32,9 +34,10 @@ struct TranscriptView: View {
     var onShowPhoto: ((MeetingPhoto) -> Void)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        // Lazy: a two-hour meeting has well over a thousand segments.
+        LazyVStack(alignment: .leading, spacing: 12) {
             ForEach(segments) { segment in
-                segmentRow(segment)
+                ActiveTimeReader(activeTime: activeTime) { time in segmentRow(segment, activeTime: time) }
                     .contentShape(Rectangle())
                     .onTapGesture { onSeek(segment.startTime) }
                     .accessibilityAddTraits(.isButton)
@@ -43,7 +46,7 @@ struct TranscriptView: View {
     }
 
     @ViewBuilder
-    private func segmentRow(_ segment: TranscriptSegment) -> some View {
+    private func segmentRow(_ segment: TranscriptSegment, activeTime: TimeInterval?) -> some View {
         let speaker = speakers.first { $0.label == segment.speakerLabel }
         let name = speaker?.displayName ?? segment.speakerLabel
         let color = Color(hex: speaker?.color ?? "#888888")
@@ -106,4 +109,12 @@ struct TranscriptView: View {
                 .stroke(isActive ? color.opacity(0.6) : .clear, lineWidth: 1.5)
         )
     }
+}
+
+/// Evaluates `activeTime` in its own body so only this row observes playback.
+private struct ActiveTimeReader<Content: View>: View {
+    let activeTime: () -> TimeInterval?
+    @ViewBuilder let content: (TimeInterval?) -> Content
+
+    var body: some View { content(activeTime()) }
 }

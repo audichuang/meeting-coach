@@ -35,25 +35,19 @@ struct TranscriptTab: View {
     /// right call for the data and the wrong one for this view — it would render
     /// as a chip that filters to nothing and a row in a list of people who are
     /// not in the transcript.
-    private var spokenLabels: Set<String> {
-        var labels: Set<String> = []
-        for recording in recordings {
-            for segment in recording.transcript?.segments ?? [] {
-                labels.insert(segment.speakerLabel)
-            }
-        }
-        return labels
-    }
-
-    private var sortedSpeakers: [Speaker] {
-        let spoken = spokenLabels
+    /// `Transcript.segments` decodes the stored JSON on every access, so the
+    /// body decodes each recording once and passes the result down.
+    private func sortedSpeakers(spokenIn segments: [[TranscriptSegment]]) -> [Speaker] {
+        let spoken = Set(segments.joined().map(\.speakerLabel))
         return meeting.speakers
             .filter { spoken.contains($0.label) }
             .sorted { $0.label < $1.label }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let decoded = recordings.map { $0.transcript?.segments ?? [] }
+        let sortedSpeakers = sortedSpeakers(spokenIn: decoded)
+        LazyVStack(alignment: .leading, spacing: 16) {
             if !sortedSpeakers.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -72,13 +66,13 @@ struct TranscriptTab: View {
                 }
             }
 
-            ForEach(recordings) { recording in
-                let segments = (recording.transcript?.segments ?? [])
+            ForEach(Array(zip(recordings, decoded)), id: \.0.id) { recording, all in
+                let segments = all
                     .filter { selectedSpeaker == nil || $0.speakerLabel == selectedSpeaker }
                 TranscriptView(
                     segments: segments,
                     speakers: meeting.speakers,
-                    activeTime: player.loadedFileName == recording.fileName ? player.currentTime : nil,
+                    activeTime: { player.loadedFileName == recording.fileName ? player.currentTime : nil },
                     offset: offsetFor(recording),
                     highlights: recording.highlights,
                     photos: recording.photos,

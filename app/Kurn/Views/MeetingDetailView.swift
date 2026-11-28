@@ -352,6 +352,7 @@ struct MeetingDetailView: View {
             ScrollView {
                 transcriptTab.padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 24)
             }
+            .safeAreaInset(edge: .bottom) { transcriptPlaybackBar }
         case .summary:
             ScrollView {
                 SummaryTab(

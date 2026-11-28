@@ -37,6 +37,9 @@ enum ScreenshotSeedData {
         if ProcessInfo.processInfo.environment["KURN_DEBUG_SEED_COACH_COST"] == "1" {
             seedCoachCost(into: context)
         }
+        if ProcessInfo.processInfo.environment["KURN_DEBUG_SEED_LONG_TRANSCRIPT"] == "1" {
+            seedLongTranscript(into: context)
+        }
         try? context.save()
     }
 

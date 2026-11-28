@@ -174,6 +174,8 @@ struct ModelTests {
         let transcript = Transcript(
             segments: [TranscriptSegment(speakerLabel: "Speaker 1", startTime: 0, endTime: 5, text: "Hello")]
         )
+        // Read first so the decode cache is warm; the mutation must invalidate it.
+        #expect(transcript.segments.count == 1)
         // Simulate on-disk corruption: valid, non-empty bytes that are
         // neither a valid envelope nor valid bare JSON.
         transcript.segmentsData = Data("not json at all".utf8)
