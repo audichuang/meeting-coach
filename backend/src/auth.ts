@@ -17,15 +17,29 @@ function bearer(request: Request): string | null {
   return match ? match[1] : null;
 }
 
+/** A session left unused this long stops working; every authenticated request extends it. */
+export const SESSION_TTL_MS = 90 * 86_400_000;
+
 export async function authenticate(request: Request, env: Env): Promise<Caller | null> {
   const token = bearer(request);
   if (!token) return null;
   const hash = await sha256Hex(token);
-  const row = await env.DB.prepare(
-    `SELECT u.id FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?1 AND u.blocked_at IS NULL
-     UNION ALL SELECT id FROM invites WHERE token_hash = ?1 AND revoked_at IS NULL`,
-  ).bind(hash).first<{ id: string }>();
-  return row ? { id: row.id } : null;
+  const now = Date.now();
+  const session = await env.DB.prepare(
+    `UPDATE sessions SET expires_at = ?2 WHERE token_hash = ?1 AND expires_at > ?3
+       AND user_id IN (SELECT id FROM users WHERE blocked_at IS NULL) RETURNING user_id`,
+  ).bind(hash, now + SESSION_TTL_MS, now).first<{ user_id: string }>();
+  if (session) return { id: session.user_id };
+  const invite = await env.DB.prepare("SELECT id FROM invites WHERE token_hash = ? AND revoked_at IS NULL")
+    .bind(hash).first<{ id: string }>();
+  return invite ? { id: invite.id } : null;
+}
+
+/** Ends the bearer's session. An invite token has no session, so this leaves it working. */
+export async function signOut(request: Request, env: Env): Promise<void> {
+  const token = bearer(request);
+  if (!token) return;
+  await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha256Hex(token)).run();
 }
 
 export type SignInResult = { token: string; user_id: string; email: string | null } | "blocked";
@@ -40,8 +54,9 @@ export async function signInWithApple(env: Env, identity: AppleIdentity): Promis
     .first<{ id: string; email: string | null; blocked_at: number | null }>();
   if (!user || user.blocked_at !== null) return "blocked";
   const token = newToken("mcs_");
-  await env.DB.prepare("INSERT INTO sessions (token_hash, user_id, created_at) VALUES (?, ?, ?)")
-    .bind(await sha256Hex(token), user.id, Date.now()).run();
+  const now = Date.now();
+  await env.DB.prepare("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
+    .bind(await sha256Hex(token), user.id, now, now + SESSION_TTL_MS).run();
   return { token, user_id: user.id, email: user.email };
 }
 
