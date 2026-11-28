@@ -2,10 +2,11 @@
 //  CoachServerSettingsTests.swift
 //  KurnTests
 //
-//  The meeting coach's invite code and usage row in Recording Settings. The
-//  Worker address is fixed at build time, so there is no URL to edit.
+//  The meeting coach's Sign in with Apple storage and the usage row in
+//  Recording Settings. The Worker address is fixed at build time.
 //
 
+import AuthenticationServices
 import Foundation
 import KurnCore
 import Testing
@@ -120,81 +121,153 @@ struct CoachServerSettingsTests {
         #expect(none.text == nil)
     }
 
-    @Test func failedInviteKeychainWriteKeepsDraftUncommittedAndAllowsResubmitRetry() async throws {
+    // MARK: - Sign in with Apple
+
+    private func credential(name: String? = nil, email: String? = nil, token: String? = "apple.jwt") -> CoachSignIn.AppleCredential {
+        CoachSignIn.AppleCredential(
+            userID: "001234.synthetic",
+            identityToken: token.map { Data($0.utf8) },
+            fullName: name.map { var c = PersonNameComponents(); c.givenName = $0; return c },
+            email: email
+        )
+    }
+
+    @Test func signInStoresTheWorkerTokenAndWhoSignedIn() async throws {
+        let settings = try makeSettings()
+        let sent = Recorded<String>()
+        try await CoachSignIn.signIn(credential(name: "Synthetic"), settings: settings) { identityToken in
+            sent.append(identityToken)
+            return .init(token: "mcs_session", email: "user@example.test")
+        }
+        #expect(sent.values == ["apple.jwt"])
+        #expect(settings.credentials.readKey(for: .meetingCoach) == .found("mcs_session"))
+        #expect(settings.coachAppleUserID == "001234.synthetic")
+        #expect(settings.coachAccountLabel == "Synthetic")
+        #expect(settings.coachSignInPromptShown)
+        #expect(CoachSignIn.isSignedIn(settings: settings))
+    }
+
+    @Test func accountLabelFallsBackToAppleEmailThenWorkerEmail() async throws {
+        let settings = try makeSettings()
+        try await CoachSignIn.signIn(credential(email: "apple@example.test"), settings: settings) { _ in
+            .init(token: "t1", email: "worker@example.test")
+        }
+        #expect(settings.coachAccountLabel == "apple@example.test")
+        // A later sign-in: Apple sends no name or email any more; the Worker still knows the email.
+        try await CoachSignIn.signIn(credential(), settings: settings) { _ in .init(token: "t2", email: "worker@example.test") }
+        #expect(settings.coachAccountLabel == "worker@example.test")
+        try await CoachSignIn.signIn(credential(), settings: settings) { _ in .init(token: "t3", email: nil) }
+        #expect(settings.coachAccountLabel.isEmpty)
+        #expect(CoachSignIn.accountLabel(settings: settings) == NSLocalizedString("settings.meeting_coach_signed_in", comment: ""))
+    }
+
+    @Test func failedExchangeKeepsThePreviousSignIn() async throws {
+        let settings = try makeSettings(initialInvite: "mc_build1_invite")
+        await #expect(throws: AppError.self) {
+            try await CoachSignIn.signIn(self.credential(), settings: settings) { _ in
+                throw AppError.apiError(statusCode: 401, message: "bad signature")
+            }
+        }
+        #expect(settings.credentials.readKey(for: .meetingCoach) == .found("mc_build1_invite"))
+        #expect(settings.coachAppleUserID.isEmpty)
+    }
+
+    @Test func missingIdentityTokenNeverReachesTheWorker() async throws {
+        let settings = try makeSettings()
+        let sent = Recorded<String>()
+        await #expect(throws: AppError.self) {
+            try await CoachSignIn.signIn(self.credential(token: nil), settings: settings) { token in
+                sent.append(token)
+                return .init(token: "x", email: nil)
+            }
+        }
+        #expect(sent.values.isEmpty)
+        #expect(!CoachSignIn.isSignedIn(settings: settings))
+    }
+
+    @Test func keychainWriteFailureSurfacesAndRecordsNoUser() async throws {
         let keychain = MemoryKeychain()
-        let settings = try makeSettings(initialInvite: "", keychain: keychain)
-        let recorded = Recorded<CoachBackend>()
-        let controller = makeController(recorded: recorded)
-
-        controller.load(settings: settings)
-        await controller.usageTask?.value
-        #expect(recorded.values.isEmpty)
-
+        let settings = try makeSettings(keychain: keychain)
         keychain.failWrite = .locked
-        controller.editInvite("synthetic-invite")
-        controller.commitInvite(settings: settings, forceReload: true)
-        await controller.usageTask?.value
-
-        // Write failed: invite is NOT committed, error surfaces, draft stays intact, usage was NOT sent.
-        #expect(keychain.writeAttempts == 1)
-        #expect(controller.committedInvite.isEmpty)
-        #expect(controller.inviteDraft == "synthetic-invite")
-        if case .keychainAccessFailed(let reason) = controller.error {
+        do {
+            try await CoachSignIn.signIn(credential(), settings: settings) { _ in .init(token: "mcs_session", email: nil) }
+            Issue.record("expected a throw")
+        } catch {
+            guard case .keychainAccessFailed(let reason) = error else { Issue.record("got \(error)"); return }
             #expect(reason == KeychainFailureReason.locked.rawValue)
-        } else {
-            Issue.record("expected keychainAccessFailed error")
         }
-        #expect(recorded.values.isEmpty)
-        #expect(settings.credentials.readKey(for: .meetingCoach) == .absent)
-
-        // Re-submitting the exact same invite after Keychain recovers retries and succeeds.
-        keychain.failWrite = nil
-        controller.commitInvite(settings: settings, forceReload: true)
-        await controller.usageTask?.value
-
-        #expect(keychain.writeAttempts == 2)
-        #expect(controller.committedInvite == "synthetic-invite")
-        #expect(controller.inviteDraft == "synthetic-invite")
-        #expect(controller.error == nil)
-        #expect(settings.credentials.readKey(for: .meetingCoach) == .found("synthetic-invite"))
-        #expect(recorded.values.map(\.token) == ["synthetic-invite"])
+        #expect(settings.coachAppleUserID.isEmpty)
     }
 
-    @Test func disappearWithFailedInviteKeychainWriteDoesNotMarkCommitted() throws {
-        let keychain = MemoryKeychain()
-        let settings = try makeSettings(initialInvite: "old-invite", keychain: keychain)
+    @Test func signOutClearsTokenAndAccount() async throws {
+        let settings = try makeSettings()
+        try await CoachSignIn.signIn(credential(name: "Synthetic"), settings: settings) { _ in .init(token: "mcs", email: nil) }
+        CoachSignIn.signOut(settings: settings)
+        #expect(settings.credentials.readKey(for: .meetingCoach) == .absent)
+        #expect(settings.coachAppleUserID.isEmpty)
+        #expect(settings.coachAccountLabel.isEmpty)
+        #expect(!CoachSignIn.isSignedIn(settings: settings))
+    }
+
+    @Test func revokedOrMissingAppleCredentialSignsOut() async throws {
+        for (state, signedOut) in [(ASAuthorizationAppleIDProvider.CredentialState.revoked, true),
+                                   (.notFound, true), (.authorized, false), (.transferred, false)] {
+            let settings = try makeSettings()
+            try await CoachSignIn.signIn(credential(), settings: settings) { _ in .init(token: "mcs", email: nil) }
+            await CoachSignIn.signOutIfRevoked(settings: settings) { userID in
+                #expect(userID == "001234.synthetic")
+                return state
+            }
+            #expect(CoachSignIn.isSignedIn(settings: settings) == !signedOut, "\(state.rawValue)")
+        }
+    }
+
+    @Test func build1InviteIsSignedInAndNeverCheckedWithApple() async throws {
+        let settings = try makeSettings(initialInvite: "mc_build1_invite")
+        let asked = Recorded<String>()
+        await CoachSignIn.signOutIfRevoked(settings: settings) { userID in
+            asked.append(userID)
+            return .revoked
+        }
+        #expect(asked.values.isEmpty)
+        #expect(CoachSignIn.isSignedIn(settings: settings))
+        #expect(!CoachSignInPromptView.isNeeded(settings: settings, arguments: []))
+    }
+
+    @Test func firstLaunchPromptShowsOnceWhileSignedOut() throws {
+        let settings = try makeSettings()
+        #expect(CoachSignInPromptView.isNeeded(settings: settings, arguments: []))
+        #expect(!CoachSignInPromptView.isNeeded(settings: settings, arguments: ["UI-Testing-Screenshots"]))
+        settings.coachSignInPromptShown = true
+        #expect(!CoachSignInPromptView.isNeeded(settings: settings, arguments: []))
+    }
+
+    // MARK: - Settings controller
+
+    @Test func usageLoadsWithTheStoredTokenAndStopsAfterSignOut() async throws {
+        let settings = try makeSettings(initialInvite: "mcs_session")
         let recorded = Recorded<CoachBackend>()
         let controller = makeController(recorded: recorded)
 
         controller.load(settings: settings)
-        let writesBeforeEdit = keychain.writeAttempts
+        await controller.usageTask?.value
+        #expect(recorded.values.map(\.token) == ["mcs_session"])
+        #expect(controller.usage != .unknown)
 
-        keychain.failWrite = .transient
-        controller.editInvite("new-invite")
-        controller.disappear(settings: settings)
-
-        #expect(keychain.writeAttempts == writesBeforeEdit + 1)
-        #expect(controller.committedInvite == "old-invite")
-        #expect(controller.inviteDraft == "new-invite")
-        if case .keychainAccessFailed(let reason) = controller.error {
-            #expect(reason == KeychainFailureReason.transient.rawValue)
-        } else {
-            Issue.record("expected keychainAccessFailed error")
-        }
-        #expect(settings.credentials.readKey(for: .meetingCoach) == .found("old-invite"))
+        controller.signOut(settings: settings)
+        await controller.usageTask?.value
+        #expect(controller.usage == .unknown)
+        #expect(recorded.values.count == 1)
     }
 
-    @Test func failedInviteKeychainReadOnLoadSurfacesError() throws {
+    @Test func failedKeychainReadOnLoadSurfacesError() throws {
         let keychain = MemoryKeychain()
         keychain.failRead = .denied
-        let settings = try makeSettings(initialInvite: "", keychain: keychain)
-        let recorded = Recorded<CoachBackend>()
-        let controller = makeController(recorded: recorded)
+        let settings = try makeSettings(keychain: keychain)
+        let controller = makeController(recorded: Recorded<CoachBackend>())
 
         controller.load(settings: settings)
 
-        #expect(controller.committedInvite.isEmpty)
-        #expect(controller.inviteDraft.isEmpty)
         if case .keychainAccessFailed(let reason) = controller.error {
             #expect(reason == KeychainFailureReason.denied.rawValue)
         } else {

@@ -1622,14 +1622,25 @@ keyed by `recordingID` (cascade only through `Meeting`), so
   `Config/Secrets.xcconfig` (Info.plist `CoachWorkerHost`,
   `CoachAccessClientID`, `CoachAccessClientSecret`; Settings has no server
   field; the Access headers go only to that origin, never to OpenAI), and the
-  invite code in the Keychain (`AIProvider.meetingCoach`'s account). Every
+  Worker session token in the Keychain (`AIProvider.meetingCoach`'s account).
+  `CoachSignIn` (Providers/) gets that token: Sign in with Apple
+  (`CoachSignInButton`, on the once-only first-launch `CoachSignInPromptView`
+  and in Settings → Meeting coach while signed out) hands an identity token
+  that is traded once at `POST /v1/auth/apple`, because Apple's token expires
+  in minutes. Apple's user id and the name or email it gave on the first
+  authorization are kept in `AppSettings` (`coachAppleUserID`,
+  `coachAccountLabel`); every activation asks `getCredentialState` and signs
+  out on `.revoked`/`.notFound` (the completion-handler form: the async
+  overload throws on `.notFound` and loses the state). A build 1 install still
+  holds its invite code in the same Keychain account; the Worker accepts it,
+  so it counts as signed in, with no Apple user id to check. Every
   live (re)connect first fetches a 60 s client secret from
   `/v1/realtime/session` (the async `SocketFactory`; the connection's outbox
   queues audio while it opens, so rotation still drops nothing), cards and
   the summary go to `/v1/responses` (`CoachResponsesClient`,
   `CoachSummaryProvider`), the formal transcript to
   `/v1/audio/transcriptions` (`ProviderFactory.whisperProvider` resolves
-  `.meetingCoach` at call time). A 402 (monthly cap) or 401 (invite) stops the
+  `.meetingCoach` at call time). A 402 (monthly cap) or 401 (signed out or blocked) stops the
   AI, not the recording, and says why. The post-meeting run adds its spend to
   `CoachRecord.costUSD`; the live session only adds its own increments, so
   either may save first. DEBUG builds without a Worker configured go straight
@@ -1637,8 +1648,10 @@ keyed by `recordingID` (cascade only through `Meeting`), so
 - DEBUG: `KURN_DEBUG_CAPTURE_FILE` plays a file through
   `DebugFileCaptureEngine` at 1x; `KURN_DEBUG_OPENAI_API_KEY`,
   `KURN_DEBUG_COACH_SERVER_URL` (DEBUG only; replaces the build's Worker
-  address) and `KURN_DEBUG_COACH_INVITE` stand in for Keychain values, because an unsigned simulator build cannot
-  reach the Keychain.
+  address) and `KURN_DEBUG_COACH_INVITE` (any Worker bearer: an invite code
+  or a session token; also counts as signed in) stand in for Keychain values,
+  because an unsigned simulator build cannot reach the Keychain and the
+  simulator cannot complete a real Sign in with Apple.
 
 ### Providers (`Providers/`)
 

@@ -37,6 +37,9 @@ final class AppSettings {
         static let liveTranscriptionEnabled = "settings.liveTranscriptionEnabled"
         static let meetingCoachEnabled = "settings.meetingCoachEnabled"
         static let coachUserName = "settings.coachUserName"
+        static let coachAppleUserID = "settings.coachAppleUserID"
+        static let coachAccountLabel = "settings.coachAccountLabel"
+        static let coachSignInPromptShown = "settings.coachSignInPromptShown"
         static let coachBudgetUSD = "settings.coachBudgetUSD"
         static let coachCooldownSeconds = "settings.coachCooldownSeconds"
         static let coachMaxCardsPerWindow = "settings.coachMaxCardsPerWindow"
@@ -167,8 +170,8 @@ final class AppSettings {
     }
 
     /// Meeting coach: cloud live transcript (OpenAI) plus suggestion cards while
-    /// recording. On by default in this fork, but inert until a server URL and
-    /// invite code are saved (`CoachBackend`), so a fresh install still sends nothing.
+    /// recording. On by default in this fork, but inert until the user signs in
+    /// with Apple (`CoachSignIn`), so a fresh install still sends nothing.
     var meetingCoachEnabled: Bool {
         didSet { defaults.set(meetingCoachEnabled, forKey: Keys.meetingCoachEnabled) }
     }
@@ -176,6 +179,22 @@ final class AppSettings {
     /// The name the coach addresses and listens for (local only).
     var coachUserName: String {
         didSet { defaults.set(coachUserName, forKey: Keys.coachUserName) }
+    }
+
+    /// Sign in with Apple's stable user id, for `getCredentialState`; empty when signed out
+    /// or when the Keychain still holds a build 1 invite code. The Worker token is in the Keychain.
+    var coachAppleUserID: String {
+        didSet { defaults.set(coachAppleUserID, forKey: Keys.coachAppleUserID) }
+    }
+
+    /// Who is signed in, as Apple gave it on the first authorization (name, else email); may be empty.
+    var coachAccountLabel: String {
+        didSet { defaults.set(coachAccountLabel, forKey: Keys.coachAccountLabel) }
+    }
+
+    /// The first-launch sign-in screen has been shown (signed in or skipped).
+    var coachSignInPromptShown: Bool {
+        didSet { defaults.set(coachSignInPromptShown, forKey: Keys.coachSignInPromptShown) }
     }
 
     /// Per-meeting spend that triggers the coach's budget warning, in USD.
@@ -672,6 +691,9 @@ final class AppSettings {
         liveTranscriptionEnabled = defaults.bool(forKey: Keys.liveTranscriptionEnabled)
         meetingCoachEnabled = defaults.bool(forKey: Keys.meetingCoachEnabled, default: true)
         coachUserName = defaults.string(forKey: Keys.coachUserName) ?? ""
+        coachAppleUserID = defaults.string(forKey: Keys.coachAppleUserID) ?? ""
+        coachAccountLabel = defaults.string(forKey: Keys.coachAccountLabel) ?? ""
+        coachSignInPromptShown = defaults.bool(forKey: Keys.coachSignInPromptShown)
         coachBudgetUSD = (defaults.object(forKey: Keys.coachBudgetUSD) as? Double) ?? 10
         coachCooldownSeconds = (defaults.object(forKey: Keys.coachCooldownSeconds) as? Double) ?? 90
         coachMaxCardsPerWindow = (defaults.object(forKey: Keys.coachMaxCardsPerWindow) as? Int) ?? 3

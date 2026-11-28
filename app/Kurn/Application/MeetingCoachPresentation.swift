@@ -30,7 +30,7 @@ struct MeetingCoachStatusPresentation: Equatable, Sendable {
             case .quota:
                 text = NSLocalizedString("coach.status.quota", comment: "AI stopped: this month's allowance is used up")
             case .unauthorized:
-                text = NSLocalizedString("coach.status.unauthorized", comment: "AI stopped: invite code rejected")
+                text = NSLocalizedString("coach.status.unauthorized", comment: "AI stopped: signed out")
             case .accessMissing:
                 text = NSLocalizedString("coach.status.accessMissing", comment: "AI stopped: the build lacks the Worker address or Access token")
             }

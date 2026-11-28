@@ -19,13 +19,8 @@ struct RecordingSettingsView: View {
     /// Pushed from a live-preview model download the large-transfer policy
     /// refused; the switches live on the Transcription screen.
     @State private var showingNetworkSettings = false
-    /// The invite code draft plus monthly usage status.
+    /// Monthly usage status and sign-out for the coach account.
     @State private var coachServer = CoachServerSettingsController()
-    @FocusState private var focusedField: CoachField?
-
-    private enum CoachField: Hashable {
-        case invite
-    }
 
     var body: some View {
         Form {
@@ -40,13 +35,8 @@ struct RecordingSettingsView: View {
             coachServer.load(settings: settings)
             downloads.refreshStreamingDiarizationState()
         }
-        .onChange(of: focusedField) { previous, current in
-            if previous == .invite, current != .invite {
-                coachServer.commitInvite(settings: settings)
-            }
-        }
         .onDisappear {
-            coachServer.disappear(settings: settings)
+            coachServer.disappear()
         }
         .modelDownloadAlerts(downloads, settings: settings) { showingNetworkSettings = true }
         .errorAlert($coachServer.error)
@@ -118,22 +108,25 @@ struct RecordingSettingsView: View {
                 NSLocalizedString("settings.meeting_coach", comment: "Meeting coach"),
                 isOn: Binding(get: { settings.meetingCoachEnabled }, set: { settings.meetingCoachEnabled = $0 })
             )
-            LabeledContent(NSLocalizedString("settings.meeting_coach_invite", comment: "Invite code for the coach server")) {
-                SecureField(
-                    NSLocalizedString("settings.meeting_coach_invite", comment: "Invite code for the coach server"),
-                    text: Binding(
-                        get: { coachServer.inviteDraft },
-                        set: { coachServer.editInvite($0) }
-                    )
+            let signedIn = CoachSignIn.isSignedIn(settings: settings)
+            if signedIn {
+                LabeledContent(
+                    NSLocalizedString("settings.meeting_coach_account", comment: "Who is signed in to the coach"),
+                    value: CoachSignIn.accountLabel(settings: settings)
                 )
-                .multilineTextAlignment(.trailing)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .focused($focusedField, equals: .invite)
-                .onSubmit { coachServer.commitInvite(settings: settings, forceReload: true) }
+                if let usageText = coachServer.usage.text {
+                    LabeledContent(NSLocalizedString("settings.meeting_coach_usage", comment: "This month's coach spend"), value: usageText)
+                }
             }
-            if let usageText = coachServer.usage.text {
-                LabeledContent(NSLocalizedString("settings.meeting_coach_usage", comment: "This month's coach spend"), value: usageText)
+            // A rejected token (signed out elsewhere, blocked, invite dropped) offers a fresh sign-in.
+            if !signedIn || coachServer.usage == .unauthorized {
+                CoachSignInButton { coachServer.load(settings: settings) }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            }
+            if signedIn {
+                Button(NSLocalizedString("settings.meeting_coach_sign_out", comment: "Sign out of the coach"), role: .destructive) {
+                    coachServer.signOut(settings: settings)
+                }
             }
             LabeledContent(NSLocalizedString("settings.meeting_coach_name", comment: "Your name, used by the coach")) {
                 TextField(

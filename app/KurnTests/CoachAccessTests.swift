@@ -1,4 +1,5 @@
 import Foundation
+import KurnCore
 import Testing
 @testable import Kurn
 
@@ -116,6 +117,30 @@ extension ProviderHTTPTests {
         @Test func aConfiguredWorkerWithoutInviteStaysSilent() {
             let config = CoachAccess.Config(baseURL: URL(string: "https://coach.example.test/v1")!, headers: Self.access)
             #expect(CoachBackend.workerBackend(invite: "", config: config, serverOverride: nil) == nil)
+        }
+
+        @Test func appleTokenExchangePostsToTheWorkerWithAccessHeadersAndNoBearer() async throws {
+            let config = CoachAccess.Config(baseURL: URL(string: "https://worker.test/v1")!, headers: Self.access)
+            MockURLProtocol.enqueue([MockURLProtocol.json(["token": "mcs_session", "user_id": "u1", "email": "user@example.test"], status: 201)])
+            let session = try await CoachSignIn.exchange(
+                identityToken: "apple.jwt", config: config, serverOverride: nil, session: MockURLProtocol.session()
+            )
+            #expect(session == .init(token: "mcs_session", email: "user@example.test"))
+            let request = try #require(MockURLProtocol.lastRequest)
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.absoluteString == "https://worker.test/v1/auth/apple")
+            #expect(request.value(forHTTPHeaderField: "CF-Access-Client-Id") == "id.access")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+            let body = MockURLProtocol.body(of: request)
+            #expect(try JSONDecoder().decode([String: String].self, from: body) == ["identity_token": "apple.jwt"])
+
+            MockURLProtocol.enqueue([MockURLProtocol.json(["error": ["message": "bad signature"]], status: 401)])
+            await #expect(throws: AppError.self) {
+                try await CoachSignIn.exchange(identityToken: "x", config: config, serverOverride: nil, session: MockURLProtocol.session())
+            }
+            await #expect(throws: CoachBackend.NotConfigured.self) {
+                try await CoachSignIn.exchange(identityToken: "x", config: nil, serverOverride: nil, session: MockURLProtocol.session())
+            }
         }
 
         @Test func directBackendSendsOnlyTheBearerKey() {

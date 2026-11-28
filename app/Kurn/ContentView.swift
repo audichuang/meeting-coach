@@ -18,7 +18,9 @@
 //  from another one is offered here too (`AttachToMeetingView`), above both
 //  layouts, for the user to pick the meeting it belongs to. The App Store
 //  rating prompt (`reviewPromptPresenter()`) is attached at the same level,
-//  so it can follow a finished transcript or summary on any screen.
+//  so it can follow a finished transcript or summary on any screen. A fresh
+//  install that is not signed in to the meeting coach first sees
+//  `CoachSignInPromptView`, once.
 //
 
 import KurnCore
@@ -60,6 +62,12 @@ struct ContentView: View {
             AttachToMeetingView(files: incomingFiles.pendingFiles, modelContext: modelContext) {
                 incomingFiles.finish()
             }
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { CoachSignInPromptView.isNeeded(settings: settings) },
+            set: { if !$0 { settings.coachSignInPromptShown = true } }
+        )) {
+            CoachSignInPromptView()
         }
         .onChange(of: incomingFiles.pendingAudio, initial: true) { importNextAudio() }
         .errorAlert($audioImportError)

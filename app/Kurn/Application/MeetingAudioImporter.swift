@@ -69,7 +69,7 @@ struct MeetingAudioImporter {
     }
 
     /// The coach's user name when an import should take the coach route: the
-    /// coach is on and the build can actually reach the Worker with an invite.
+    /// coach is on and the build can actually reach the Worker with a sign-in.
     static func coachUserName(settings: AppSettings) -> String? {
         guard let coach = MeetingCoachConfiguration.resolve(settings: settings),
               !coach.backend.notConfigured else { return nil }

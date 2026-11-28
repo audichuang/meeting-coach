@@ -46,7 +46,7 @@ final class MeetingCoachSession {
         case budget
         /// The Worker's monthly cap is spent (HTTP 402).
         case quota
-        /// The Worker rejected the invite code (HTTP 401).
+        /// The Worker rejected the token: signed out, blocked, or a dropped invite (HTTP 401).
         case unauthorized
         /// The build has no Worker address or Access token; nothing was sent.
         case accessMissing

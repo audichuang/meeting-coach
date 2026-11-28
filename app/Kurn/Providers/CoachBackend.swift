@@ -5,7 +5,8 @@
 //  Where the meeting coach's OpenAI traffic goes. Release builds only talk to
 //  the project's Cloudflare Worker (backend/), whose address and Cloudflare
 //  Access service token are fixed at build time (Config/Secrets.xcconfig) and
-//  authenticated per person with an invite code; the Worker holds the OpenAI key, meters spend and refuses calls past
+//  authenticated per person with the session token from Sign in with Apple
+//  (`CoachSignIn`); the Worker holds the OpenAI key, meters spend and refuses calls past
 //  the monthly cap (HTTP 402). DEBUG builds may instead go straight to OpenAI
 //  with a pasted key, which is how simulator tests run without a Worker.
 //
@@ -16,7 +17,7 @@ import KurnCore
 struct CoachBackend: Sendable, Equatable {
     /// Ends in `/v1`: the Worker's routes mirror OpenAI's paths under it.
     let baseURL: URL
-    /// The invite code for the Worker, or the OpenAI key when direct.
+    /// The Worker session token (or a build 1 invite code), or the OpenAI key when direct.
     let token: String
     let viaWorker: Bool
     /// Cloudflare Access headers the Worker's front door requires; empty when direct.
@@ -29,7 +30,7 @@ struct CoachBackend: Sendable, Equatable {
         baseURL: URL(string: "https://unconfigured.invalid/v1")!, token: "", viaWorker: true, notConfigured: true
     )
 
-    /// Thrown instead of sending, so a build without the Access token never shows up as a rejected invite code.
+    /// Thrown instead of sending, so a build without the Access token never shows up as a rejected sign-in.
     struct NotConfigured: LocalizedError {
         var errorDescription: String? { NSLocalizedString("coach.error.accessMissing", comment: "Build lacks the Worker address or Access token") }
     }
@@ -55,7 +56,7 @@ struct CoachBackend: Sendable, Equatable {
         return nil
     }
 
-    /// The Worker backend for an invite code. The address is the build's; only DEBUG builds may
+    /// The Worker backend for a stored token. The address is the build's; only DEBUG builds may
     /// override it (`serverOverride`), and the Access headers go only to the build's own origin.
     static func workerBackend(
         invite: String,
@@ -70,7 +71,7 @@ struct CoachBackend: Sendable, Equatable {
     }
 
     /// DEBUG only: an unsigned simulator build cannot reach the Keychain.
-    private static func debugOverride(_ key: String) -> String? {
+    static func debugOverride(_ key: String) -> String? {
         #if DEBUG
         if let value = ProcessInfo.processInfo.environment[key], !value.isEmpty { return value }
         #endif
@@ -83,12 +84,12 @@ struct CoachBackend: Sendable, Equatable {
             return AppError.apiError(statusCode: 402, message: NSLocalizedString("coach.error.quota", comment: "Monthly allowance used up"))
         }
         if error.isCoachUnauthorized {
-            return AppError.apiError(statusCode: 401, message: NSLocalizedString("coach.error.unauthorized", comment: "Invite code rejected"))
+            return AppError.apiError(statusCode: 401, message: NSLocalizedString("coach.error.unauthorized", comment: "Sign-in rejected"))
         }
         return error
     }
 
-    /// Bearer invite code plus the Access headers. Only Worker requests go through here:
+    /// Bearer token plus the Access headers. Only Worker requests go through here:
     /// the short-lived key the App later uses against OpenAI directly must not carry them.
     func authorize(_ request: inout URLRequest) {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -178,7 +179,7 @@ extension AIProvider {
     /// post-meeting transcription and summary run under. `ProviderFactory`
     /// resolves its base URL and token through `CoachBackend.current()` at call
     /// time, so a resumed run follows the current Settings. The Keychain
-    /// account holds the invite code.
+    /// account holds the Worker session token (build 1: the invite code).
     static let meetingCoach = AIProvider(
         id: "meetingCoach",
         displayName: "Meeting coach",
@@ -198,7 +199,7 @@ extension Error {
         return false
     }
 
-    /// The Worker does not know the invite code (or it was revoked).
+    /// The Worker does not know the token (signed out elsewhere, blocked, or a revoked invite).
     var isCoachUnauthorized: Bool {
         if case AppError.apiError(401, _)? = self as? AppError { return true }
         return false

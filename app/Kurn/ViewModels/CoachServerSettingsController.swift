@@ -2,8 +2,9 @@
 //  CoachServerSettingsController.swift
 //  Kurn
 //
-//  Owns the editable drafts and usage-loading lifecycle for the meeting
-//  coach's invite code in Recording Settings. The Worker address is fixed at build time.
+//  Owns the usage-loading lifecycle and sign-out for the meeting coach's
+//  account row in Recording Settings. Signing in is `CoachSignInButton`; the
+//  Worker address is fixed at build time.
 //
 
 import Foundation
@@ -37,7 +38,7 @@ enum CoachUsageStatus: Equatable, Sendable {
         case .loaded(let usage):
             return String(format: NSLocalizedString("settings.meeting_coach_usage_value", comment: "Spent of cap, USD"),
                           usage.month.usd, usage.monthlyCapUSD)
-        case .unauthorized: return NSLocalizedString("settings.meeting_coach_invite_invalid", comment: "Invite code rejected")
+        case .unauthorized: return NSLocalizedString("settings.meeting_coach_session_invalid", comment: "Sign-in no longer valid")
         case .notConfigured: return NSLocalizedString("coach.error.accessMissing", comment: "Build lacks the Worker address or Access token")
         case .failed: return NSLocalizedString("settings.meeting_coach_usage_failed", comment: "Usage could not be loaded")
         }
@@ -47,18 +48,16 @@ enum CoachUsageStatus: Equatable, Sendable {
 @MainActor
 @Observable
 final class CoachServerSettingsController {
-    var inviteDraft = ""
     private(set) var usage: CoachUsageStatus = .unknown
-    /// Keychain read/write failure surfaced to `RecordingSettingsView`'s `.errorAlert`.
+    /// Keychain read failure surfaced to `RecordingSettingsView`'s `.errorAlert`.
     var error: AppError?
-    @ObservationIgnored private(set) var committedInvite = ""
     @ObservationIgnored private(set) var usageTask: Task<Void, Never>?
     @ObservationIgnored private let resolveBackend: @Sendable (String) -> CoachBackend?
     @ObservationIgnored private let loadUsage: @Sendable (CoachBackend) async -> CoachUsageStatus
 
     init(
-        resolveBackend: @escaping @Sendable (String) -> CoachBackend? = { invite in
-            CoachBackend.workerBackend(invite: invite)
+        resolveBackend: @escaping @Sendable (String) -> CoachBackend? = { token in
+            CoachBackend.workerBackend(invite: token)
         },
         loadUsage: @escaping @Sendable (CoachBackend) async -> CoachUsageStatus = { backend in
             await CoachUsageStatus.load(backend: { backend })
@@ -68,70 +67,17 @@ final class CoachServerSettingsController {
         self.loadUsage = loadUsage
     }
 
+    /// Reads the stored token and reloads usage; call on appear and after signing in.
     func load(settings: AppSettings) {
+        var token = ""
         switch settings.credentials.readKey(for: .meetingCoach) {
-        case .found(let value):
-            inviteDraft = value
-            committedInvite = value
-        case .absent:
-            inviteDraft = ""
-            committedInvite = ""
-        case .failed(let reason):
-            inviteDraft = ""
-            committedInvite = ""
-            error = .keychainAccessFailed(reason.rawValue)
+        case .found(let value): token = value
+        case .absent: break
+        case .failed(let reason): error = .keychainAccessFailed(reason.rawValue)
         }
-        refreshUsage()
-    }
-
-    func editInvite(_ text: String) {
-        inviteDraft = text
-        if text.trimmingCharacters(in: .whitespacesAndNewlines) != committedInvite {
-            usageTask?.cancel()
-            usageTask = nil
-        }
-    }
-
-    func commitInvite(settings: AppSettings, forceReload: Bool = false) {
-        let next = inviteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let changed = next != committedInvite
-        inviteDraft = next
-        if changed {
-            let outcome = settings.credentials.saveKey(next, for: .meetingCoach)
-            guard case .success = outcome else {
-                if case .failed(let reason) = outcome {
-                    error = .keychainAccessFailed(reason.rawValue)
-                }
-                return
-            }
-            committedInvite = next
-            error = nil
-        }
-        if changed || forceReload {
-            refreshUsage()
-        }
-    }
-
-    func disappear(settings: AppSettings) {
         usageTask?.cancel()
         usageTask = nil
-        let nextInvite = inviteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if nextInvite != committedInvite {
-            inviteDraft = nextInvite
-            switch settings.credentials.saveKey(nextInvite, for: .meetingCoach) {
-            case .success:
-                committedInvite = nextInvite
-                error = nil
-            case .failed(let reason):
-                error = .keychainAccessFailed(reason.rawValue)
-            }
-        }
-    }
-
-    private func refreshUsage() {
-        usageTask?.cancel()
-        usageTask = nil
-        guard let backend = resolveBackend(committedInvite), backend.viaWorker else {
+        guard let backend = resolveBackend(token), backend.viaWorker else {
             usage = .unknown
             return
         }
@@ -141,5 +87,15 @@ final class CoachServerSettingsController {
             guard let self, !Task.isCancelled else { return }
             self.usage = status
         }
+    }
+
+    func signOut(settings: AppSettings) {
+        CoachSignIn.signOut(settings: settings)
+        load(settings: settings)
+    }
+
+    func disappear() {
+        usageTask?.cancel()
+        usageTask = nil
     }
 }

@@ -191,6 +191,10 @@ struct KurnApp: App {
                     // `.waitingForProtectedData`/`.recoveryRequired` recover
                     // once the device unlocks or the user taps Retry, without
                     // waiting for a fresh cold launch.
+                    // Revoked in iOS Settings → Apple ID while the app was away: sign the coach out.
+                    if phase == .active {
+                        Task { await CoachSignIn.signOutIfRevoked(settings: settings) }
+                    }
                     if appEnvironment == nil {
                         boot.retryIfNeeded()
                         if boot.state == .ready, let container = boot.container {
