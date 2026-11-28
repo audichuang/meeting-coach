@@ -43,6 +43,9 @@ struct AppEnvironment {
     /// Chat conversations, kept for the life of the process so a question in
     /// flight survives leaving the chat.
     let meetingChats: MeetingChatStore
+    /// Moves recordings, photos and attachments between devices; nil unless
+    /// iCloud sync was on when the store opened.
+    let fileSync: LibraryFileSync?
 }
 
 @MainActor
@@ -118,7 +121,8 @@ final class AppComposition {
             ),
             reviewPrompt: reviewPrompt,
             meetingLibrary: meetingLibrary,
-            meetingChats: meetingChats
+            meetingChats: meetingChats,
+            fileSync: LibrarySync.enabledAtLaunch ? LibraryFileSync(remote: CloudKitLibraryFileRemote()) : nil
         )
     }
 

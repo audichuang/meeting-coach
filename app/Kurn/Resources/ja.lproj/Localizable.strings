@@ -556,6 +556,10 @@
 "settings.add_template" = "テンプレートを追加";
 "settings.templates_sync" = "iCloudでテンプレートを同期";
 "settings.templates_sync_footer" = "作成したカスタムテンプレートはiCloudで同期されるため、デバイスを替えても使用できます。内蔵テンプレートは常に自動的に最新の状態に保たれます。";
+"settings.library_sync_title" = "iCloud同期";
+"settings.library_sync" = "iCloudで会議を同期";
+"settings.library_sync_footer" = "会議、文字起こし、要約、録音が同じApple IDでサインインしている他のデバイスと同期されます。会議を削除するとすべてのデバイスから削除されます。同期をオフにしても同期が止まるだけで、iCloud上のデータは残ります。";
+"settings.library_sync_restart" = "次回アプリを開いたときに反映されます。";
 "settings.template_name" = "名前";
 "settings.template_description" = "説明";
 "settings.template_description_placeholder" = "テンプレート一覧に表示される1行";

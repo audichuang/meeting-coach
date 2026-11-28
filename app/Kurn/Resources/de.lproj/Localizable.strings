@@ -556,6 +556,10 @@
 "settings.add_template" = "Vorlage hinzufügen";
 "settings.templates_sync" = "Vorlagen über iCloud synchronisieren";
 "settings.templates_sync_footer" = "Von Ihnen erstellte, benutzerdefinierte Vorlagen werden über iCloud synchronisiert und sind so nach einem Gerätewechsel verfügbar. Integrierte Vorlagen bleiben ohnehin stets aktuell.";
+"settings.library_sync_title" = "iCloud-Synchronisierung";
+"settings.library_sync" = "Meetings über iCloud synchronisieren";
+"settings.library_sync_footer" = "Meetings, Transkripte, Zusammenfassungen und Aufnahmen werden mit Ihren anderen Geräten mit derselben Apple-ID synchronisiert. Ein gelöschtes Meeting wird überall gelöscht. Beim Ausschalten wird nur die Synchronisierung beendet; Daten in iCloud bleiben erhalten.";
+"settings.library_sync_restart" = "Wird beim nächsten Öffnen der App wirksam.";
 "settings.template_name" = "Name";
 "settings.template_description" = "Beschreibung";
 "settings.template_description_placeholder" = "Eine Zeile in der Vorlagenliste";

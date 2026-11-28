@@ -17,6 +17,7 @@
 //
 
 #if canImport(MetricKit)
+import CoreData
 import MetricKit
 #endif
 import KurnCore
@@ -204,6 +205,15 @@ struct KurnApp: App {
                     guard let appEnvironment else { return }
                     handleScenePhaseChange(phase, environment: appEnvironment)
                 }
+                // Rows another device recorded arrive here before their files;
+                // fetch them now rather than at the next activation.
+                .onReceive(
+                    NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)
+                        .receive(on: DispatchQueue.main)
+                ) { _ in
+                    guard let environment = appEnvironment, let fileSync = environment.fileSync else { return }
+                    Task { await fileSync.sync(context: environment.modelContainer.mainContext) }
+                }
         }
     }
 
@@ -310,6 +320,10 @@ struct KurnApp: App {
             // batch-limited inside the coordinator, so this is a no-op
             // unless the user turned the feature on.
             Task(priority: .utility) { await environment.wiki.backfill() }
+            // Recordings, photos and attachments behind synced rows (iCloud sync only).
+            if let fileSync = environment.fileSync {
+                Task { await fileSync.sync(context: environment.modelContainer.mainContext) }
+            }
         }
         // Pre-warm the FluidAudio ASR model while the app is in the
         // foreground. The one-time CoreML/ANE compilation costs tens of
@@ -360,7 +374,7 @@ struct KurnApp: App {
         // summaries, never touching the real on-disk store. Compiled out of
         // Release builds entirely, so this can never ship to the App Store.
         if ProcessInfo.processInfo.arguments.contains("UI-Testing-Screenshots") {
-            let configuration = ModelConfiguration(schema: KurnModelGraph.schema, isStoredInMemoryOnly: true)
+            let configuration = ModelConfiguration(schema: KurnModelGraph.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
             let container = try ModelContainer(
                 for: KurnModelGraph.schema,
                 migrationPlan: KurnModelGraph.migrationPlan,
@@ -378,6 +392,7 @@ struct KurnApp: App {
            let reason = ModelStoreOpenFailureReason(rawValue: reasonRaw) {
             throw ModelStoreDebugInjection.error(for: reason)
         }
+        CloudKitSchemaInitializer.runIfRequested()
         #endif
         return try ModelContainerBootstrap.makeStore()
     }

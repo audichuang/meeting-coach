@@ -639,7 +639,7 @@ struct MeetingCoachSelfMarkTests {
             let v6Schema = Schema(versionedSchema: KurnSchemaV6.self)
             let v6Container = try ModelContainer(
                 for: v6Schema,
-                configurations: [ModelConfiguration(schema: v6Schema, url: storeURL)]
+                configurations: [ModelConfiguration(schema: v6Schema, url: storeURL, cloudKitDatabase: .none)]
             )
             let v6Context = v6Container.mainContext
             let meeting = KurnSchemaV6.Meeting(title: "V6 Meeting", languageRaw: MeetingLanguage.autoDetect.rawValue)
@@ -653,7 +653,7 @@ struct MeetingCoachSelfMarkTests {
         let v7Container = try ModelContainer(
             for: KurnModelGraph.schema,
             migrationPlan: KurnModelGraph.migrationPlan,
-            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL, cloudKitDatabase: .none)]
         )
         let v7Context = v7Container.mainContext
         let migrated = try #require(try v7Context.fetch(FetchDescriptor<CoachRecord>()).first)

@@ -53,7 +53,7 @@ enum RecordingRecovery {
         // snapshot is touched.
         endOrphanedActivities()
 
-        recoverOrphanedAudioFiles(context: ModelContext(modelContainer))
+        recoverOrphanedAudioFiles(context: ModelContext(modelContainer), syncEnabled: LibrarySync.enabledAtLaunch, defaults: .standard)
     }
 
     /// Foreground-activation variant of `recoverOrphans`: reattaches orphaned
@@ -65,7 +65,11 @@ enum RecordingRecovery {
     /// its Live Activity is not stuck. Works on the main context so a
     /// reattached recording appears in the UI immediately.
     @MainActor
-    static func recoverOrphansOnActivate(modelContainer: ModelContainer) {
+    static func recoverOrphansOnActivate(
+        modelContainer: ModelContainer,
+        syncEnabled: Bool = LibrarySync.enabledAtLaunch,
+        defaults: UserDefaults = .standard
+    ) {
         guard !RecordingCommandRouter.shared.hasActiveSession else { return }
         // Same pre-scan migration as the launch path (idempotent and cheap),
         // so the orphan scan below always sees the post-migration layout.
@@ -76,7 +80,7 @@ enum RecordingRecovery {
             )
         }
         endOrphanedActivities()
-        recoverOrphanedAudioFiles(context: modelContainer.mainContext)
+        recoverOrphanedAudioFiles(context: modelContainer.mainContext, syncEnabled: syncEnabled, defaults: defaults)
     }
 
     /// The user's explicit "recover" on a recording that needs it. When the
@@ -135,7 +139,7 @@ enum RecordingRecovery {
         }
     }
 
-    private static func recoverOrphanedAudioFiles(context: ModelContext) {
+    private static func recoverOrphanedAudioFiles(context: ModelContext, syncEnabled: Bool, defaults: UserDefaults) {
         guard let existing = try? context.fetch(FetchDescriptor<Recording>()) else { return }
         let known = Set(existing.map(\.fileName))
 
@@ -155,12 +159,21 @@ enum RecordingRecovery {
             includingPropertiesForKeys: nil
         )) ?? []
 
+        let deletedElsewhere = syncEnabled ? LibrarySync.seenRecordingFiles(in: defaults) : []
         for url in items where url.pathExtension.lowercased() == "m4a" {
             let fileName = url.lastPathComponent
             guard !known.contains(fileName) else { continue }
+            if deletedElsewhere.contains(fileName) {
+                AudioFileStore.delete(fileName: fileName)
+                AppLog.recorder.atNotice.notice("recovery: removed \(fileName, privacy: .public), deleted on another device")
+                continue
+            }
             if recover(fileName: fileName, at: url, context: context) {
                 changedAny = true
             }
+        }
+        if syncEnabled {
+            LibrarySync.rememberRecordingFiles(known, in: defaults)
         }
 
         guard changedAny else { return }
@@ -173,7 +186,9 @@ enum RecordingRecovery {
     private static func reconcileInterruptedCaptures(in recordings: [Recording]) -> Bool {
         let finalizer = RecordingFileFinalizer()
         var changed = false
-        for recording in recordings where recording.captureState != .ready {
+        // A synced row recorded elsewhere has no file here; only its own
+        // device can tell an interrupted capture from one still running.
+        for recording in recordings where recording.captureState != .ready && recording.isRecordedOnThisDevice {
             let previousState = recording.captureState
             do {
                 let metadata = try finalizer.finalize(fileName: recording.fileName)

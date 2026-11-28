@@ -556,6 +556,10 @@
 "settings.add_template" = "Add Template";
 "settings.templates_sync" = "Sync Templates via iCloud";
 "settings.templates_sync_footer" = "Custom templates you create sync via iCloud, so they're available after switching devices. Built-in templates always stay up to date on their own.";
+"settings.library_sync_title" = "iCloud Sync";
+"settings.library_sync" = "Sync Meetings via iCloud";
+"settings.library_sync_footer" = "Meetings, transcripts, summaries and recordings sync to your other devices signed in to the same Apple ID. Deleting a meeting deletes it everywhere. Turning sync off only stops syncing; what is already in iCloud stays there.";
+"settings.library_sync_restart" = "Takes effect the next time you open the app.";
 "settings.template_name" = "Name";
 "settings.template_description" = "Description";
 "settings.template_description_placeholder" = "One line shown in the template list";

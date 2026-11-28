@@ -44,7 +44,7 @@ struct SalvageTests {
         try withTempAppSupport { directory in
             let storeURL = directory.appendingPathComponent(ModelStoreProtection.baseName)
             let schema = KurnModelGraph.schema
-            let configuration = ModelConfiguration(schema: schema, url: storeURL)
+            let configuration = ModelConfiguration(schema: schema, url: storeURL, cloudKitDatabase: .none)
 
             // Scoped to match production, where salvage only ever runs from
             // the recovery screen — which exists because the live open

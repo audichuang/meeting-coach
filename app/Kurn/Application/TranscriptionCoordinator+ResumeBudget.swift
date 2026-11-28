@@ -149,7 +149,7 @@ extension TranscriptionCoordinator {
         )
         guard let pending = try? modelContext.fetch(descriptor), !pending.isEmpty else { return }
         AppLog.transcription.atNotice.notice("VM: resuming \(pending.count, privacy: .public) pending transcription(s)")
-        for recording in pending {
+        for recording in pending where recording.isRecordedOnThisDevice {
             guard admitAutomaticResume(recording) else { continue }
             startTranscription(
                 recording,

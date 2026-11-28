@@ -61,7 +61,7 @@ struct LegacyStoreAdoptionTests {
         // never had. Using the live graph here would silently stop testing
         // the V1→V2 migration this fixture exists to exercise.
         let legacySchema = Schema(KurnSchemaV1.models)
-        let configuration = ModelConfiguration(schema: legacySchema, url: url)
+        let configuration = ModelConfiguration(schema: legacySchema, url: url, cloudKitDatabase: .none)
         let container = try ModelContainer(for: legacySchema, configurations: [configuration])
         let context = container.mainContext
 
@@ -257,7 +257,7 @@ struct LegacyStoreAdoptionTests {
 
         // Reopen the identical file through the versioned schema + migration
         // plan every new store now uses — the actual adoption path.
-        let versionedConfiguration = ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)
+        let versionedConfiguration = ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL, cloudKitDatabase: .none)
         let container = try ModelContainer(
             for: KurnModelGraph.schema,
             migrationPlan: KurnModelGraph.migrationPlan,
@@ -358,7 +358,7 @@ struct LegacyStoreAdoptionTests {
         // The real adoption path: the full versioned schema + migration plan,
         // exactly what `ModelContainerBootstrap.makeStore()` uses in
         // production — never a container opened straight against V3.
-        let versionedConfiguration = ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)
+        let versionedConfiguration = ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL, cloudKitDatabase: .none)
         let container = try ModelContainer(
             for: KurnModelGraph.schema,
             migrationPlan: KurnModelGraph.migrationPlan,
@@ -414,7 +414,7 @@ struct LegacyStoreAdoptionTests {
     /// meeting fixture above does, just at library scale.
     private func writeLegacyLibrary(meetingCount: Int, at url: URL) throws {
         let legacySchema = Schema(KurnSchemaV1.models)
-        let configuration = ModelConfiguration(schema: legacySchema, url: url)
+        let configuration = ModelConfiguration(schema: legacySchema, url: url, cloudKitDatabase: .none)
         let container = try ModelContainer(for: legacySchema, configurations: [configuration])
         let context = container.mainContext
 

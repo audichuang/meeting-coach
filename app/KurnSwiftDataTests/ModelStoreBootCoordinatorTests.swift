@@ -36,7 +36,7 @@ struct BootCoordinatorTests {
 
     private func makeInMemoryContainer() throws -> ModelContainer {
         let schema = Schema([Meeting.self])
-        return try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        return try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)])
     }
 
     private func withTempAppSupport(_ body: (URL) throws -> Void) throws {

@@ -46,7 +46,8 @@ enum TranscriptionRecovery {
             }
         )
         guard let inProgress = try? context.fetch(descriptor) else { return }
-        let stale = inProgress.filter { !activeIDs.contains($0.id) }
+        // Another device's in-progress row (iCloud sync) is that device's to sweep.
+        let stale = inProgress.filter { !activeIDs.contains($0.id) && $0.isRecordedOnThisDevice }
         guard !stale.isEmpty else { return }
 
         var resumable = 0

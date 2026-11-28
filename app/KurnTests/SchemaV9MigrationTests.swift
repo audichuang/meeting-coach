@@ -51,7 +51,7 @@ struct SchemaV9MigrationTests {
         let meetingID = UUID()
         do {
             let schema = Schema(versionedSchema: KurnSchemaV8.self)
-            let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, url: storeURL)])
+            let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, url: storeURL, cloudKitDatabase: .none)])
             let context = container.mainContext
             let parent = KurnSchemaV8.Folder(name: "Clients", iconName: "folder.fill", colorHex: "#FF0000")
             let child = KurnSchemaV8.Folder(name: "Acme", iconName: "folder.fill", colorHex: "#00FF00", parent: parent)
@@ -74,7 +74,7 @@ struct SchemaV9MigrationTests {
         let container = try ModelContainer(
             for: KurnModelGraph.schema,
             migrationPlan: KurnModelGraph.migrationPlan,
-            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL, cloudKitDatabase: .none)]
         )
         let context = container.mainContext
         let meeting = try #require(try context.fetch(FetchDescriptor<Meeting>()).first)

@@ -65,7 +65,7 @@ struct PaperNoteTests {
             let container = try ModelContainer(
                 for: KurnModelGraph.schema,
                 migrationPlan: KurnModelGraph.migrationPlan,
-                configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+                configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL, cloudKitDatabase: .none)]
             )
             let context = container.mainContext
             let meeting = Meeting(title: "Design Review")
@@ -117,7 +117,7 @@ struct PaperNoteTests {
         let reloadedContainer = try ModelContainer(
             for: KurnModelGraph.schema,
             migrationPlan: KurnModelGraph.migrationPlan,
-            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL, cloudKitDatabase: .none)]
         )
         let reloadedContext = reloadedContainer.mainContext
         let notes = try reloadedContext.fetch(FetchDescriptor<PaperNote>())
@@ -255,7 +255,7 @@ struct PaperNoteTests {
 
         do {
             let v5Schema = Schema(versionedSchema: KurnSchemaV5.self)
-            let container = try ModelContainer(for: v5Schema, configurations: [ModelConfiguration(schema: v5Schema, url: storeURL)])
+            let container = try ModelContainer(for: v5Schema, configurations: [ModelConfiguration(schema: v5Schema, url: storeURL, cloudKitDatabase: .none)])
             let context = container.mainContext
 
             let meeting = KurnSchemaV5.Meeting(
@@ -289,7 +289,7 @@ struct PaperNoteTests {
         let migratedContainer = try ModelContainer(
             for: KurnModelGraph.schema,
             migrationPlan: KurnModelGraph.migrationPlan,
-            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL, cloudKitDatabase: .none)]
         )
         let context = migratedContainer.mainContext
 
@@ -495,7 +495,7 @@ struct PaperNoteTests {
             let container = try ModelContainer(
                 for: KurnModelGraph.schema,
                 migrationPlan: KurnModelGraph.migrationPlan,
-                configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+                configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL, cloudKitDatabase: .none)]
             )
             let context = container.mainContext
             let meeting = Meeting(title: "Backup Roundtrip")
@@ -513,7 +513,7 @@ struct PaperNoteTests {
             let container = try ModelContainer(
                 for: KurnModelGraph.schema,
                 migrationPlan: KurnModelGraph.migrationPlan,
-                configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+                configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL, cloudKitDatabase: .none)]
             )
             let context = container.mainContext
             for note in try context.fetch(FetchDescriptor<PaperNote>()) {
@@ -527,7 +527,7 @@ struct PaperNoteTests {
         let restoredContainer = try ModelContainer(
             for: KurnModelGraph.schema,
             migrationPlan: KurnModelGraph.migrationPlan,
-            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL, cloudKitDatabase: .none)]
         )
         let restoredNotes = try restoredContainer.mainContext.fetch(FetchDescriptor<PaperNote>())
         let restored = try #require(restoredNotes.first)

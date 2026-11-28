@@ -417,7 +417,10 @@ change here that contradicts the premise outright. CloudKit's private database
 is encrypted in transit and at rest but is not end-to-end encrypted the way
 `.completeUnlessOpen` is — those records can be served under legal process.
 `CloudSettingsSync` is the correct precedent: iCloud key-value for non-secret
-preferences, deliberately not the SwiftData container.
+preferences, deliberately not the SwiftData container. This fork has since shipped it
+as an off-by-default switch (`LibrarySync`, `docs/decisions.md` 2026-11-28),
+because it already streams meeting audio to OpenAI; upstream's reasoning stands
+for a local-first build.
 
 **R2 · A system-wide dictation keyboard.** Different product (I4). A meeting
 recorder delivers value in a 90-minute file; a dictation keyboard delivers it in

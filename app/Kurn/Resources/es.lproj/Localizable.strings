@@ -556,6 +556,10 @@
 "settings.add_template" = "Añadir Plantilla";
 "settings.templates_sync" = "Sincronizar Plantillas con iCloud";
 "settings.templates_sync_footer" = "Las plantillas personalizadas que crees se sincronizan mediante iCloud, para que estén disponibles al cambiar de dispositivo. Las plantillas predeterminadas ya se mantienen actualizadas por sí solas.";
+"settings.library_sync_title" = "Sincronización con iCloud";
+"settings.library_sync" = "Sincronizar reuniones con iCloud";
+"settings.library_sync_footer" = "Las reuniones, transcripciones, resúmenes y grabaciones se sincronizan con tus otros dispositivos con el mismo Apple ID. Al eliminar una reunión, se elimina en todos. Desactivar la sincronización solo la detiene; lo que ya está en iCloud se conserva.";
+"settings.library_sync_restart" = "Se aplica la próxima vez que abras la app.";
 "settings.template_name" = "Nombre";
 "settings.template_description" = "Descripción";
 "settings.template_description_placeholder" = "Una línea que se muestra en la lista de plantillas";

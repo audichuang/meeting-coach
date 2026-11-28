@@ -23,7 +23,7 @@ struct SchemaV3MigrationTests {
 
     private func writeV3Store(at url: URL) throws {
         let schema = Schema(versionedSchema: KurnSchemaV3.self)
-        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, url: url)])
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, url: url, cloudKitDatabase: .none)])
         let context = container.mainContext
         let created = Date(timeIntervalSince1970: 1_750_000_000)
 
@@ -144,7 +144,7 @@ struct SchemaV3MigrationTests {
         let container = try ModelContainer(
             for: KurnModelGraph.schema,
             migrationPlan: KurnModelGraph.migrationPlan,
-            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL, cloudKitDatabase: .none)]
         )
         let context = container.mainContext
 
@@ -221,7 +221,7 @@ struct SchemaV3MigrationTests {
         let recordingID = UUID()
         do {
             let schema = Schema(versionedSchema: KurnSchemaV7.self)
-            let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, url: storeURL)])
+            let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, url: storeURL, cloudKitDatabase: .none)])
             let context = container.mainContext
             let meeting = KurnSchemaV7.Meeting(title: "Before the breakdown", createdAt: Date(timeIntervalSince1970: 1_790_000_000),
                                                notes: "", languageRaw: MeetingLanguage.chinese.rawValue)
@@ -236,7 +236,7 @@ struct SchemaV3MigrationTests {
         let container = try ModelContainer(
             for: KurnModelGraph.schema,
             migrationPlan: KurnModelGraph.migrationPlan,
-            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL)]
+            configurations: [ModelConfiguration(schema: KurnModelGraph.schema, url: storeURL, cloudKitDatabase: .none)]
         )
         let context = container.mainContext
         let meeting = try #require(try context.fetch(FetchDescriptor<Meeting>()).first)

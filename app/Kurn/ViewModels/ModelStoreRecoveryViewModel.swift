@@ -63,6 +63,8 @@ final class ModelStoreRecoveryViewModel {
         guard await authorizeContentAccess() else { return }
         performAction {
             try backupManager.restore(generation: generation)
+            LibrarySync.forgetSeenRecordingFiles()
+            LibraryFileSync.forgetSyncedFiles()
             onStoreReplaced()
         }
     }
@@ -75,6 +77,8 @@ final class ModelStoreRecoveryViewModel {
         guard await authorizeContentAccess() else { return }
         performAction {
             try backupManager.quarantineLiveStore()
+            LibrarySync.forgetSeenRecordingFiles()
+            LibraryFileSync.forgetSyncedFiles()
             onStoreReplaced()
         }
     }

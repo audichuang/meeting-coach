@@ -13,6 +13,77 @@ extension RecordingsDirectorySuite {
 @MainActor
 struct RecordingRecoveryTests {
 
+    /// With iCloud sync on, a file whose row vanished since the last sweep was
+    /// deleted on another device; re-adopting it would undo that delete.
+    @Test func removesAFileWhoseRowWasDeletedOnAnotherDevice() throws {
+        let defaults = try #require(UserDefaults(suiteName: "RecordingRecoveryTests-\(UUID().uuidString)"))
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Synced")
+        context.insert(meeting)
+        let fileName = AudioFileStore.fileName(meetingID: meeting.id)
+        let url = try Self.makeToneFile(named: fileName, seconds: 1.0)
+        defer { AudioFileStore.delete(fileName: fileName) }
+        let recording = Recording(meeting: meeting, fileName: fileName, duration: 1)
+        context.insert(recording)
+        try context.save()
+
+        RecordingRecovery.recoverOrphansOnActivate(modelContainer: container, syncEnabled: true, defaults: defaults)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+
+        context.delete(recording) // what an imported deletion does to the row
+        try context.save()
+        RecordingRecovery.recoverOrphansOnActivate(modelContainer: container, syncEnabled: true, defaults: defaults)
+
+        #expect(try context.fetch(FetchDescriptor<Recording>()).isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// A restored or fresh store loses rows nobody deleted; its files must be
+    /// re-adopted, not removed.
+    @Test func forgettingTheSeenListReattachesInsteadOfRemoving() throws {
+        let defaults = try #require(UserDefaults(suiteName: "RecordingRecoveryTests-\(UUID().uuidString)"))
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "Restored")
+        context.insert(meeting)
+        let fileName = AudioFileStore.fileName(meetingID: meeting.id)
+        _ = try Self.makeToneFile(named: fileName, seconds: 1.0)
+        defer { AudioFileStore.delete(fileName: fileName) }
+        let recording = Recording(meeting: meeting, fileName: fileName, duration: 1)
+        context.insert(recording)
+        try context.save()
+        RecordingRecovery.recoverOrphansOnActivate(modelContainer: container, syncEnabled: true, defaults: defaults)
+
+        context.delete(recording)
+        try context.save()
+        LibrarySync.forgetSeenRecordingFiles(in: defaults)
+        RecordingRecovery.recoverOrphansOnActivate(modelContainer: container, syncEnabled: true, defaults: defaults)
+
+        #expect(try context.fetch(FetchDescriptor<Recording>()).map(\.fileName) == [fileName])
+    }
+
+    /// Another device's live capture arrives through iCloud without its file;
+    /// only that device can tell it from an interrupted one.
+    @Test func leavesAnotherDevicesLiveCaptureAlone() throws {
+        let container = TestModelContainer.make()
+        let context = container.mainContext
+        let meeting = Meeting(title: "On the iPhone")
+        context.insert(meeting)
+        let recording = Recording(
+            meeting: meeting, fileName: AudioFileStore.fileName(meetingID: meeting.id),
+            duration: 0, captureState: .recording
+        )
+        recording.originDeviceID = "another-device"
+        context.insert(recording)
+        try context.save()
+
+        RecordingRecovery.recoverOrphansOnActivate(modelContainer: container)
+
+        #expect(recording.captureState == .recording)
+        #expect(recording.captureRecoveryReason == nil)
+    }
+
     @Test func reattachesOrphanedFileToItsMeeting() throws {
         let container = TestModelContainer.make()
         let context = container.mainContext

@@ -53,7 +53,7 @@ struct ModelContainerBootstrapTests {
             ) throws -> ModelContainer {
                 try ModelContainer(
                     for: schema,
-                    configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+                    configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)]
                 )
             }
         }
@@ -78,7 +78,7 @@ struct ModelContainerBootstrapTests {
                 capturedMigrationPlan = migrationPlan
                 // Real construction needs an in-memory configuration — the
                 // caller-provided one targets the on-disk default store.
-                let inMemoryConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+                let inMemoryConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
                 return try ModelContainer(for: schema, migrationPlan: migrationPlan, configurations: [inMemoryConfiguration])
             }
         }

@@ -52,10 +52,15 @@ enum ModelContainerBootstrap {
     static func makeStore(
         schema: Schema = KurnModelGraph.schema,
         migrationPlan: (any SchemaMigrationPlan.Type)? = KurnModelGraph.migrationPlan,
+        syncEnabled: Bool = LibrarySync.enabledAtLaunch,
         factory: some ModelContainerFactory = SystemModelContainerFactory()
     ) throws -> ModelContainer {
         ModelStoreProtection.apply()
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let configuration = ModelConfiguration(
+            schema: schema,
+            isStoredInMemoryOnly: false,
+            cloudKitDatabase: LibrarySync.cloudKitDatabase(enabled: syncEnabled)
+        )
         let container = try factory.makeContainer(
             schema: schema,
             migrationPlan: migrationPlan,

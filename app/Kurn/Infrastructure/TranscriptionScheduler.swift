@@ -103,7 +103,7 @@ enum TranscriptionScheduler {
                 $0.transcriptionStatusRaw == pendingRaw && $0.captureStateRaw == readyRaw
             }
         )
-        return (try? context.fetch(descriptor)) ?? []
+        return ((try? context.fetch(descriptor)) ?? []).filter(\.isRecordedOnThisDevice)
     }
 
     @MainActor
@@ -117,7 +117,7 @@ enum TranscriptionScheduler {
                     && $0.captureStateRaw == readyRaw
             }
         )
-        return (try? context.fetch(descriptor)) ?? []
+        return ((try? context.fetch(descriptor)) ?? []).filter(\.isRecordedOnThisDevice)
     }
 
     /// Whether any configured stage needs on-device GPU/ANE work that the system

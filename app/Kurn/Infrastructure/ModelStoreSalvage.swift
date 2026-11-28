@@ -115,7 +115,7 @@ enum ModelStoreSalvage {
         schema: Schema,
         migrationPlan: (any SchemaMigrationPlan.Type)?
     ) throws -> (result: ModelStoreSalvageResult, exportMarkdown: String?) {
-        let configuration = ModelConfiguration(schema: schema, url: url, allowsSave: false)
+        let configuration = ModelConfiguration(schema: schema, url: url, allowsSave: false, cloudKitDatabase: .none)
         let container: ModelContainer
         if let migrationPlan {
             container = try ModelContainer(for: schema, migrationPlan: migrationPlan, configurations: [configuration])

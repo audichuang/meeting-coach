@@ -500,7 +500,20 @@ stored optional as `<name>Storage` (`originalName` keeps the old column) behind
 a non-optional computed `<name>` that call sites use. `#Predicate` and sort
 key paths must name the `…Storage` property. `SchemaV9MigrationTests` fails a
 model change that breaks these rules; the CloudKit loader would otherwise only
-report it on a device with sync turned on. `Recording.transcriptionCheckpointData` uses the same
+report it on a device with sync turned on. The sync itself (`LibrarySync`, off by default) keeps
+these rules too: every `ModelConfiguration` passes `cloudKitDatabase`
+explicitly, because the default `.automatic` turns mirroring on for any store
+once the iCloud entitlement exists (it also made the 1.7.0 store fail to open);
+the store reads the switch once per launch; launch sweeps that change a
+recording's capture or transcription state skip rows another device recorded
+(`Recording.isRecordedOnThisDevice`); and files travel separately through
+`LibraryFileSync` (one CloudKit `LibraryFile` record per file name),
+reconciled against the names already synced, so a delete anywhere removes the
+file everywhere. A restored or fresh store must clear both remembered name
+lists (`ModelStoreRecoveryViewModel` does), or the next pass reads every
+missing row as a delete. TestFlight and App Store builds use CloudKit's
+Production environment: deploy the schema from the Development environment
+in the CloudKit console before shipping a model change. `Recording.transcriptionCheckpointData` uses the same
 JSON-`Data` pattern to persist a `TranscriptionCheckpoint` (see "Resumable
 transcription" below), and `Transcript.pipelineReportData` to persist the run's
 `PipelineReport` (H5 PR 11) — which engine each stage was asked for, which one

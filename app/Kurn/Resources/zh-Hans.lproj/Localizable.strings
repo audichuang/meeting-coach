@@ -556,6 +556,10 @@
 "settings.add_template" = "添加模板";
 "settings.templates_sync" = "通过 iCloud 同步模板";
 "settings.templates_sync_footer" = "你创建的自定义模板会通过 iCloud 同步，更换设备后依然可用。内置模板始终自行保持最新，无需同步。";
+"settings.library_sync_title" = "iCloud 同步";
+"settings.library_sync" = "通过 iCloud 同步会议";
+"settings.library_sync_footer" = "会议、转写、摘要和录音会同步到登录同一个 Apple ID 的其他设备。删除会议时，所有设备都会一起删除。关闭同步只会停止同步，iCloud 上已有的数据会保留。";
+"settings.library_sync_restart" = "下次打开 App 时生效。";
 "settings.template_name" = "名称";
 "settings.template_description" = "描述";
 "settings.template_description_placeholder" = "在模板列表中显示的一行文字";

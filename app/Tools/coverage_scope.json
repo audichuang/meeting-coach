@@ -150,6 +150,11 @@
       "pattern": "Kurn/Services/SherpaOnnx/SherpaOnnxCWrapper.swift",
       "reason": "Adapter: thin Swift wrapper over sherpa-onnx's C diarization API, which needs the downloaded ONNX model pair. Labeling lives in KurnCore's DiarizerSegmentLabeling, the fallback and time budget in SherpaOnnxDiarizer (tested).",
       "maxLines": 111
+    },
+    {
+      "pattern": "Kurn/Infrastructure/CloudKitLibraryFileRemote.swift",
+      "reason": "Adapter: CloudKit's private database needs a signed-in iCloud account, which no test runner has. What to upload, download or delete is decided in LibraryFileSync (tested with a fake remote).",
+      "maxLines": 58
     }
   ]
 }

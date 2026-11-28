@@ -284,6 +284,12 @@ final class AppSettings {
         }
     }
 
+    /// Opt-in iCloud sync of the whole library (`LibrarySync`). The store reads
+    /// it once when it opens, so a change applies at the next launch.
+    var librarySyncEnabled: Bool {
+        didSet { defaults.set(librarySyncEnabled, forKey: LibrarySync.enabledKey) }
+    }
+
     /// Always off: the owner wants no Face ID / passcode prompt anywhere, so the
     /// lock screen (`RecordingAccessGate`) and `SensitiveActionAuthorizer` never
     /// ask. A value stored by an earlier build is ignored. Audio files are still
@@ -797,6 +803,7 @@ final class AppSettings {
             ? storedTemplateID
             : (loadedTemplates.first?.id ?? SummaryTemplate.general.id)
         templatesSyncEnabled = defaults.bool(forKey: Keys.templatesSyncEnabled, default: false)
+        librarySyncEnabled = LibrarySync.isEnabled(in: defaults)
 
         if templatesSyncEnabled {
             reconcileTemplatesWithCloud()
